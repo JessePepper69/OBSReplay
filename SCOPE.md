@@ -31,7 +31,7 @@ Do not edit an active personal OBS profile/session. Check profile and scene owne
 ## Review resolutions
 
 - Quit closes the controller; OBS and any active capture continue. Window close hides to tray. Both behaviors are stated in the UI. Replay enabled/disabled intent persists; optional login startup starts capture only if that intent is enabled.
-- Capture configuration changes require OBS closed, with actionable Open OBS and Retry/Apply controls. The controller never terminates another session to make changes.
+- Apply saves a healthy active replay buffer, closes the owned OBSReplay session gracefully, applies capture/audio changes and reopens OBS with replay capture resumed when it was active. App-only settings do not restart OBS. Streams, full recordings and other profiles block disruptive work. First setup requires OBS closed once; the controller never forces a process to stop.
 - Setup uses owned-path markers, validates collisions, stages and atomically replaces generated files, and rolls back failures. Shared WebSocket configuration is backed up. Reset integration, while OBS is closed, restores only shared values that still match this app's applied values and removes only owned files. Clips remain intact.
 - Missing/disconnected devices and monitors are surfaced; selected devices are validated at apply time. No silent switch from game capture to desktop capture.
 - Replay coverage says “up to” the configured duration. No promise that a running buffer contains a full-duration clip, and no fake fill meter.

@@ -118,7 +118,7 @@ struct Controller::Impl {
         catch (const std::exception& e) { value = default_settings(paths); fail(e.what()); }
         set_settings(value);
         const bool configured = integration.configured();
-        update([&](Json& s) { s["integration"] = configured; });
+        update([&](Json& s) { s["integration"] = configured; s["compression_update"] = integration.needs_update(); });
         try {
             const auto history_path = paths.data / L"clips.json";
             if (fs::exists(history_path)) {
@@ -164,17 +164,17 @@ struct Controller::Impl {
         };
         if (value.value("capture", "game") == "desktop") {
             const auto selected = value.value("monitor_id", "");
-            if (!selected.empty() && !contains(monitors(), selected)) return {"The selected display is disconnected. Close OBS, choose an available display in Settings, and Apply before starting capture.", true};
+            if (!selected.empty() && !contains(monitors(), selected)) return {"The selected display is disconnected. Choose an available display in Settings and Apply before starting capture.", true};
         }
         if (value.value("mic_enabled", false)) {
             const auto selected = value.value("mic_device", "default");
             const auto devices = audio_devices(true);
-            if (selected == "default" ? !endpoints(devices) : !contains(devices, selected)) return {"The selected microphone is disconnected. Choose an available microphone or turn microphone capture off, then close OBS and Apply.", false};
+            if (selected == "default" ? !endpoints(devices) : !contains(devices, selected)) return {"The selected microphone is disconnected. Choose an available microphone or turn microphone capture off, then Apply.", false};
         }
         const auto selected = value.value("desktop_device", "default");
         if (selected != "off") {
             const auto devices = audio_devices(false);
-            if (selected == "default" ? !endpoints(devices) : !contains(devices, selected)) return {"The selected desktop audio device is disconnected. Choose an available device or Off, then close OBS and Apply.", false};
+            if (selected == "default" ? !endpoints(devices) : !contains(devices, selected)) return {"The selected desktop audio device is disconnected. Choose an available device or Off, then Apply.", false};
         }
         return {};
     }
@@ -185,23 +185,23 @@ struct Controller::Impl {
         const bool desktop = value.value("capture", "game") == "desktop";
         const std::string expected = desktop ? "OBSReplay Display" : "OBSReplay Game";
         const auto current = socket.request("GetCurrentProgramScene");
-        if (current.value("currentProgramSceneName", "") != "OBSReplay") return "OBS is using a different scene. Select the OBSReplay scene, or close OBS and Apply your capture settings again.";
+        if (current.value("currentProgramSceneName", "") != "OBSReplay") return "OBS is using a different scene. Select the OBSReplay scene or Apply your capture settings again.";
         const auto items = socket.request("GetSceneItemList", {{"sceneName", "OBSReplay"}}).at("sceneItems");
         if (!items.is_array() || items.size() != 1 || items[0].value("sourceName", "") != expected || !items[0].value("sceneItemEnabled", false))
-            return "The dedicated OBS scene was changed. Close OBS and Apply to restore the selected capture mode before starting or saving.";
+            return "The dedicated OBS scene was changed. Apply to restore the selected capture mode before starting or saving.";
         const auto input = socket.request("GetInputSettings", {{"inputName", expected}});
         const auto capture = input.value("inputSettings", Json::object());
         if (input.value("inputKind", "") != (desktop ? "monitor_capture" : "game_capture"))
-            return "The OBS capture source no longer matches your settings. Close OBS and Apply before starting or saving.";
+            return "The OBS capture source no longer matches your settings. Apply before starting or saving.";
         if (desktop) {
             if (_wcsicmp(wide(capture.value("monitor_id", "")).c_str(), wide(value.value("monitor_id", "")).c_str()) != 0)
-                return "OBS is configured for another display. Close OBS and Apply your selected display before starting or saving.";
+                return "OBS is configured for another display. Apply your selected display before starting or saving.";
         } else if (capture.value("capture_mode", "") != "any_fullscreen")
-            return "OBS game capture no longer matches the fullscreen-game setting. Close OBS and Apply before starting or saving.";
+            return "OBS game capture no longer matches the fullscreen-game setting. Apply before starting or saving.";
         return {};
         } catch (const std::exception&) {
             if (!socket.connected()) throw;
-            return "The dedicated OBS capture scene could not be verified. Close OBS and Apply your capture settings again before starting or saving.";
+            return "The dedicated OBS capture scene could not be verified. Apply your capture settings again before starting or saving.";
         }
     }
 
@@ -398,11 +398,13 @@ struct Controller::Impl {
         }
     }
 
-    void save(const std::string& app) {
+    void save(const std::string& app, bool before_settings_change = false) {
         ensure_connection(false);
         require_owned();
         if (!flag("replay_active")) throw std::runtime_error("Start replay capture before saving a replay.");
-        require_capture_ready();
+        if (before_settings_change) {
+            if (!scene_issue().empty()) throw std::runtime_error("The current replay could not be backed up because the capture scene changed. Save it in OBS or stop capture before applying settings. OBS was left running.");
+        } else require_capture_ready();
         const auto value = settings();
         events();
         if (!flag("owned")) throw std::runtime_error("OBS changed profiles before the save. Reconnect to check its current session.");
@@ -435,11 +437,32 @@ struct Controller::Impl {
         Json value = payload.empty() ? previous : payload.contains("settings") ? payload.at("settings") : payload;
         validate_settings(value);
         const bool was_configured = integration.configured();
-        const bool prepare = setup || !was_configured || capture_changed(previous, value);
-        if (prepare && obs_running()) throw std::runtime_error("Close OBS before applying capture or audio settings, then Apply again. Your current settings are unchanged.");
+        const bool prepare = setup || !was_configured || integration.needs_update() || capture_changed(previous, value);
         const bool startup_changed = previous.value("start_at_login", false) != value.value("start_at_login", false);
         bool startup_applied{};
+        bool restart{}, resume{};
         try {
+            if (prepare && obs_running()) {
+                if (!was_configured) throw std::runtime_error("Close OBS once for initial OBSReplay setup. Later settings changes restart your dedicated OBS session automatically.");
+                ensure_connection(false);
+                require_owned();
+                if (socket.request("GetStreamStatus").value("outputActive", false) || socket.request("GetRecordStatus").value("outputActive", false))
+                    throw std::runtime_error("Stop your stream or full recording before applying capture settings. OBS was left running.");
+                resume = flag("replay_active");
+                if (resume) save("Before settings change", true);
+                restart = true;
+                if (resume) {
+                    message("Pausing replay capture to apply settings…");
+                    socket.request("StopReplayBuffer");
+                    const auto deadline = Clock::now() + std::chrono::seconds(10);
+                    while (socket.request("GetReplayBufferStatus").value("outputActive", false)) {
+                        if (Clock::now() >= deadline || !pause(100)) throw std::runtime_error("OBS did not confirm a capture stop. Your settings were not changed.");
+                    }
+                }
+                message("Closing OBS to apply settings…");
+                socket.close();
+                close_obs(from_string(previous.at("obs_path").get<std::string>()));
+            }
             if (startup_changed || setup) { set_login_startup(paths, value.value("start_at_login", false)); startup_applied = true; }
             if (prepare) {
                 socket.close();
@@ -453,16 +476,26 @@ struct Controller::Impl {
             const auto cause = std::current_exception();
             bool rollback_failed{};
             if (startup_applied) try { set_login_startup(paths, previous.value("start_at_login", false)); } catch (...) { rollback_failed = true; }
-            update([&](Json& s) { s["integration"] = integration.configured(); });
+            update([&](Json& s) { s["integration"] = integration.configured(); s["compression_update"] = integration.needs_update(); });
+            if (restart) {
+                try { ensure_connection(true); require_owned(); if (resume) start(); }
+                catch (...) { throw std::runtime_error("Settings could not be applied, and OBS could not resume. Check OBS and choose Start capture to recover."); }
+            }
             if (rollback_failed) throw std::runtime_error("Settings were not applied, and Windows could not restore the previous login startup entry. Review Start at Windows login and Apply again.");
             std::rethrow_exception(cause);
         }
-        update([&](Json& s) { s["integration"] = integration.configured(); });
+        update([&](Json& s) { s["integration"] = integration.configured(); s["compression_update"] = integration.needs_update(); });
         if (prepare) {
             try { const auto options = integration.options(value); update([&](Json& s) { s["options"] = options; }); }
             catch (...) {}
         }
-        message(prepare ? "OBS is configured. Start capture when you're ready." : "Settings saved.");
+        if (restart) {
+            message("Reopening OBS with your settings…");
+            try { ensure_connection(true); require_owned(); if (resume) start(); }
+            catch (const std::exception& e) { throw std::runtime_error(std::string("Settings were saved, but OBS could not resume. Choose Start capture to retry. ") + e.what()); }
+        }
+        if (prepare) update([](Json& s) { s["error"] = ""; });
+        message(restart ? resume ? "Settings applied. Replay capture resumed." : "Settings applied. OBS is ready." : prepare ? "OBS is configured. Start capture when you're ready." : "Settings saved.");
         next_connect = Clock::now();
     }
 
@@ -471,7 +504,7 @@ struct Controller::Impl {
         auto value = settings();
         integration.reset();
         socket.close();
-        update([](Json& s) { s["integration"] = false; s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["capture_ready"] = false; s["capture_issue"] = ""; });
+        update([](Json& s) { s["integration"] = false; s["compression_update"] = false; s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["capture_ready"] = false; s["capture_issue"] = ""; });
         value["replay_enabled"] = false;
         value["start_at_login"] = false;
         set_login_startup(paths, false);

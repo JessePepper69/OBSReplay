@@ -7,6 +7,7 @@ class Integration {
 public:
     explicit Integration(Paths paths);
     bool configured() const;
+    bool needs_update() const;
     Json options(const Json& settings) const;
     Json prepare(const Json& settings);
     void reset();

@@ -46,7 +46,7 @@
       panel.hidden = name !== "capture";
       groups[name] = panel;
     }
-    const hints = { obs_path: "Use an installed copy of OBS Studio.", clips_dir: "Where your saved replays go.", monitor_id: "Used for entire-display capture.", clip_seconds: "The maximum history kept in memory.", quality: "Higher quality produces larger files.", desktop_device: "Include sound from your output device.", mic_device: "Choose the microphone to record.", noise: "Reduce background microphone noise." };
+    const hints = { obs_path: "Use an installed copy of OBS Studio.", clips_dir: "Where your saved replays go.", monitor_id: "Used for entire-display capture.", clip_seconds: "The maximum history kept in memory.", quality: "Higher quality keeps more detail and uses more storage.", desktop_device: "Include sound from your output device.", mic_device: "Choose the microphone to record.", noise: "Reduce background microphone noise." };
     function moveField(name, group) {
       const input = $(name);
       const row = input.closest(".field");
@@ -99,7 +99,7 @@
     startup.innerHTML = '<span><strong>Start with Windows</strong><small>Keep replay controls available after you sign in.</small></span><input type="checkbox" id="setup-start-at-login" checked>';
     groups.capture.append(startup);
     const explanation = $("apply-explanation");
-    explanation.textContent = "Capture and audio changes require OBS to be closed.";
+    explanation.textContent = "Capture and audio changes restart OBS. Your current replay is saved first.";
     form.replaceChildren(groups.capture, groups.audio, groups.app, explanation);
     for (const row of form.querySelectorAll(".check-row")) {
       const input = row.querySelector("input");
@@ -123,7 +123,7 @@
     const setupTitle = document.createElement("strong");
     setupTitle.textContent = "Configure OBS to get started";
     const setupHint = document.createElement("p");
-    setupHint.textContent = "Close OBS, choose your capture settings, then select Configure OBS.";
+    setupHint.textContent = "Close OBS once for initial setup, then select Configure OBS. Later changes restart it automatically.";
     setupCopy.append(setupTitle, setupHint);
     startup.classList.add("setup-startup");
     startup.querySelector("small").remove();
@@ -342,15 +342,15 @@
     $("footer-hide").hidden = state.tab === "settings";
     const pending = busy();
     for (const button of document.querySelectorAll(".player-actions button")) button.disabled = !state.native || pending;
-    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : configured() ? "Apply changes" : "Configure OBS";
-    $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair());
+    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : snapshot?.compression_update ? "Apply improved compression" : configured() ? "Apply changes" : "Configure OBS";
+    $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair() && !snapshot?.compression_update);
     $("discard-settings").disabled = !state.dirty || pending;
     if (!state.native) $("footer-status").textContent = "Native controller unavailable";
     else if (pending) $("footer-status").textContent = snapshot?.message || "Working…";
     else if (state.tab === "settings" && state.dirty) $("footer-status").textContent = "Unapplied changes";
     else $("footer-status").textContent = snapshot?.message || (configured() ? "Settings saved" : "Configure OBS to get started");
     for (const element of document.querySelectorAll("[data-action], [data-help], #footer-hide, #hide-window, #quit-app, #reset-integration, #refresh-devices, #pick-obs, #pick-folder, #setup-start-at-login")) element.disabled = !state.native || pending;
-    for (const element of $("settings-form").elements) element.disabled = !state.native || pending;
+    for (const element of $("settings-form").elements) if (element.id !== "apply-settings") element.disabled = !state.native || pending;
     if (state.native && !pending) updateDependencies();
     const canControl = Boolean(snapshot?.connected && snapshot?.owned);
     const needsAttention = canControl && snapshot?.capture_ready === false;
@@ -374,7 +374,7 @@
     else if (!snapshot.connected) { title = snapshot.busy ? "Connecting…" : "OBS disconnected"; description = "Start capture or reconnect to your dedicated OBS session."; }
     if (snapshot.connected && snapshot.owned && snapshot.capture_ready === false) {
       title = "Capture needs attention";
-      description = `${snapshot.capture_issue || "The dedicated capture source is not ready."} Close OBS, then choose Repair OBS setup in Settings.`;
+      description = `${snapshot.capture_issue || "The dedicated capture source is not ready."} Choose Repair OBS setup in Settings.`;
     }
     if (snapshot.busy && ["start", "stop"].includes(snapshot.operation)) title = snapshot.operation === "start" ? "Starting capture…" : "Stopping capture…";
     $("capture-state").textContent = title;

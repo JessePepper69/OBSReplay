@@ -15,6 +15,7 @@ namespace replay {
 namespace {
 constexpr auto product = "OBSReplay";
 constexpr auto owner_type = "OBSReplay.integration.v1";
+constexpr int compression_policy = 1;
 const fs::path profile_relative = fs::path("basic") / "profiles" / product;
 const fs::path scene_relative = fs::path("basic") / "scenes" / "OBSReplay.json";
 const fs::path scene_marker_relative = fs::path("basic") / "scenes" / "OBSReplay.owner";
@@ -143,13 +144,32 @@ std::string encoder_id(const std::string& brand, const std::string& codec) {
     return "obs_x264";
 }
 
-Json encoder_settings(const Json& settings) {
+std::pair<int, int> output_size(const Json& settings, int width, int height) {
+    int out_height = settings["output_height"];
+    if (out_height == 0 || out_height > height) out_height = height;
+    out_height -= out_height % 2;
+    const int out_width = std::max(2, static_cast<int>(std::round(width * static_cast<double>(out_height) / height)) & ~1);
+    return {out_width, out_height};
+}
+
+Json encoder_settings(const Json& settings, int width = 1920, int height = 1080) {
     const std::string brand = settings["encoder"], codec = settings["codec"];
-    const int quality = settings["quality"];
-    if (brand == "cpu") return {{"rate_control", "CRF"}, {"crf", quality}, {"preset", "veryfast"}, {"profile", "high"}, {"keyint_sec", 2}};
-    Json value = {{"rate_control", "CQP"}, {"cqp", quality}, {"keyint_sec", 2}};
+    const int quality = settings["quality"].get<int>();
+    const std::size_t level = quality == 16 ? 0 : quality == 18 ? 1 : quality == 20 ? 2 : quality == 24 ? 3 : 4;
+    constexpr std::array cpu_quality{18, 20, 22, 25, 28};
+    constexpr std::array gpu_quality{20, 22, 24, 27, 30};
+    if (brand == "cpu") return {{"rate_control", "CRF"}, {"crf", cpu_quality[level]}, {"preset", "veryfast"}, {"profile", "high"}, {"keyint_sec", 2}};
+    Json value = {{"rate_control", "CQP"}, {"cqp", gpu_quality[level]}, {"keyint_sec", 2}};
     if (brand == "nvidia") {
-        value.update({{"preset", "p4"}, {"tune", "hq"}, {"multipass", "disabled"}, {"lookahead", false}, {"device", -1}, {"bf", 2}});
+        constexpr std::array target_quality{22, 24, 26, 29, 32};
+        constexpr std::array max_kbps{24000, 16000, 10000, 7000, 4000};
+        const auto [out_width, out_height] = output_size(settings, width, height);
+        const double scale = (static_cast<double>(out_width) * out_height / (1920.0 * 1080)) * (settings["fps"].get<int>() / 60.0);
+        const auto limit = std::clamp(std::lround(max_kbps[level] * scale * (codec == "h264" ? 1.5 : 1.0)), 1000L, 500000L);
+        value.erase("cqp");
+        value.update({{"rate_control", "CQVBR"}, {"target_quality", target_quality[level]}, {"max_bitrate", limit}, {"bitrate", 0},
+                      {"preset", "p5"}, {"tune", "hq"}, {"multipass", "qres"}, {"adaptive_quantization", true},
+                      {"lookahead", false}, {"device", -1}, {"bf", 2}});
     } else if (brand == "amd") value["preset"] = "balanced";
     else value.update({{"target_usage", "TU4"}, {"bframes", 2}});
     if (codec != "av1") value["profile"] = codec == "h264" ? "high" : "main";
@@ -168,10 +188,7 @@ std::string profile_ini(const Json& s, int width, int height) {
     std::string folder = path_string(from_string(s["clips_dir"]));
     if (folder.find_first_of("\r\n") != std::string::npos) throw std::runtime_error("The clip folder contains invalid characters.");
     std::replace(folder.begin(), folder.end(), '\\', '/');
-    int out_height = s["output_height"];
-    if (out_height == 0 || out_height > height) out_height = height;
-    out_height -= out_height % 2;
-    const int out_width = std::max(2, static_cast<int>(std::round(width * static_cast<double>(out_height) / height)) & ~1);
+    const auto [out_width, out_height] = output_size(s, width, height);
     ini << "[General]\nName=OBSReplay\n\n[Output]\nMode=Advanced\nFilenameFormatting=%CCYY-%MM-%DD %hh-%mm-%ss\nOverwriteIfExists=false\n"
         << "\n[SimpleOutput]\nFilePath=" << folder << "\nRecRBPrefix=Replay\nRecRBSuffix=\n"
         << "\n[AdvOut]\nEncoder=" << id << "\nAudioEncoder=ffmpeg_aac\nRecType=Standard\nRecFilePath=" << folder
@@ -318,6 +335,10 @@ bool Integration::configured() const {
     } catch (...) { return false; }
 }
 
+bool Integration::needs_update() const {
+    return configured() && json_file(paths_.data / "integration.json").value("compression_policy", 0) != compression_policy;
+}
+
 Json Integration::options(const Json& settings) const {
     fs::path obs = from_string(settings.value("obs_path", ""));
     if (obs.empty()) obs = find_obs();
@@ -407,7 +428,7 @@ Json Integration::prepare(const Json& settings) {
     std::vector<Change> changes;
     if (!existing && fs::exists(socket)) add_change(changes, paths_.data / "websocket.original.json", read_text(socket));
     add_change(changes, profile / "basic.ini", profile_ini(resolved, (*selected)["width"], (*selected)["height"]));
-    const std::string encoder_json = encoder_settings(resolved).dump(2);
+    const std::string encoder_json = encoder_settings(resolved, (*selected)["width"], (*selected)["height"]).dump(2);
     add_change(changes, profile / "recordEncoder.json", encoder_json);
     add_change(changes, profile / "streamEncoder.json", encoder_json);
     add_change(changes, scene, scene_collection(resolved, *selected).dump(2));
@@ -419,6 +440,7 @@ Json Integration::prepare(const Json& settings) {
     if (fs::is_regular_file(settings_path)) add_change(changes, paths_.data / "settings.backup.json", read_text(settings_path));
     add_change(changes, settings_path, resolved.dump(2));
     manifest["updated_at"] = now_iso();
+    manifest["compression_policy"] = compression_policy;
     add_change(changes, manifest_path, manifest.dump(2));
     commit_changes(changes);
     return resolved;

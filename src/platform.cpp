@@ -188,7 +188,7 @@ void validate_settings(const Json& settings) {
     if (duration < 30 || duration > 600) throw std::runtime_error("Replay length must be between 30 and 600 seconds.");
     if (height!=0 && height!=720 && height!=1080 && height!=1440) throw std::runtime_error("Choose an available output resolution.");
     if (fps!=30 && fps!=60 && fps!=120 && fps!=144) throw std::runtime_error("Choose 30, 60, 120 or 144 FPS.");
-    if (quality!=16 && quality!=20 && quality!=24) throw std::runtime_error("Choose an available quality preset.");
+    if (quality!=16 && quality!=18 && quality!=20 && quality!=24 && quality!=28) throw std::runtime_error("Choose an available quality preset.");
     const auto member=[&](const char* key, std::initializer_list<const char*> values) {
         const auto value=settings[key].get<std::string>();
         if (std::none_of(values.begin(),values.end(),[&](const char* allowed){return value==allowed;})) throw std::runtime_error(std::string("Unsupported ")+key+".");
@@ -249,6 +249,39 @@ void launch_obs(const fs::path& exe) {
     auto directory=exe.parent_path().wstring();
     if (!CreateProcessW(exe.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,directory.c_str(),&startup,&process)) throw failure("Could not launch OBS");
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
+}
+
+void close_obs(const fs::path& exe) {
+    auto expected=exe.lexically_normal(); expected.make_preferred();
+    Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
+    if(snapshot.value==INVALID_HANDLE_VALUE) throw failure("Cannot locate OBS");
+    PROCESSENTRY32W entry{}; entry.dwSize=sizeof(entry);
+    DWORD target{};
+    if(Process32FirstW(snapshot.value,&entry)) do {
+        if(_wcsicmp(entry.szExeFile,L"obs64.exe")!=0) continue;
+        Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,entry.th32ProcessID));
+        wchar_t name[32768]{}; DWORD size=32768;
+        if(!process.value || !QueryFullProcessImageNameW(process.value,0,name,&size)) continue;
+        if(_wcsicmp(name,expected.c_str())!=0) continue;
+        if(target) throw std::runtime_error("More than one OBS process is running. Close the extra session before applying capture settings.");
+        target=entry.th32ProcessID;
+    } while(Process32NextW(snapshot.value,&entry));
+    if(!target) throw std::runtime_error("The configured OBS process could not be found. Your settings were not changed.");
+    Handle process(OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,target));
+    if(!process.value) throw failure("Cannot wait for OBS to close");
+    struct Request { DWORD process; bool sent{}; } request{target};
+    EnumWindows([](HWND window,LPARAM param)->BOOL {
+        auto& request=*reinterpret_cast<Request*>(param);
+        DWORD id{};GetWindowThreadProcessId(window,&id);
+        if(id!=request.process) return TRUE;
+        wchar_t title[256]{};GetWindowTextW(window,title,256);
+        if(!std::wstring_view(title).starts_with(L"OBS ")) return TRUE;
+        request.sent=PostMessageW(window,WM_CLOSE,0,0)!=FALSE;
+        return !request.sent;
+    },reinterpret_cast<LPARAM>(&request));
+    if(!request.sent) throw std::runtime_error("OBS's main window is not ready to close. Your settings were not changed.");
+    if(WaitForSingleObject(process.value,20000)!=WAIT_OBJECT_0)
+        throw std::runtime_error("OBS has not finished closing. Check for an OBS dialog, then try Apply again. No process was forced to stop.");
 }
 
 Json monitors() {
@@ -361,7 +394,9 @@ std::string foreground_app() {
 void open_path(const fs::path& path,bool reveal) {
     if(!fs::exists(path)) throw std::runtime_error("This file or folder is no longer available: "+path_string(path));
     if(reveal) {
-        PIDLIST_ABSOLUTE item=ILCreateFromPathW(path.c_str());
+        auto shell_path=path;
+        shell_path.make_preferred();
+        PIDLIST_ABSOLUTE item=ILCreateFromPathW(shell_path.c_str());
         if(!item) throw std::runtime_error("Cannot locate the saved file.");
         HRESULT result=SHOpenFolderAndSelectItems(item,0,nullptr,0); CoTaskMemFree(item);
         if(FAILED(result)) throw std::runtime_error("Windows could not show this file in its folder.");
