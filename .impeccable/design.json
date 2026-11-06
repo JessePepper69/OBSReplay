@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T17:07:26.799Z",
+  "title": "Design System: OBSReplay",
+  "extensions": {
+    "motion": [
+      {
+        "name": "fast",
+        "value": "130ms",
+        "purpose": "PlayerCard control hover and label feedback."
+      },
+      {
+        "name": "ease",
+        "value": "cubic-bezier(.2,.8,.2,1)",
+        "purpose": "Reference easing for rail, switches, details and entries."
+      },
+      {
+        "name": "entry",
+        "value": "220ms; 4px; stagger 30ms capped 270ms",
+        "purpose": "Prepared real content on initial presentation, explicit navigation and tray reopening only."
+      },
+      {
+        "name": "panel",
+        "value": "160ms",
+        "purpose": "Rail expansion, switches, detail opening and confirmation entry."
+      },
+      {
+        "name": "dialog-exit",
+        "value": "110ms",
+        "purpose": "Quick dialog dismissal."
+      },
+      {
+        "name": "reader-fade",
+        "value": "180ms",
+        "purpose": "Bottom overflow indication; opacity is remaining reader pixels divided by28, clamped to1."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "900px"
+      },
+      {
+        "name": "effective-small",
+        "value": "650px"
+      }
+    ],
+    "shadows": [
+      {
+        "name": "expanded-rail",
+        "value": "14px 0 20px #060c166e,30px 0 48px #060c1673",
+        "purpose": "Label overlay separation without content movement."
+      },
+      {
+        "name": "dialog",
+        "value": "0 18px 55px #03081388",
+        "purpose": "Focused confirmation surface."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "primary-button",
+      "description": "PlayerCard blue principal action with native-sized control geometry.",
+      "html": "<button class=\"ds-primary\">Apply changes</button>",
+      "css": ".ds-primary{font:600 13px Inter,'Segoe UI',sans-serif;color:#fff;background:var(--ui-accent,#0074d9);border:1px solid #4e9de3;border-radius:7px;min-height:34px;padding:6px 12px;cursor:pointer;box-shadow:inset 0 1px 0 #ffffff16;transition:background 130ms,border-color 130ms,translate 100ms}.ds-primary:hover{background:#0068c4;border-color:#6bb6ff}.ds-primary:active{translate:0 1px}.ds-primary:focus-visible{outline:2px solid #d7e4f8;outline-offset:3px}.ds-primary:disabled{opacity:.55;cursor:default}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "Reference steel-blue control with restrained edge and inset highlight.",
+      "html": "<button class=\"ds-secondary\">Open folder</button>",
+      "css": ".ds-secondary{font:600 13px Inter,'Segoe UI',sans-serif;color:var(--text,#f5f7fc);background:linear-gradient(#2b3c50,#223246);border:1px solid #738dac;border-radius:7px;min-height:34px;padding:6px 12px;cursor:pointer;box-shadow:inset 0 1px 0 #9bb5d323;transition:background 130ms,border-color 130ms,translate 100ms}.ds-secondary:hover{background:#354b64;border-color:#a3b8d1}.ds-secondary:active{translate:0 1px}.ds-secondary:focus-visible{outline:2px solid #d7e4f8;outline-offset:3px}"
+    },
+    {
+      "name": "Labelled input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Subtle navy input with a real visible label.",
+      "html": "<label class=\"ds-label\" for=\"ds-path\">Clips folder</label><input class=\"ds-input\" id=\"ds-path\" placeholder=\"Choose a folder…\">",
+      "css": ".ds-label{display:block;font:600 14px Inter,'Segoe UI',sans-serif;color:var(--text,#f5f7fc);margin-bottom:7px}.ds-input{box-sizing:border-box;width:100%;height:36px;border:1px solid #9fb5cf66;border-radius:7px;padding:7px 10px;background:#a1bfd00b;color:var(--text,#f5f7fc);font:13px Inter,'Segoe UI',sans-serif}.ds-input::placeholder{color:#b6c4d8;opacity:1}.ds-input:hover{border-color:#9fb5cf99}.ds-input:focus-visible{outline:2px solid #d7e4f8;outline-offset:3px}"
+    },
+    {
+      "name": "Settings switch",
+      "kind": "custom",
+      "description": "Semantic switch on a42×24px track inside a52×44px input target.",
+      "html": "<label class=\"ds-switch-row\"><span>Record microphone</span><span class=\"ds-switch\"><span>Off</span><input type=\"checkbox\" role=\"switch\"><span class=\"ds-track\" aria-hidden=\"true\"></span></span></label>",
+      "css": ".ds-switch-row{display:flex;justify-content:space-between;align-items:center;gap:22px;font:600 14px Inter,'Segoe UI',sans-serif;color:var(--text,#f5f7fc)}.ds-switch{position:relative;display:flex;align-items:center;gap:12px;min-height:44px;padding-right:5px}.ds-switch>span:first-child{font-size:12px;font-weight:400;color:#c0ccdd}.ds-switch input{position:absolute;right:0;width:52px;height:44px;margin:0;opacity:0;z-index:1;cursor:pointer}.ds-track{position:relative;width:42px;height:24px;border-radius:14px;background:#435773;border:1px solid #8ba2bf42;transition:background 160ms}.ds-track:after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#d4e0ef;transition:transform 160ms}.ds-switch input:checked+.ds-track{background:#477caa;border-color:#8fb7d6}.ds-switch input:checked+.ds-track:after{transform:translateX(18px);background:#f3f8ff}.ds-switch input:focus-visible+.ds-track{outline:2px solid #d7e4f8;outline-offset:4px}"
+    },
+    {
+      "name": "Settings category navigation",
+      "kind": "nav",
+      "description": "Compact PlayerCard category tabs; the live app supplies keyboard arrow navigation and panel relationships.",
+      "html": "<nav class=\"ds-tabs\" aria-label=\"Settings categories\"><button aria-pressed=\"true\">Capture</button><button>Audio</button><button>App</button></nav>",
+      "css": ".ds-tabs{display:flex;width:fit-content;gap:4px;padding:3px;border:1px solid #53698466;background:#111e304d;border-radius:7px}.ds-tabs button{min-height:32px;border:0;border-radius:4px;padding:6px 15px;background:transparent;color:#c0ccdd;font:550 13px Inter,'Segoe UI',sans-serif;cursor:pointer;transition:background 130ms,color 130ms}.ds-tabs button[aria-pressed=true]{background:#0074d94d;color:#e6f2ff}.ds-tabs button:hover{color:white}.ds-tabs button:focus-visible{outline:2px solid #d7e4f8;outline-offset:-2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "PlayerCard desktop companion",
+    "overview": "Extracted from frontend/app.css, frontend/index.html and frontend/app.js after the user's explicit PlayerCard reference superseded the rejected neutral-black direction. Navy/blue, bundled Inter, compact overlay rail, ruled settings, semantic switches and prepared quick motion. Native OBS verification is separate from source and isolated-fixture evidence.",
+    "keyCharacteristics": [
+      "PlayerCard navy/blue",
+      "Bundled Inter",
+      "Compact native chrome",
+      "Explicit Apply",
+      "Honest replay state"
+    ],
+    "rules": [
+      {
+        "name": "Reference authority",
+        "body": "The user's established PlayerCard palette and controls override generic skill palette or gradient bans.",
+        "section": "colors"
+      },
+      {
+        "name": "Prepared motion",
+        "body": "Entries run for real loaded content on navigation and tray reopening, never routine state refresh.",
+        "section": "components"
+      },
+      {
+        "name": "Reader boundary",
+        "body": "The pointer-transparent bottom fade covers only the content reader and disappears proportionally at its end.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "Use actual native state for save readiness",
+      "Preserve dirty edits and reveal hotkey recovery",
+      "Keep startup staged on by default",
+      "Verify in isolated/headless contexts"
+    ],
+    "donts": [
+      "Do not return to the rejected black/white world",
+      "Do not import XP, artwork or fake metrics",
+      "Do not confuse fixture screenshots with native capture proof",
+      "Do not send desktop input"
+    ]
+  }
+}

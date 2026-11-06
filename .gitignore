@@ -1,0 +1,8 @@
+/build/
+/dist/
+/.vs/
+/.taste-skill/
+/.impeccable/questions/
+/.impeccable/review/
+/ShadOBS-main/
+*.user

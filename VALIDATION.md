@@ -1,0 +1,17 @@
+# Release verification — November 6, 2026
+
+`dist/OBSReplay.exe` is 2,074,112 bytes. SHA-256: `0014E5ACAE442A56A2ABC6B277E0C9C4D5A8547E914DB71D0EBE262D85D5AF71`.
+
+The current rebuild replaces the save notification with the user-selected config-update chime from `valorant-external`. Its 102,618-byte PCM WAV was verified byte-for-byte through the finished EXE's WAVE resource. The existing confirmed-save gate and sound toggle are unchanged. The checks below cover the application before this audio-only change.
+
+- Release compiled with MSVC 19.51, saucer 8.0.5, static MSVC runtime and WebView2 loader. Imports contain Windows system DLLs only. All three current frontend files, the Inter font and its OFL were verified byte-for-byte inside the EXE. The distribution directory contains one file.
+- Actual OBS 32.2.2, NVIDIA RTX 5070 Ti: authenticated connection, dedicated profile/source validation, replay start, confirmed save, history/sorting, live app settings, rejected disruptive settings, damaged-source protection, Stop and reconnect passed. A 6.233-second H.264 1280×720/30 FPS MKV with separate AAC tracks decoded completely with FFmpeg, exit 0. The INI backslash-path bug discovered during this check was fixed and the complete capture test rerun successfully.
+- Setup/persistence: 46 standalone integration assertions passed, including Unicode paths, literal backslash escape sequences, ownership collisions, conditional reset, and forced WebSocket/settings write failures with rollback. Twelve focused path regression assertions also passed.
+- Transport: challenge authentication, fragmented messages, unrelated response IDs, response timeout/recovery, idle connection and cancellation of a blocked receive passed against a disposable protocol server.
+- Startup: the actual current-user Run entry was enabled, verified as a quoted executable plus `--tray`, disabled and restored exactly. Four assertions passed. Actual `--tray` launch stayed hidden after readiness; a second launch reopened the same process and exited successfully. Hide/show also preserved that process.
+- Actual embedded WebView: 20 checks passed for native RPC, bundled font, default shortcut registration, default/minimum layouts, pinned actions, categories, accessible navigation, dirty edits/Discard, no idle animation, zero DOM mutations across unchanged polls, and 125/150/200% emulated pixel scales. Windows display settings were not changed. Native sizing fits and centers the window within its monitor work area, including high DPI.
+- PlayerCard design adaptation: 29 isolated interaction/layout checks passed. A fresh independent reviewer inspected the reference and actual embedded screenshots and found no blocking visual or UX issues. Synthetic fixture evidence is kept separate from native capture evidence.
+
+Disposable checks and recordings are under ignored `build/`. The native OBS test restored the original Untitled profile/collection selection and shared WebSocket settings, removed its generated integration, and retained its test video. The startup registry check restored its original value. No PlayerCard files were changed.
+
+AMD/Intel encoding, real fullscreen-game hooks, anti-cheat compatibility and microphone hardware capture were not exercised on this machine. Those features use OBS's own sources/encoders; the verified live capture path was NVIDIA H.264 desktop capture with microphone disabled. OBS Studio and Evergreen WebView2 remain installed prerequisites.
