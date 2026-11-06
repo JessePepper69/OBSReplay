@@ -1,6 +1,8 @@
 # Release verification — November 6, 2026
 
-`dist/OBSReplay.exe` is 2,133,504 bytes. SHA-256: `FA65DA41E1A36E00FC8C0C3FEB1C81B5F8873B29B784695E68881922E8AFFB50`.
+`dist/OBSReplay.exe` is 2,133,504 bytes. SHA-256: `0DA3842441F1E3EF668A8F4FC114FF967543BF13382F14B3E2E21A227D034F4B`.
+
+MP4 output: generated profiles now use MP4 with `movflags=+faststart`. The profile-policy update goes through the existing buffer-preserving restart flow. Twenty-five native assertions passed for MP4 profile generation, separate audio tracks and the migration marker. The actual installed OBS session applied the update, resumed capture and saved a 17,287,381-byte, 8.267-second MP4 at 1920×1080/60 HEVC with three AAC tracks. Codec, quality and other preferences stayed unchanged. FFprobe recognized the MP4 container; an atom scan confirmed that playback metadata precedes media data. The entire video and all audio tracks decoded without errors. Five actual WebView2 checks passed for history, thumbnail generation, video/mp4 MIME and byte ranges, modal playback/seeking, and continued capture. Existing MKV recordings remain available. Evidence is under `build/mp4-check`; no files were uploaded to Discord or another site. H.264 remains the broad-compatibility codec option.
 
 Compression and automatic Apply restart:
 

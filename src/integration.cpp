@@ -15,7 +15,7 @@ namespace replay {
 namespace {
 constexpr auto product = "OBSReplay";
 constexpr auto owner_type = "OBSReplay.integration.v1";
-constexpr int compression_policy = 1;
+constexpr int compression_policy = 2;
 const fs::path profile_relative = fs::path("basic") / "profiles" / product;
 const fs::path scene_relative = fs::path("basic") / "scenes" / "OBSReplay.json";
 const fs::path scene_marker_relative = fs::path("basic") / "scenes" / "OBSReplay.owner";
@@ -192,7 +192,7 @@ std::string profile_ini(const Json& s, int width, int height) {
     ini << "[General]\nName=OBSReplay\n\n[Output]\nMode=Advanced\nFilenameFormatting=%CCYY-%MM-%DD %hh-%mm-%ss\nOverwriteIfExists=false\n"
         << "\n[SimpleOutput]\nFilePath=" << folder << "\nRecRBPrefix=Replay\nRecRBSuffix=\n"
         << "\n[AdvOut]\nEncoder=" << id << "\nAudioEncoder=ffmpeg_aac\nRecType=Standard\nRecFilePath=" << folder
-        << "\nRecFormat2=mkv\nRecUseRescale=false\nRecRescaleFilter=0\nRecEncoder=" << id
+        << "\nRecFormat2=mp4\nRecMuxerCustom=movflags=+faststart\nRecUseRescale=false\nRecRescaleFilter=0\nRecEncoder=" << id
         << "\nRecAudioEncoder=ffmpeg_aac\nRecTracks=" << (s["separate_tracks"].get<bool>() ? 7 : 1)
         << "\nRecRB=true\nRecRBTime=" << s["clip_seconds"].get<int>() << "\nRecRBSize=" << memory_limit(s["clip_seconds"])
         << "\nTrack1Bitrate=160\nTrack2Bitrate=160\nTrack3Bitrate=160\nTrack1Name=Mix\nTrack2Name=Desktop\nTrack3Name=Microphone\n"
