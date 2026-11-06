@@ -17,6 +17,8 @@ OBSReplay runs alongside OBS. Once capture is enabled, login startup launches th
 
 Recording settings require OBS closed before applying. App-only settings can apply while capture continues. Saved replays use MKV to preserve separate audio tracks and avoid incomplete MP4 files. Replay length is an upper limit constrained by the configured memory budget.
 
+Latest replays shows the five most recent videos; Clips shows the full recent history. Select a replay's thumbnail or name to watch it inside the app, with playback controls and a scrubbable timeline. The player provides **Show in folder** to select the video in Explorer, **Open file** to use your default video app, and **Delete** with confirmation of permanent removal. Deleted or moved files disappear from recent history automatically; deleting the video being watched closes its player. Playback uses WebView2 and installed Windows codecs, with an external-player option if a codec is unavailable. FFmpeg is not required or bundled.
+
 Settings and confirmed replay history are stored in `%LOCALAPPDATA%\OBSReplay`. The Help screen offers integration reset; it removes owned OBSReplay configuration and conditionally restores shared WebSocket changes while leaving clips intact. Software notices are embedded in the EXE and available from Help.
 
 ## Build

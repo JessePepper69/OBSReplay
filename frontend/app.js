@@ -341,6 +341,7 @@
     $("settings-actions").hidden = state.tab !== "settings";
     $("footer-hide").hidden = state.tab === "settings";
     const pending = busy();
+    for (const button of document.querySelectorAll(".player-actions button")) button.disabled = !state.native || pending;
     $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : configured() ? "Apply changes" : "Configure OBS";
     $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair());
     $("discard-settings").disabled = !state.dirty || pending;
@@ -400,19 +401,162 @@
     button.addEventListener("click", () => dispatch(action, { path }));
     return button;
   }
+  const thumbnailCache = new Map();
+  const thumbnailJobs = new Map();
+  let thumbnailRunning = false;
+  let cancelThumbnail = null;
+  let playerClip = null;
+  let playerRequest = 0;
+  let playerReturnFocus = null;
+  const clipKey = clip => JSON.stringify([clip.path, clip.bytes, clip.saved_at]);
+  function paintThumbnail(image, data) {
+    if (!image.isConnected) return;
+    if (data) { image.src = data; image.hidden = false; image.parentElement.dataset.thumbnail = "ready"; }
+    else image.parentElement.dataset.thumbnail = "unavailable";
+  }
+  const thumbnailObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      thumbnailObserver.unobserve(entry.target);
+      const { clip, image } = entry.target.replayThumbnail;
+      const key = clipKey(clip);
+      if (thumbnailCache.has(key)) paintThumbnail(image, thumbnailCache.get(key));
+      else {
+        const job = thumbnailJobs.get(key) || { clip, targets: [] };
+        job.targets = job.targets.filter(target => target.isConnected);
+        job.targets.push(image);
+        thumbnailJobs.set(key, job);
+      }
+    }
+    drainThumbnails();
+  }, { root: $("main"), rootMargin: "100px" });
+  async function takeThumbnail(clip) {
+    const url = await nativeCall("media_url", clip.path);
+    if (document.hidden || $("replay-player").open) throw new DOMException("Preview deferred", "AbortError");
+    return new Promise((resolve, reject) => {
+      const video = document.createElement("video");
+      video.muted = true;
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      let finished = false;
+      const done = (data, error) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        video.onloadeddata = video.onseeked = video.onerror = null;
+        video.removeAttribute("src"); video.load();
+        cancelThumbnail = null;
+        error ? reject(error) : resolve(data);
+      };
+      const timer = setTimeout(() => done(null), 8000);
+      cancelThumbnail = () => done(null, new DOMException("Preview deferred", "AbortError"));
+      const capture = () => {
+        try {
+          if (!video.videoWidth || !video.videoHeight) return done(null);
+          const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 180;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#080c12"; context.fillRect(0, 0, 320, 180);
+          const scale = Math.min(320 / video.videoWidth, 180 / video.videoHeight);
+          const width = video.videoWidth * scale, height = video.videoHeight * scale;
+          context.drawImage(video, (320 - width) / 2, (180 - height) / 2, width, height);
+          done(canvas.toDataURL("image/jpeg", .78));
+        } catch { done(null); }
+      };
+      video.onloadeddata = () => {
+        video.onloadeddata = null;
+        const position = Math.min(.75, Number.isFinite(video.duration) ? video.duration * .1 : 0);
+        if (position > .01) { video.onseeked = capture; video.currentTime = position; }
+        else capture();
+      };
+      video.onerror = () => done(null);
+      video.src = url; video.load();
+    });
+  }
+  async function drainThumbnails() {
+    if (thumbnailRunning || document.hidden || $("replay-player").open) return;
+    thumbnailRunning = true;
+    try {
+      for (const [key, job] of thumbnailJobs) {
+        if (document.hidden || $("replay-player").open) break;
+        job.targets = job.targets.filter(image => image.isConnected);
+        if (!job.targets.length) { thumbnailJobs.delete(key); continue; }
+        try {
+          const data = await takeThumbnail(job.clip);
+          const stillKnown = state.snapshot?.clips?.some(clip => clipKey(clip) === key);
+          if (stillKnown) {
+            thumbnailCache.set(key, data);
+            while (thumbnailCache.size > 24) thumbnailCache.delete(thumbnailCache.keys().next().value);
+            for (const image of job.targets) paintThumbnail(image, data);
+          }
+          thumbnailJobs.delete(key);
+        } catch (error) {
+          if (error.name === "AbortError") break;
+          for (const image of job.targets) paintThumbnail(image, null);
+          thumbnailCache.set(key, null);
+          thumbnailJobs.delete(key);
+        }
+      }
+    } finally { thumbnailRunning = false; }
+  }
+  function stopPlayer() {
+    ++playerRequest;
+    const video = $("player-video");
+    video.pause(); video.removeAttribute("src"); video.load();
+    playerClip = null;
+    drainThumbnails();
+  }
+  function closePlayer() {
+    if (!$("replay-player").open) return;
+    $("replay-player").close();
+  }
+  async function watchReplay(clip) {
+    const alreadyOpen = $("replay-player").open;
+    if (alreadyOpen) stopPlayer();
+    cancelThumbnail?.();
+    if (!alreadyOpen) playerReturnFocus = document.activeElement;
+    playerClip = clip;
+    const request = ++playerRequest;
+    $("player-title").textContent = clip.name || "Replay";
+    $("player-status").textContent = "Loading replay…";
+    $("player-detail").textContent = [clip.app, formatTime(clip.saved_at)].filter(Boolean).join(" · ");
+    if (!alreadyOpen) $("replay-player").showModal();
+    if (motionEnabled()) {
+      const animation = $("replay-player").animate([{ opacity: .4, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
+      entranceAnimations.add(animation);
+      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
+    }
+    try {
+      const url = await nativeCall("media_url", clip.path);
+      if (request !== playerRequest || !$("replay-player").open) return;
+      const video = $("player-video");
+      video.src = url; video.load();
+      video.play().catch(error => {
+        if (request === playerRequest && error.name === "NotAllowedError") $("player-status").textContent = "Press Play to watch this replay.";
+      });
+    } catch (error) {
+      if (request === playerRequest) $("player-status").textContent = errorText(error);
+    }
+  }
   function clipRow(clip, compact = false) {
     const row = document.createElement("div");
-    row.className = "clip-row";
-    const icon = document.createElement("div");
-    icon.className = "clip-icon";
-    icon.innerHTML = '<svg width="23" height="27" viewBox="0 0 24 28" aria-hidden="true"><path d="M4 2h10l6 6v18H4zM14 2v7h6M9 13l6 4-6 4z"/></svg>';
-    const info = document.createElement("div");
+    row.className = `clip-row${compact ? " latest-clip" : ""}`;
+    const preview = document.createElement("button");
+    preview.type = "button"; preview.className = "clip-preview";
+    preview.setAttribute("aria-label", `Watch ${clip.name || "replay"}`);
+    preview.addEventListener("click", () => watchReplay(clip));
+    const thumbnail = document.createElement("span"); thumbnail.className = "clip-thumbnail";
+    const image = document.createElement("img"); image.alt = ""; image.hidden = true;
+    const play = document.createElement("span"); play.className = "clip-play";
+    play.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>';
+    thumbnail.append(image, play);
+    thumbnail.replayThumbnail = { clip, image };
+    thumbnailObserver.observe(thumbnail);
+    const info = document.createElement("span");
     info.className = "clip-info";
-    const name = document.createElement("div");
+    const name = document.createElement("span");
     name.className = "clip-name";
     name.textContent = clip.name || clip.path?.split(/[\\/]/).pop() || "Saved replay";
     name.title = clip.path || name.textContent;
-    const meta = document.createElement("p");
+    const meta = document.createElement("span");
     meta.className = "clip-meta";
     meta.textContent = [clip.app, formatTime(clip.saved_at), formatBytes(clip.bytes)].filter(Boolean).join(" · ");
     info.append(name, meta);
@@ -420,7 +564,8 @@
     actions.className = "clip-actions";
     actions.append(actionButton("Open", "open_clip", clip.path));
     if (!compact) actions.append(actionButton("Show in folder", "reveal_clip", clip.path));
-    row.append(icon, info, actions);
+    preview.append(thumbnail, info);
+    row.append(preview, actions);
     return row;
   }
   function renderClips() {
@@ -428,12 +573,20 @@
     const key = JSON.stringify(clips);
     if (key === state.clipsKey) return;
     state.clipsKey = key;
+    thumbnailObserver.disconnect();
+    const known = new Set(clips.map(clipKey));
+    for (const key of thumbnailCache.keys()) if (!known.has(key)) thumbnailCache.delete(key);
+    for (const key of thumbnailJobs.keys()) if (!known.has(key)) thumbnailJobs.delete(key);
+    if (playerClip && !clips.some(clip => clip.path === playerClip.path)) {
+      closePlayer();
+      showError("This replay was deleted or moved. Your recent clips have been updated.");
+    }
     $("clips-list").replaceChildren();
     $("latest-content").replaceChildren();
     $("latest-content").className = clips.length ? "" : "empty-line";
     if (clips.length) {
       for (const clip of clips.slice(0, 50)) $("clips-list").append(clipRow(clip));
-      $("latest-content").append(clipRow(clips[0], true));
+      for (const clip of clips.slice(0, 5)) $("latest-content").append(clipRow(clip, true));
     } else {
       const empty = document.createElement("div");
       empty.className = "clips-empty";
@@ -508,13 +661,16 @@
     schedulePoll(state.pending || state.snapshot?.busy ? 500 : 1000);
   }
   function schedulePoll(delay) { clearTimeout(pollTimer); if (!document.hidden || state.pending) pollTimer = setTimeout(poll, delay); }
-  async function confirmAction(title, message, label) {
+  async function confirmAction(title, message, label, destructive = false) {
     $("confirm-title").textContent = title;
     $("confirm-text").textContent = message;
     $("confirm-action").textContent = label;
+    $("confirm-action").classList.toggle("danger", destructive);
+    $("confirm-action").classList.toggle("primary", !destructive);
     $("confirm-dialog").returnValue = "cancel";
     dialogClosing = false;
     $("confirm-dialog").showModal();
+    if (destructive) $("confirm-dialog").querySelector('[value="cancel"]').focus();
     if (motionEnabled()) {
       const animation = $("confirm-dialog").animate([{ opacity: .4, transform: "translateY(5px) scale(.985)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
       entranceAnimations.add(animation);
@@ -653,6 +809,43 @@
   $("reset-integration").addEventListener("click", async () => { if (await confirmAction("Reset OBSReplay integration?", "Close OBS first. The dedicated profile and scene collection will be reset. Your saved clips remain.", "Reset integration")) dispatch("reset"); });
   $("confirm-dialog").querySelector("form").addEventListener("submit", event => { event.preventDefault(); closeDialog(event.submitter?.value || "cancel"); });
   $("confirm-dialog").addEventListener("cancel", event => { event.preventDefault(); closeDialog("cancel"); });
+  $("player-close").addEventListener("click", closePlayer);
+  $("replay-player").addEventListener("close", () => {
+    if ($("replay-player").open) return;
+    stopPlayer();
+    if (playerReturnFocus?.isConnected) playerReturnFocus.focus();
+    else $("main").focus();
+  });
+  $("replay-player").addEventListener("click", event => { if (event.target === $("replay-player")) closePlayer(); });
+  $("player-external").addEventListener("click", () => {
+    if (!playerClip || busy()) return;
+    const clip = playerClip;
+    closePlayer(); dispatch("open_clip", { path: clip.path });
+  });
+  $("player-reveal").addEventListener("click", () => {
+    if (!playerClip || busy()) return;
+    $("player-video").pause();
+    dispatch("reveal_clip", { path: playerClip.path });
+  });
+  $("player-delete").addEventListener("click", async () => {
+    if (!playerClip || busy()) return;
+    const clip = playerClip;
+    const video = $("player-video");
+    const wasPlaying = !video.paused;
+    video.pause();
+    const confirmed = await confirmAction("Delete replay?", `Permanently delete “${clip.name || "this replay"}” from your computer? This cannot be undone.`, "Delete replay", true);
+    if (playerClip?.path !== clip.path || !$("replay-player").open) return;
+    if (confirmed) { closePlayer(); dispatch("delete_clip", { path: clip.path }); }
+    else if (wasPlaying && !document.hidden) video.play().catch(() => {});
+  });
+  $("player-video").addEventListener("loadeddata", () => { if (playerClip) $("player-status").textContent = ""; });
+  $("player-video").addEventListener("error", () => {
+    if (playerClip && $("player-video").getAttribute("src")) $("player-status").textContent = "Windows could not play this video. You can try Open file.";
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { cancelThumbnail?.(); $("player-video").pause(); }
+    else drainThumbnails();
+  });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { schedulePoll(0); scheduleFade(); } else { cancelEntrance(); cancelAnimationFrame(fadeFrame); fadeFrame = 0; if (!state.pending) clearTimeout(pollTimer); } });
   window.addEventListener("obsreplay:reopen", () => { schedulePoll(0); if (presented) playEntrance($(state.tab + "-view")); });
   for (const type of ["pointerdown", "keydown"]) document.addEventListener(type, event => { if (event.isTrusted) cancelEntrance(); }, true);

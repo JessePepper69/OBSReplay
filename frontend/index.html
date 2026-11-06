@@ -41,7 +41,7 @@
         <div class="capture-summary" id="capture-summary"><div><span>Replay length</span><strong id="summary-length">—</strong></div><div><span>Capture</span><strong id="summary-mode">—</strong></div><div><span>Video</span><strong id="summary-video">—</strong></div><div><span>Microphone</span><strong id="summary-mic">—</strong></div></div>
         <div class="context-note" id="capture-note">OBSReplay controls a dedicated OBS profile. Your existing profiles stay separate.</div>
         <section class="destination" aria-labelledby="destination-title"><div><h2 id="destination-title">Clips folder</h2><p id="capture-folder" class="file-path">Choose a destination in Settings.</p></div><button type="button" data-action="open_folder">Open folder</button></section>
-        <section class="latest" aria-labelledby="latest-title"><div class="section-heading"><h2 id="latest-title">Latest replay</h2><button type="button" class="text-button" id="all-clips">View clips</button></div><div id="latest-content" class="empty-line">No replays saved yet. Start capture, then press your save shortcut.</div></section>
+        <section class="latest" aria-labelledby="latest-title"><div class="section-heading"><h2 id="latest-title">Latest replays</h2><button type="button" class="text-button" id="all-clips">View clips</button></div><div id="latest-content" class="empty-line">No replays saved yet. Start capture, then press your save shortcut.</div></section>
         <div class="connection-actions" id="connection-actions"><button type="button" data-action="reconnect">Reconnect</button><button type="button" data-action="open_obs">Open OBS</button></div>
       </section>
       <section id="clips-view" aria-labelledby="clips-title" hidden>
@@ -73,5 +73,10 @@
     </div>
   </div>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button value="confirm" class="primary" id="confirm-action">Continue</button></div></form></dialog>
+  <dialog id="replay-player" aria-labelledby="player-title" aria-describedby="player-status">
+    <div class="player-heading"><div><h2 id="player-title">Replay</h2><p id="player-status" role="status" aria-live="polite">Loading replay…</p></div><button type="button" id="player-close" aria-label="Close replay player" autofocus><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
+    <video id="player-video" controls playsinline preload="metadata" crossorigin="anonymous"></video>
+    <div class="player-footer"><span id="player-detail"></span><div class="player-actions"><button type="button" id="player-delete" class="danger">Delete</button><button type="button" id="player-reveal">Show in folder</button><button type="button" id="player-external">Open file</button></div></div>
+  </dialog>
 </body>
 </html>

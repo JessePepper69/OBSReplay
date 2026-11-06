@@ -11,6 +11,7 @@ public:
     Controller(const Controller&) = delete;
     Controller& operator=(const Controller&) = delete;
     std::string snapshot() const;
+    bool knows_clip(const std::string& path) const;
     std::expected<bool, std::string> dispatch(std::string action, std::string payload = "{}");
 private:
     struct Impl;

@@ -46,7 +46,7 @@ file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" NOTICES
 configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 
 add_executable(OBSReplay WIN32
-  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp
+  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 target_compile_definitions(OBSReplay PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(OBSReplay PRIVATE /W4 /utf-8 /permissive- /EHsc)

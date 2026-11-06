@@ -1,4 +1,5 @@
 #include "controller.hpp"
+#include "media.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -359,6 +360,7 @@ coco::stray start(saucer::application* app) {
     view.set_background({16,21,29,255});
     view.set_context_menu(false);
     replay::Controller controller(replay::paths());
+    replay::ClipMedia media(view.native().webview, controller);
     Desktop desktop{app,window,&view,&controller,window->native().hwnd};
     SetPropW(desktop.hwnd,instance_property,reinterpret_cast<HANDLE>(1));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
@@ -374,6 +376,7 @@ coco::stray start(saucer::application* app) {
     });
     view.on<saucer::webview::event::permission>([](const std::shared_ptr<saucer::permission::request>& request) { request->accept(false);return saucer::status::handled; });
     view.expose("snapshot",[&] { return desktop.snapshot(); });
+    view.expose("media_url",[&](std::string path) { return media.url(path); });
     view.expose("dispatch",[&](std::string action,std::string payload) { return desktop.dispatch(std::move(action),std::move(payload)); });
     view.expose("pick_folder",[&](std::string current) { return pick_path(desktop.hwnd,current,true); });
     view.expose("pick_obs",[&](std::string current) { return pick_path(desktop.hwnd,current,false); });

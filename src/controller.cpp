@@ -95,6 +95,23 @@ struct Controller::Impl {
     }
     void store_settings(const Json& value) { save_settings(paths, value); set_settings(value); }
 
+    void reconcile_clips() {
+        Json clips;
+        { std::lock_guard lock(mutex); clips = state.at("clips"); }
+        const auto old_size = clips.size();
+        for (auto it = clips.begin(); it != clips.end();) {
+            std::error_code error;
+            const bool exists = fs::is_regular_file(from_string(it->at("path").get<std::string>()), error);
+            if ((!error && !exists) || error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory)
+                it = clips.erase(it);
+            else ++it;
+        }
+        if (clips.size() == old_size) return;
+        update([&](Json& s) { s["clips"] = clips; });
+        try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
+        catch (...) { fail("Deleted replays were removed from this view, but the recent-clips history could not be saved."); }
+    }
+
     void initialize() {
         Json value;
         try { value = load_settings(paths); }
@@ -117,6 +134,7 @@ struct Controller::Impl {
                 update([&](Json& s) { s["clips"] = clips; });
             }
         } catch (...) { fail("Recent clip history could not be read. Your recordings are still in the clips folder."); }
+        reconcile_clips();
         try { const auto options = integration.options(value); update([&](Json& s) { s["options"] = options; }); }
         catch (const std::exception& e) { fail(e.what()); }
         if (stopping.load()) return;
@@ -495,13 +513,23 @@ struct Controller::Impl {
                 }, reinterpret_cast<LPARAM>(&shown));
                 if (!shown) throw std::runtime_error("OBS is running but its window is not ready. Open OBS from its tray icon.");
             }
-        } else if (action.name == "open_clip" || action.name == "reveal_clip") {
+        } else if (action.name == "open_clip" || action.name == "reveal_clip" || action.name == "delete_clip") {
             const auto path = action.payload.value("path", "");
             bool known{};
             { std::lock_guard lock(mutex); for (const auto& clip : state.at("clips")) if (clip.value("path", "") == path) { known = true; break; } }
             const auto file = from_string(path);
             if (!known || !media_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
-            open_path(file, action.name == "reveal_clip");
+            if (action.name == "delete_clip") {
+                std::error_code error;
+                if (!fs::is_regular_file(file, error)) {
+                    reconcile_clips();
+                    throw std::runtime_error("This replay is no longer available or cannot be deleted.");
+                }
+                if (!fs::remove(file, error) || error)
+                    throw std::runtime_error("Windows could not delete this replay. Close it in other apps and check your folder permissions.");
+                reconcile_clips();
+                message("Replay deleted.");
+            } else open_path(file, action.name == "reveal_clip");
         } else if (action.name == "help") open_help(action.payload.value("topic", "obs"));
     }
 
@@ -558,7 +586,7 @@ struct Controller::Impl {
             if (stopping.load()) break;
             try {
                 events();
-                if (Clock::now() >= next_poll) { background_connection(); next_poll = Clock::now() + std::chrono::seconds(1); }
+                if (Clock::now() >= next_poll) { reconcile_clips(); background_connection(); next_poll = Clock::now() + std::chrono::seconds(1); }
             } catch (const std::exception& e) {
                 socket.close();
                 update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; });
@@ -575,9 +603,14 @@ struct Controller::Impl {
 Controller::Controller(Paths paths) : impl_(std::make_unique<Impl>(std::move(paths))) {}
 Controller::~Controller() = default;
 std::string Controller::snapshot() const { std::lock_guard lock(impl_->mutex); return impl_->state.dump(); }
+bool Controller::knows_clip(const std::string& path) const {
+    std::lock_guard lock(impl_->mutex);
+    const auto& clips = impl_->state.at("clips");
+    return std::any_of(clips.begin(), clips.end(), [&](const Json& clip) { return clip.value("path", "") == path; });
+}
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "start", "stop", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "start", "stop", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
     if (!allowed.contains(action)) return std::unexpected("Unknown controller action.");
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;
