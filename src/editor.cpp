@@ -678,12 +678,13 @@ struct EditorHost::Impl::Session {
         const int target = height > 0 ? std::min(height, 720) : 720;
         const auto file = preview_folder / L"preview.mp4";
         const auto partial = preview_folder / L"preview.part.mp4";
+        if (tool.nvenc && build_proxy_halves(tool, info, target, file, partial)) return;
         // Short GOP without B-frames: any frame decodes from at most 5 neighbours, so scrubbing is immediate.
         const std::wstring gop = L" -g 6 -bf 0 -an -movflags +faststart -f mp4 " + quoted(partial);
         const auto nvenc = L" -c:v h264_nvenc -preset p1 -rc vbr -cq 30 -b:v 0" + gop;
         std::vector<std::pair<const char*, std::wstring>> attempts;
         if (tool.nvenc) {
-            attempts.emplace_back("GPU", L"-hwaccel cuda -hwaccel_output_format cuda -i " + quoted(source) + L" -map 0:v:0 -vf scale_cuda=-2:" + std::to_wstring(target) + L":format=yuv420p" + nvenc);
+            attempts.emplace_back("GPU", L"-threads 1 -hwaccel cuda -hwaccel_output_format cuda -i " + quoted(source) + L" -map 0:v:0 -vf scale_cuda=-2:" + std::to_wstring(target) + L":format=yuv420p" + nvenc);
             attempts.emplace_back("GPU encode", L"-i " + quoted(source) + L" -map 0:v:0 -vf scale=-2:" + std::to_wstring(target) + L",format=yuv420p" + nvenc);
         }
         if (tool.x264) attempts.emplace_back("CPU", L"-i " + quoted(source) + L" -map 0:v:0 -vf scale=-2:" + std::to_wstring(target) + L",format=yuv420p -c:v libx264 -preset ultrafast -tune fastdecode -crf 26" + gop);
@@ -717,6 +718,73 @@ struct EditorHost::Impl::Session {
         }
         change([&] { preview = {{"status", "failed"}}; });
     }
+    // NVIDIA only: one FFmpeg process leaves the GPU video decoder about half idle, so the two halves of
+    // the clip are encoded at the same time (about 40% faster), split on a clean keyframe so they join
+    // without re-encoding. Returns false (nothing kept) when the clip doesn't qualify or anything goes
+    // wrong, including GPU session limits, and the single-process build then runs as before.
+    bool build_proxy_halves(const FFmpeg& tool, const Json& info, int target, const fs::path& file, const fs::path& partial) {
+        const double fps = info.value("fps", 0.0), duration = info.value("duration", 0.0);
+        std::vector<int64_t> cuts; int64_t frames;
+        { std::lock_guard lock(mutex); cuts = cut_frames; frames = frame_count; }
+        if (fps <= 0 || duration < 20 || frames < 600 || cuts.empty()) return false;
+        int64_t split = -1;
+        for (const auto cut : cuts)
+            if (cut >= frames * 3 / 10 && cut <= frames * 7 / 10 && (split < 0 || std::llabs(cut - frames / 2) < std::llabs(split - frames / 2))) split = cut;
+        if (split < 0) return false;
+        const std::array<std::pair<int64_t, int64_t>, 2> halves{{{0, split}, {split, frames - split}}};
+        const std::array<fs::path, 2> parts{preview_folder / L"preview-0.ts", preview_folder / L"preview-1.ts"};
+        const auto list = preview_folder / L"preview.ffconcat";
+        const auto cleanup = [&] { std::error_code ignored; for (const auto& part : parts) fs::remove(part, ignored); fs::remove(list, ignored); fs::remove(partial, ignored); };
+        std::array<std::atomic<double>, 2> encoded{};
+        std::array<ProcessResult, 2> results;
+        change([&] { preview = {{"status", "building"}, {"stage", "video"}, {"progress", 0.0}, {"engine", "GPU"}}; });
+        const auto encode = [&](size_t index) {
+            try {
+                const auto [first, count] = halves[index];
+                // Seeking half a frame early decodes from the keyframe before and drops frames until the split.
+                const std::wstring seek = first > 0 ? L" -ss " + number((static_cast<double>(first) - 0.5) / fps) : L"";
+                std::string carry;
+                int64_t written = -1;
+                results[index] = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats -threads 1 -hwaccel cuda -hwaccel_output_format cuda" + seek +
+                    L" -i " + quoted(source) + L" -map 0:v:0 -vf scale_cuda=-2:" + std::to_wstring(target) + L":format=yuv420p -frames:v " + std::to_wstring(count) +
+                    L" -c:v h264_nvenc -preset p1 -rc vbr -cq 30 -b:v 0 -g 6 -bf 0 -an -f mpegts " + quoted(parts[index]),
+                    progress_reader(carry, written, [&](double seconds, double) {
+                        if (seconds < 0) return;
+                        encoded[index] = seconds;
+                        const double done = std::clamp((encoded[0] + encoded[1]) / duration, 0.0, 0.98);
+                        change([&] { preview["progress"] = done; });
+                    }), [&] { return stopping.load(); });
+            } catch (...) { results[index] = {}; }
+        };
+        std::thread other(encode, 1);
+        encode(0);
+        other.join();
+        if (stopping) { cleanup(); return true; }
+        bool ready = true;
+        for (size_t i = 0; i < 2; ++i) { std::error_code error; ready = ready && results[i].code == 0 && !results[i].canceled && fs::file_size(parts[i], error) > 0 && !error; }
+        if (ready) {
+            try {
+                atomic_write(list, "ffconcat version 1.0\n" + concat_entry(parts[0]) + std::format("duration {:.6f}\n", static_cast<double>(split) / fps) + concat_entry(parts[1]));
+                std::string carry;
+                int64_t written = -1;
+                const auto joined = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats -f concat -safe 0 -i " + quoted(list) +
+                    L" -map 0:v:0 -c copy -movflags +faststart -f mp4 " + quoted(partial), progress_reader(carry, written, [](double, double) {}), [&] { return stopping.load(); });
+                if (stopping) { cleanup(); return true; }
+                // Every source frame must be in the joined preview, or it is rebuilt the usual way.
+                ready = joined.code == 0 && written == frames;
+            } catch (...) { ready = false; }
+        }
+        std::error_code error;
+        if (ready) fs::rename(partial, file, error);
+        if (!ready || error) { cleanup(); return false; }
+        { std::error_code ignored; for (const auto& part : parts) fs::remove(part, ignored); fs::remove(list, ignored); }
+        std::lock_guard lock(mutex);
+        proxy = file;
+        preview = {{"status", "ready"}, {"progress", 1.0}, {"engine", "GPU (2 parts)"}};
+        ++revision;
+        return true;
+    }
+
     // URLs for the generated preview files, served only to this editor's page.
     std::string preview_urls() {
         Json result = {{"video", ""}, {"stems", Json::array()}};
