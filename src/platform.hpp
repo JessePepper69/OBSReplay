@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,11 @@ using Json = nlohmann::json;
 namespace fs = std::filesystem;
 struct Paths { fs::path exe, data, obs_config; };
 Paths paths();
+// WebView2 profile for an isolated OBSREPLAY_DATA_DIR run; empty means the default per-user profile.
+std::optional<fs::path> isolated_webview_folder();
+// Test-only (OBSREPLAY_HEADLESS set): windows open off-screen without focus and Explorer is never opened.
+bool headless_mode();
+void show_headless(void* hwnd);
 std::string utf8(const std::wstring& value);
 std::wstring wide(const std::string& value);
 std::string path_string(const fs::path& path);

@@ -99,15 +99,24 @@ struct Controller::Impl {
         Json clips;
         { std::lock_guard lock(mutex); clips = state.at("clips"); }
         const auto old_size = clips.size();
+        std::set<std::string> missing;
         for (auto it = clips.begin(); it != clips.end();) {
             std::error_code error;
             const bool exists = fs::is_regular_file(from_string(it->at("path").get<std::string>()), error);
-            if ((!error && !exists) || error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory)
+            if ((!error && !exists) || error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory) {
+                missing.insert(it->at("path").get<std::string>());
                 it = clips.erase(it);
-            else ++it;
+            } else ++it;
         }
         if (clips.size() == old_size) return;
-        update([&](Json& s) { s["clips"] = clips; });
+        update([&](Json& s) {
+            // Remove only the missing files; clips added meanwhile (edited exports) stay.
+            auto& list = s["clips"];
+            for (auto it = list.begin(); it != list.end();) {
+                if (missing.contains(it->value("path", ""))) it = list.erase(it); else ++it;
+            }
+            clips = list;
+        });
         try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
         catch (...) { fail("Deleted replays were removed from this view, but the recent-clips history could not be saved."); }
     }
@@ -130,6 +139,7 @@ struct Controller::Impl {
                     const auto file = from_string(clip["path"].get<std::string>());
                     if (!file.is_absolute() || !media_file(file)) continue;
                     clips.push_back({{"path", path_string(file)}, {"name", path_string(file.filename())}, {"app", clip.value("app", "")}, {"bytes", clip.value("bytes", uint64_t{})}, {"saved_at", clip.value("saved_at", "")}});
+                    if (clip.value("edited", false)) clips.back()["edited"] = true;
                 }
                 update([&](Json& s) { s["clips"] = clips; });
             }
@@ -640,6 +650,25 @@ bool Controller::knows_clip(const std::string& path) const {
     std::lock_guard lock(impl_->mutex);
     const auto& clips = impl_->state.at("clips");
     return std::any_of(clips.begin(), clips.end(), [&](const Json& clip) { return clip.value("path", "") == path; });
+}
+
+std::expected<bool, std::string> Controller::add_clip(const std::string& path, const std::string& app) {
+    const auto file = from_string(path);
+    std::error_code error;
+    if (!file.is_absolute() || !media_file(file) || !fs::is_regular_file(file, error)) return std::unexpected("The exported video could not be added to recent clips.");
+    const auto bytes = fs::file_size(file, error);
+    const auto text = path_string(file);
+    Json clips;
+    impl_->update([&](Json& s) {
+        auto& list = s["clips"];
+        for (auto it = list.begin(); it != list.end();) { if (it->value("path", "") == text) it = list.erase(it); else ++it; }
+        list.insert(list.begin(), Json{{"path", text}, {"name", path_string(file.filename())}, {"app", app}, {"bytes", error ? 0 : bytes}, {"saved_at", now_iso()}, {"edited", true}});
+        while (list.size() > 50) list.erase(list.end() - 1);
+        clips = list;
+    });
+    try { atomic_write(impl_->paths.data / L"clips.json", clips.dump(2)); }
+    catch (...) { return std::unexpected("The edited video was saved, but recent clips could not be updated."); }
+    return true;
 }
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {

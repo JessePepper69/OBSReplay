@@ -110,6 +110,18 @@ Paths paths() {
     fs::create_directories(result.data);
     return result;
 }
+bool headless_mode() {
+    static const bool enabled = GetEnvironmentVariableW(L"OBSREPLAY_HEADLESS", nullptr, 0) > 0;
+    return enabled;
+}
+void show_headless(void* hwnd) {
+    SetWindowPos(static_cast<HWND>(hwnd), HWND_BOTTOM, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+std::optional<fs::path> isolated_webview_folder() {
+    wchar_t custom[32768]{};
+    if (!GetEnvironmentVariableW(L"OBSREPLAY_DATA_DIR", custom, 32768)) return std::nullopt;
+    return paths().data / L"WebView2";
+}
 
 std::string read_text(const fs::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -416,7 +428,7 @@ void open_help(const std::string& topic) {
         return;
     }
     const wchar_t* url=topic=="webview2"?L"https://developer.microsoft.com/microsoft-edge/webview2/":
-        topic=="obs"?L"https://obsproject.com/download":topic=="capture"?L"https://obsproject.com/kb/game-capture-guide":nullptr;
+        topic=="obs"?L"https://obsproject.com/download":topic=="ffmpeg"?L"https://ffmpeg.org/download.html":topic=="capture"?L"https://obsproject.com/kb/game-capture-guide":nullptr;
     if(!url) throw std::runtime_error("Unknown help topic.");
     if(reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",url,nullptr,nullptr,SW_SHOWNORMAL))<=32) throw failure("Could not open the help page");
 }

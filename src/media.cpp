@@ -132,6 +132,12 @@ std::expected<std::string, std::string> ClipMedia::url(const std::string& path) 
     sources_.emplace(url, from_string(path));
     return url;
 }
+std::string ClipMedia::generated_url(const fs::path& path) {
+    for (const auto& [url, file] : generated_) if (file == path) return url;
+    auto url = std::string(origin) + random_secret();
+    generated_.emplace(url, path);
+    return url;
+}
 HRESULT ClipMedia::respond(ICoreWebView2WebResourceRequestedEventArgs* args) {
     const auto reply = [&](int status, const wchar_t* reason, const std::wstring& extra, IStream* stream = nullptr) {
         ComPtr<ICoreWebView2WebResourceResponse> response;
@@ -146,8 +152,11 @@ HRESULT ClipMedia::respond(ICoreWebView2WebResourceRequestedEventArgs* args) {
         request->get_Uri(&raw); const auto url = raw ? utf8(raw) : ""; CoTaskMemFree(raw);
         raw = nullptr;
         if (!url.starts_with(origin)) return S_OK;
-        const auto source = sources_.find(url);
-        if (source == sources_.end() || !controller_.knows_clip(path_string(source->second))) return reply(404, L"Not Found", L"");
+        auto source = sources_.find(url);
+        if (source == sources_.end() || !controller_.knows_clip(path_string(source->second))) {
+            source = generated_.find(url);
+            if (source == generated_.end()) return reply(404, L"Not Found", L"");
+        }
         request->get_Method(&raw); const std::wstring method = raw ? raw : L""; CoTaskMemFree(raw);
         raw = nullptr;
         if (method == L"OPTIONS") return reply(204, L"No Content", L"");
@@ -165,10 +174,15 @@ HRESULT ClipMedia::respond(ICoreWebView2WebResourceRequestedEventArgs* args) {
         if (has_range) {
             headers->GetHeader(L"Range", &raw); const std::wstring range = raw ? raw : L""; CoTaskMemFree(raw);
             if (!range_bounds(range, total, first, last)) { CloseHandle(file); return reply(416, L"Range Not Satisfiable", L"Content-Range: bytes */" + std::to_wstring(total) + L"\r\n"); }
+            // WebView2 reads a custom response stream completely before delivering any of it, so an
+            // open-ended "bytes=N-" seek would read the rest of the file first. Answer with a bounded
+            // partial range instead; the media player requests the next window as it plays.
+            constexpr ULONGLONG window = 4ull * 1024 * 1024;
+            last = std::min(last, first + window - 1);
         }
         auto extension = source->second.extension().wstring();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-        const auto mime = extension == L".mp4" || extension == L".mov" ? L"video/mp4" : L"video/x-matroska";
+        const auto mime = extension == L".m4a" ? L"audio/mp4" : extension == L".mp4" || extension == L".mov" ? L"video/mp4" : L"video/x-matroska";
         std::wstring extra = std::wstring(L"Content-Type: ") + mime + L"\r\nAccept-Ranges: bytes\r\nContent-Length: " + std::to_wstring(last - first + 1) + L"\r\n";
         if (has_range) extra += L"Content-Range: bytes " + std::to_wstring(first) + L"-" + std::to_wstring(last) + L"/" + std::to_wstring(total) + L"\r\n";
         ComPtr<IStream> stream;

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" data-motion="on">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10151d">
+  <title>Edit replay – OBSReplay</title>
+  <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="editor.css">
+  <script src="tooltip.js" defer></script>
+  <script src="editor.js" defer></script>
+</head>
+<body class="editor">
+  <div class="editor-app">
+    <header class="app-header" data-webview-drag data-webview-maximize="double">
+      <div class="wordmark"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path d="M8 5h8a8 8 0 0 1 0 16H9M8 5v8m0-8 6 5M9 21l5-5"/></svg><span>Editor</span><button type="button" class="title-menu" id="scale-button" data-webview-ignore aria-haspopup="listbox" aria-expanded="false" aria-label="Interface scale, 100%" title="Interface scale"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8V3.5H8M12 3.5h4.5V8M16.5 12v4.5H12M8 16.5H3.5V12"/></svg><span id="scale-value">100%</span><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><span class="title-clip" id="clip-title">Loading replay…</span></div>
+      <div class="connection"><span class="state-dot" id="edit-dot"></span><span id="edit-state">No changes</span></div>
+      <div class="window-controls" data-webview-ignore>
+        <button type="button" data-window="minimize" data-webview-minimize aria-label="Minimize" title="Minimize"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button>
+        <button type="button" data-window="maximize" data-webview-maximize aria-label="Maximize or restore" title="Maximize or restore"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4h8v8H4z"/></svg></button>
+        <button type="button" data-window="close" data-webview-close aria-label="Close editor" title="Close editor"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+      </div>
+    </header>
+
+    <main class="editor-main" id="main">
+      <section class="stage" id="stage" aria-label="Preview">
+        <video id="video" playsinline preload="auto" crossorigin="anonymous"></video>
+        <div class="removed-flag" id="removed-flag" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2m-6 0 .7 10h6.6L14 6"/></svg>Removed section · skipped in preview and export</div>
+        <div class="stage-message" id="stage-message" role="status">Loading replay…</div>
+        <div class="stage-toast" id="toast" role="status" hidden></div>
+        <div class="preview-status" id="preview-status" hidden><span class="preview-spinner" aria-hidden="true"></span><span id="preview-text">Preparing smooth preview…</span></div>
+      </section>
+
+      <div class="transport">
+        <div class="time"><strong id="time-current">0:00.00</strong><span id="time-total">/ 0:00.00</span><small id="time-result" title="Position in the exported video"></small></div>
+        <div class="transport-buttons">
+          <button type="button" class="icon-button" id="prev-cut" aria-label="Previous cut (Up arrow)" title="Previous cut  ↑"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4v12M15 5l-7 5 7 5z"/></svg></button>
+          <button type="button" class="icon-button" id="frame-back" aria-label="Previous frame (comma)" title="Previous frame  ,"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"/></svg></button>
+          <button type="button" class="icon-button play-button" id="play" aria-label="Play (Space)" title="Play  Space"><svg viewBox="0 0 20 20" aria-hidden="true" class="icon-play"><path d="m7 4.5 9 5.5-9 5.5z"/></svg><svg viewBox="0 0 20 20" aria-hidden="true" class="icon-pause"><path d="M7 4.5v11M13 4.5v11"/></svg></button>
+          <button type="button" class="icon-button" id="frame-forward" aria-label="Next frame (period)" title="Next frame  ."><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg></button>
+          <button type="button" class="icon-button" id="next-cut" aria-label="Next cut (Down arrow)" title="Next cut  ↓"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 4v12M5 5l7 5-7 5z"/></svg></button>
+        </div>
+        <div class="transport-extra">
+          <label class="preview-toggle" title="Skip removed sections while playing"><input type="checkbox" id="skip-removed" role="switch" checked><span class="switch-track" aria-hidden="true"></span><span>Preview cuts</span></label>
+          <div class="mixer" role="group" aria-label="Volume">
+            <button type="button" class="icon-button mute" id="mute-master" aria-label="Mute" aria-pressed="false" data-tip="Mute or unmute" data-tip-keys="M"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z"/><path class="volume-wave" d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9"/><path class="volume-off" d="m13.5 8 4 4m0-4-4 4"/></svg></button>
+            <input type="range" id="volume-master" min="0" max="1" step="0.05" value="0.5" aria-label="Volume" data-tip="Volume">
+            <button type="button" class="icon-button" id="tracks-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tracks-panel" aria-label="Track volumes" data-tip-title="Track volumes" data-tip="Set each audio track's level separately, like game audio and microphone."><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5v13M10 3.5v13M15 3.5v13"/><path d="M3 12h4M8 7h4M13 10.5h4"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" role="toolbar" aria-label="Edit sections">
+        <div class="tool-group">
+          <button type="button" id="split" title="Split at playhead  S"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5v15M6.5 6 4 10l2.5 4M13.5 6 16 10l-2.5 4"/></svg>Split<kbd>S</kbd></button>
+          <button type="button" id="toggle-remove" title="Delete (Delete or D) or restore (R) the selected sections"><svg viewBox="0 0 20 20" aria-hidden="true" class="icon-delete"><path d="M4 6h12M8 6V4h4v2m-6 0 .7 10h6.6L14 6"/></svg><svg viewBox="0 0 20 20" aria-hidden="true" class="icon-restore"><path d="M4.5 9.5a5.5 5.5 0 1 1 1.6 3.9M4.5 9.5V5.5m0 4h4"/></svg><span id="toggle-label">Delete section</span><kbd>Del</kbd></button>
+          <button type="button" id="trim-start" aria-label="Delete everything before the playhead (I)" title="Delete everything before the playhead  I"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13 3v14M3.5 10h6.5M6.5 7l-3 3 3 3"/></svg><span class="tool-text">Before</span><kbd>I</kbd></button>
+          <button type="button" id="trim-end" aria-label="Delete everything after the playhead (O)" title="Delete everything after the playhead  O"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3v14M10 10h6.5M13.5 7l3 3-3 3"/></svg><span class="tool-text">After</span><kbd>O</kbd></button>
+        </div>
+        <span class="tool-divider" aria-hidden="true"></span>
+        <div class="tool-group">
+          <button type="button" class="icon-button" id="undo" aria-label="Undo (Ctrl+Z)" title="Undo  Ctrl+Z"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 4 8.5 7.5 12M4 8.5h8a4 4 0 0 1 0 8H9"/></svg></button>
+          <button type="button" class="icon-button" id="redo" aria-label="Redo (Ctrl+Shift+Z)" title="Redo  Ctrl+Shift+Z"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 16 8.5 12.5 12M16 8.5H8a4 4 0 0 0 0 8h3"/></svg></button>
+        </div>
+        <span class="toolbar-spacer"></span>
+        <button type="button" class="text-button" id="zoom-fit" title="Show the whole clip  0" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg>Fit timeline</button>
+        <button type="button" class="text-button" id="shortcuts-button" title="Keyboard shortcuts  ?"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="15" height="10" rx="2"/><path d="M5.5 8h1m2.5 0h1m2.5 0h1M6 12h8"/></svg>Shortcuts</button>
+      </div>
+
+      <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Timeline. Use arrow keys to move the playhead." aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+        <canvas id="timeline-canvas" aria-hidden="true"></canvas>
+      </div>
+    </main>
+
+    <footer class="export-bar" id="export-bar" data-state="idle">
+      <button type="button" class="result-summary" id="result-summary" aria-haspopup="listbox" aria-expanded="false" title="Change how times are shown">
+        <span>Export length<svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></span>
+        <strong id="result-length">—</strong>
+        <small id="result-detail">Loading…</small>
+      </button>
+      <div class="export-idle" id="export-idle">
+        <div class="quality-control">
+          <label for="quality">Quality</label>
+          <div class="quality-column">
+            <div class="quality-slider" data-tip-title="Quality" data-tip="10 · Original keeps your recording's video untouched and still cuts on the exact frame, so it exports in seconds. 1–9 re-compress the whole video to make the file smaller (lower = smaller), which takes longer.">
+              <div class="quality-steps" id="quality-steps" aria-hidden="true"></div>
+              <input type="range" id="quality" min="1" max="10" step="1" value="10" aria-describedby="quality-label quality-hint">
+            </div>
+            <span class="quality-hint" id="quality-hint">Click/Drag to select quality level</span>
+          </div>
+          <output id="quality-value" for="quality">10</output>
+          <span class="quality-label" id="quality-label">Original</span>
+        </div>
+        <div class="export-actions">
+          <small id="export-format">MP4</small>
+          <button type="button" class="primary" id="export"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m-4-4 4 4 4-4M4 13v4h12v-4"/></svg>Export video</button>
+        </div>
+      </div>
+      <div class="ffmpeg-notice" id="ffmpeg-notice" hidden>
+        <div><strong id="ffmpeg-title">FFmpeg is needed to export</strong><p id="ffmpeg-text">Editing works now. Install FFmpeg, or locate ffmpeg.exe if it is already on this PC.</p></div>
+        <div class="notice-actions"><button type="button" id="ffmpeg-copy" class="text-button" title="Copy the install command">Copy winget command</button><button type="button" id="ffmpeg-help" class="text-button">Get FFmpeg</button><button type="button" id="ffmpeg-locate">Locate ffmpeg.exe</button><button type="button" id="probe-retry" hidden>Try again</button></div>
+      </div>
+      <div class="export-progress" id="export-progress" hidden>
+        <div class="progress-copy"><strong id="progress-title">Exporting…</strong><span id="progress-detail"></span></div>
+        <div class="progress-track" role="progressbar" aria-labelledby="progress-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress-bar"><span id="progress-fill"></span></div>
+        <button type="button" id="cancel-export">Cancel</button>
+      </div>
+      <div class="export-result" id="export-result" hidden>
+        <span class="result-mark" id="result-mark" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg></span>
+        <div class="result-copy"><strong id="result-title">Video exported</strong><span id="result-text"></span></div>
+        <div class="notice-actions"><button type="button" id="result-reveal">Show in folder</button><button type="button" id="result-open">Open file</button><button type="button" class="text-button" id="result-dismiss">Done</button></div>
+      </div>
+    </footer>
+  </div>
+  <div class="sr-only" id="announcer" aria-live="polite"></div>
+
+  <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <div class="dialog-heading"><h2 id="shortcuts-title">Keyboard shortcuts</h2><button type="button" class="icon-button" id="shortcuts-close" aria-label="Close shortcuts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
+    <div class="shortcut-columns">
+      <dl>
+        <div><dt><kbd>Space</kbd> <kbd>K</kbd></dt><dd>Play or pause</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Move 1 second</dd></div>
+        <div><dt><kbd>Shift</kbd> <kbd>←</kbd> <kbd>→</kbd></dt><dd>Move 5 seconds</dd></div>
+        <div><dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Previous or next frame (hold to repeat)</dd></div>
+        <div><dt>Double-click Play</dt><dd>Play from the first kept section</dd></div>
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous or next cut</dd></div>
+        <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Start or end of clip</dd></div>
+        <div><dt><kbd>M</kbd></dt><dd>Mute all audio</dd></div>
+      </dl>
+      <dl>
+        <div><dt><kbd>S</kbd></dt><dd>Split at playhead</dd></div>
+        <div><dt><kbd>Delete</kbd> <kbd>D</kbd> · <kbd>R</kbd></dt><dd>Delete · restore sections</dd></div>
+        <div><dt><kbd>I</kbd> <kbd>O</kbd></dt><dd>Delete before or after playhead</dd></div>
+        <div><dt>Click, <kbd>Shift</kbd>, <kbd>Ctrl</kbd></dt><dd>Select, range, add sections</dd></div>
+        <div><dt><kbd>Ctrl</kbd> <kbd>A</kbd> · <kbd>Esc</kbd></dt><dd>Select all · clear selection</dd></div>
+        <div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd> · <kbd>Ctrl</kbd> <kbd>Y</kbd></dt><dd>Undo · redo</dd></div>
+        <div><dt>Drag · double-click a cut</dt><dd>Move · remove that cut</dd></div>
+        <div><dt><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> · wheel</dt><dd>Zoom timeline (0 fits)</dd></div>
+        <div><dt><kbd>Shift</kbd> wheel</dt><dd>Scroll zoomed timeline</dd></div>
+        <div><dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt><dd>Export video</dd></div>
+      </dl>
+    </div>
+  </dialog>
+
+  <div class="menu" id="menu" role="listbox" hidden></div>
+  <section class="tracks-panel" id="tracks-panel" role="dialog" aria-labelledby="tracks-title" hidden>
+    <div class="tracks-heading"><h2 id="tracks-title">Track volumes</h2><p>Changes what you hear while editing. Exports keep every track as recorded.</p></div>
+    <div class="tracks-list" id="tracks-list"></div>
+  </section>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel">Keep editing</button><button value="confirm" class="danger" id="confirm-action">Close</button></div></form></dialog>
+</body>
+</html>

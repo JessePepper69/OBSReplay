@@ -1,5 +1,6 @@
 #include "controller.hpp"
 #include "media.hpp"
+#include "editor.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -110,9 +111,12 @@ struct Desktop {
     std::shared_ptr<saucer::window> window;
     saucer::smartview* view;
     replay::Controller* controller;
+    replay::EditorHost* editors = nullptr;
     HWND hwnd;
     NOTIFYICONDATAW tray{};
     bool tray_ready = false;
+    bool tray_v4 = false;
+    bool menu_open = false;
     bool registered = false;
     Binding save_binding, show_binding;
     std::optional<std::pair<std::string,std::string>> pending_keys;
@@ -142,10 +146,13 @@ struct Desktop {
         ComPtr<ICoreWebView2_3> suspendable;
         if (SUCCEEDED(native.webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) suspendable->Resume();
         native.controller->put_IsVisible(TRUE);
-        window->set_minimized(false);
-        window->show();
-        window->focus();
-        SetForegroundWindow(hwnd);
+        if (replay::headless_mode()) replay::show_headless(hwnd);
+        else {
+            window->set_minimized(false);
+            window->show();
+            window->focus();
+            SetForegroundWindow(hwnd);
+        }
         if (replay_entry) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:reopen'))");
     }
     void hide() {
@@ -176,7 +183,7 @@ struct Desktop {
         tray.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
         wcscpy_s(tray.szTip, L"OBSReplay — capture controls");
         tray_ready = Shell_NotifyIconW(NIM_ADD, &tray) != FALSE;
-        if (tray_ready) { tray.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &tray); }
+        if (tray_ready) { tray.uVersion = NOTIFYICON_VERSION_4; tray_v4 = Shell_NotifyIconW(NIM_SETVERSION, &tray) != FALSE; }
     }
     void command(const std::string& action) {
         const auto result = controller->dispatch(action);
@@ -277,6 +284,10 @@ struct Desktop {
         } catch (const std::exception& e) { return std::unexpected(e.what()); }
     }
     void menu() {
+        // One menu at a time: a second open while the first is tracking would nest menus and swallow the choice.
+        if (menu_open) return;
+        menu_open=true;
+        struct Reset { bool& flag; ~Reset() { flag=false; } } reset{menu_open};
         HMENU popup=CreatePopupMenu();
         if (!popup) return;
         AppendMenuW(popup,MF_STRING,menu_show,L"Show OBSReplay");
@@ -292,7 +303,12 @@ struct Desktop {
         if (selected==menu_show) show();
         else if (selected==menu_save) command("save");
         else if (selected==menu_toggle) command(active ? "stop" : "start");
-        else if (selected==menu_quit) app->quit();
+        else if (selected==menu_quit) {
+            const auto pending=editors ? editors->pending() : std::string{};
+            if (!pending.empty() && MessageBoxW(hwnd,replay::wide(pending+"\n\nQuit OBSReplay anyway?").c_str(),L"OBSReplay",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+            // Quit after the menu has fully closed, so its message loop can't swallow the request.
+            app->post([app=app] { app->quit(); });
+        }
     }
 };
 
@@ -304,7 +320,8 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
         if (message==tray_message) {
             const UINT event=LOWORD(l);
             if (event==NIN_SELECT || event==NIN_KEYSELECT || event==WM_LBUTTONDBLCLK) desktop.show();
-            else if (event==WM_CONTEXTMENU || event==WM_RBUTTONUP) desktop.menu();
+            // Version 4 icons send WM_CONTEXTMENU after WM_RBUTTONUP for the same right-click; open the menu once.
+            else if (desktop.tray_v4 ? event==WM_CONTEXTMENU : event==WM_RBUTTONUP) desktop.menu();
             return 0;
         }
         if (message==WM_HOTKEY) {
@@ -353,15 +370,21 @@ coco::stray start(saucer::application* app) {
         }
     }
     window->set_background({16,21,29,255});
-    auto view_created=saucer::smartview::create({.window=window});
+    auto view_created=saucer::smartview::create({.window=window,.storage_path=replay::isolated_webview_folder()});
     if (!view_created) { MessageBoxW(nullptr,L"The WebView2 interface could not start. Repair or update Microsoft Edge WebView2 Runtime and try again.",L"OBSReplay",MB_OK|MB_ICONERROR);app->quit();co_return; }
     auto view=std::move(*view_created);
     view.set_force_dark(true);
     view.set_background({16,21,29,255});
     view.set_context_menu(false);
+    {
+        // Accidental Ctrl+wheel zoom would rescale the whole interface.
+        ComPtr<ICoreWebView2Settings> settings;
+        if (SUCCEEDED(view.native().webview->get_Settings(&settings)) && settings) settings->put_IsZoomControlEnabled(FALSE);
+    }
     replay::Controller controller(replay::paths());
     replay::ClipMedia media(view.native().webview, controller);
-    Desktop desktop{app,window,&view,&controller,window->native().hwnd};
+    replay::EditorHost editors(app, controller, replay::paths());
+    Desktop desktop{app,window,&view,&controller,&editors,window->native().hwnd};
     SetPropW(desktop.hwnd,instance_property,reinterpret_cast<HANDLE>(1));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
@@ -377,6 +400,8 @@ coco::stray start(saucer::application* app) {
     view.on<saucer::webview::event::permission>([](const std::shared_ptr<saucer::permission::request>& request) { request->accept(false);return saucer::status::handled; });
     view.expose("snapshot",[&] { return desktop.snapshot(); });
     view.expose("media_url",[&](std::string path) { return media.url(path); });
+    view.expose("open_editor",[&](std::string path) { return editors.open(path); });
+    view.expose("editors_pending",[&] { return editors.pending(); });
     view.expose("dispatch",[&](std::string action,std::string payload) { return desktop.dispatch(std::move(action),std::move(payload)); });
     view.expose("pick_folder",[&](std::string current) { return pick_path(desktop.hwnd,current,true); });
     view.expose("pick_obs",[&](std::string current) { return pick_path(desktop.hwnd,current,false); });
@@ -397,7 +422,10 @@ coco::stray start(saucer::application* app) {
 
 int main(int argc,char** argv) {
     for (int i=1;i<argc;++i) if (std::string_view(argv[i])=="--tray") start_hidden=true;
-    HANDLE instance=CreateMutexW(nullptr,FALSE,L"Local\\OBSReplay.Controller.0.1");
+    // An isolated data folder (OBSREPLAY_DATA_DIR) runs as its own instance so checks never touch the user's session.
+    std::wstring instance_name=L"Local\\OBSReplay.Controller.0.1";
+    if (wchar_t isolated[32768]{}; GetEnvironmentVariableW(L"OBSREPLAY_DATA_DIR",isolated,32768)) instance_name+=L"."+std::to_wstring(std::hash<std::wstring>{}(isolated));
+    HANDLE instance=CreateMutexW(nullptr,FALSE,instance_name.c_str());
     if (!instance) return 1;
     if (GetLastError()==ERROR_ALREADY_EXISTS) { EnumWindows(find_instance,0);CloseHandle(instance);return 0; }
     const HRESULT apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);

@@ -160,6 +160,16 @@ summary::marker { color:var(--muted); }
 .inline-actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px; }
 .help-content details { margin-top:22px; }
 .help-content .details-content button { margin-top:12px; }
+.app-tooltip { position:fixed;z-index:100;display:flex;flex-direction:column;gap:3px;max-width:300px;padding:7px 10px;border:1px solid #738dac77;border-radius:7px;background:#0c121b;color:var(--text);font-size:12px;font-weight:450;line-height:1.45;box-shadow:0 8px 24px #03081388;pointer-events:none;opacity:0;translate:0 3px;transition:opacity 120ms var(--ease),translate 120ms var(--ease); }
+.app-tooltip[data-side="below"] { translate:0 -3px; }
+.app-tooltip.visible { opacity:1;translate:0 0; }
+.app-tooltip strong { font-size:12.5px;font-weight:650;color:var(--text); }
+.app-tooltip.rich span:not(.tip-keys) { color:var(--muted); }
+.app-tooltip::after { content:"";position:absolute;left:calc(var(--arrow,50%) - 5px);width:8px;height:8px;background:#0c121b;border:1px solid #738dac77;rotate:45deg; }
+.app-tooltip[data-side="above"]::after { bottom:-5px;border-top:0;border-left:0; }
+.app-tooltip[data-side="below"]::after { top:-5px;border-bottom:0;border-right:0; }
+.tip-keys { display:flex;gap:4px;margin-top:2px; }
+.tip-keys kbd { min-width:20px;padding:1px 6px;border:1px solid #738dac77;border-bottom-width:2px;border-radius:4px;background:#19222e;font-size:11px;font-weight:600;line-height:15px;color:var(--text);text-align:center; }
 .skip { position:fixed;z-index:50;top:44px;left:65px;transform:translateY(-150px);padding:8px 12px;border-radius:5px;background:var(--text);color:var(--canvas); }
 .skip:focus { transform:none; }
 dialog { width:calc(100% - 40px);max-width:430px;padding:23px;border:1px solid #738dac88;border-radius:10px;background:#19222e;color:var(--text);box-shadow:0 18px 55px #03081388;overscroll-behavior:contain; }

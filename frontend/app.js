@@ -401,6 +401,20 @@
     button.addEventListener("click", () => dispatch(action, { path }));
     return button;
   }
+  async function openEditor(clip) {
+    try { await nativeCall("open_editor", clip.path); }
+    catch (error) { showError(error); }
+  }
+  function editButton(clip) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "edit-clip";
+    button.setAttribute("aria-label", `Edit ${clip.name || "replay"}`);
+    button.title = "Cut sections out and export a new video";
+    button.textContent = "Edit";
+    button.addEventListener("click", () => openEditor(clip));
+    return button;
+  }
   const thumbnailCache = new Map();
   const thumbnailJobs = new Map();
   let thumbnailRunning = false;
@@ -562,7 +576,7 @@
     info.append(name, meta);
     const actions = document.createElement("div");
     actions.className = "clip-actions";
-    actions.append(actionButton("Open", "open_clip", clip.path));
+    actions.append(actionButton("Open", "open_clip", clip.path), editButton(clip));
     if (!compact) actions.append(actionButton("Show in folder", "reveal_clip", clip.path));
     preview.append(thumbnail, info);
     row.append(preview, actions);
@@ -805,7 +819,11 @@
   }, true);
   $("footer-hide").addEventListener("click", () => nativeWindowAction("hide"));
   $("hide-window").addEventListener("click", () => nativeWindowAction("hide"));
-  $("quit-app").addEventListener("click", async () => { if (await confirmAction("Quit OBSReplay?", "OBS and any active capture keep running. OBSReplay shortcuts will stop working until you reopen this app.", "Quit OBSReplay")) nativeWindowAction("quit"); });
+  $("quit-app").addEventListener("click", async () => {
+    let editors = "";
+    try { editors = await nativeCall("editors_pending"); } catch {}
+    if (await confirmAction("Quit OBSReplay?", `${editors ? `${editors} ` : ""}OBS and any active capture keep running. OBSReplay shortcuts will stop working until you reopen this app.`, "Quit OBSReplay", Boolean(editors))) nativeWindowAction("quit");
+  });
   $("reset-integration").addEventListener("click", async () => { if (await confirmAction("Reset OBSReplay integration?", "Close OBS first. The dedicated profile and scene collection will be reset. Your saved clips remain.", "Reset integration")) dispatch("reset"); });
   $("confirm-dialog").querySelector("form").addEventListener("submit", event => { event.preventDefault(); closeDialog(event.submitter?.value || "cancel"); });
   $("confirm-dialog").addEventListener("cancel", event => { event.preventDefault(); closeDialog("cancel"); });
@@ -821,6 +839,11 @@
     if (!playerClip || busy()) return;
     const clip = playerClip;
     closePlayer(); dispatch("open_clip", { path: clip.path });
+  });
+  $("player-edit").addEventListener("click", () => {
+    if (!playerClip) return;
+    const clip = playerClip;
+    closePlayer(); openEditor(clip);
   });
   $("player-reveal").addEventListener("click", () => {
     if (!playerClip || busy()) return;
