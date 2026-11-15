@@ -906,15 +906,32 @@ struct EditorHost::Impl::Session {
 
     std::string waveform() { std::lock_guard lock(mutex); return wave_status == "ready" ? base64(peaks) : std::string{}; }
 
+    // Name typed in the export dialog, already reduced to characters a Windows file name allows; empty keeps the default.
+    std::wstring export_name;
+    static std::wstring file_name_from(const std::string& typed) {
+        std::wstring clean;
+        for (const wchar_t c : wide(typed)) if (c >= 32 && !wcschr(L"<>:\"/\\|?*", c)) clean += c;
+        const auto trim = [&] { while (!clean.empty() && (clean.back() == L' ' || clean.back() == L'.')) clean.pop_back(); while (!clean.empty() && clean.front() == L' ') clean.erase(clean.begin()); };
+        trim();
+        if (clean.size() >= 4 && _wcsicmp(clean.c_str() + clean.size() - 4, L".mp4") == 0) { clean.resize(clean.size() - 4); trim(); }
+        if (clean.size() > 120) { clean.resize(120); trim(); }
+        // Device names (CON, NUL, COM1...) cannot be file names.
+        std::wstring base = clean.substr(0, clean.find(L'.'));
+        for (auto& c : base) c = static_cast<wchar_t>(towupper(c));
+        if (base == L"CON" || base == L"PRN" || base == L"AUX" || base == L"NUL" || (base.size() == 4 && (base.starts_with(L"COM") || base.starts_with(L"LPT")) && iswdigit(base[3]))) clean.clear();
+        return clean;
+    }
     fs::path output_for() const {
         auto folder = source.parent_path();
         if (_wcsicmp(folder.filename().c_str(), L"Edited Exports") != 0) folder /= L"Edited Exports";
         std::error_code created;
         fs::create_directories(folder, created);
         if (created) throw std::runtime_error("The Edited Exports folder couldn't be created next to the original clip. Check that folder's permissions.");
-        const auto stem = source.stem().wstring();
+        const bool named = !export_name.empty();
+        const auto stem = named ? export_name : source.stem().wstring();
         for (unsigned i = 1; i < 1000; ++i) {
-            auto candidate = folder / (stem + (i == 1 ? std::wstring(L" (edited)") : L" (edited " + std::to_wstring(i) + L")") + L".mp4");
+            const auto suffix = named ? (i == 1 ? std::wstring{} : L" (" + std::to_wstring(i) + L")") : (i == 1 ? std::wstring(L" (edited)") : L" (edited " + std::to_wstring(i) + L")");
+            auto candidate = folder / (stem + suffix + L".mp4");
             std::error_code error;
             if (!fs::exists(candidate, error) && !fs::exists(fs::path(candidate.wstring() + L".part"), error)) return candidate;
         }
@@ -931,6 +948,7 @@ struct EditorHost::Impl::Session {
             Json info;
             { std::lock_guard lock(mutex); info = probe; if (export_state.value("status", "") == "running") return std::unexpected("An export is already running."); }
             if (info.value("status", "") != "ready") return std::unexpected("The clip is still being analyzed. Try again in a moment.");
+            export_name = file_name_from(request.value("name", std::string{}));
             const double duration = info.value("duration", 0.0);
             std::vector<std::pair<double, double>> segments;
             double previous = -1, total = 0;

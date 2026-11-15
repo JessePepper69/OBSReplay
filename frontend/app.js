@@ -46,7 +46,7 @@
       panel.hidden = name !== "capture";
       groups[name] = panel;
     }
-    const hints = { obs_path: "Use an installed copy of OBS Studio.", clips_dir: "Where your saved replays go.", monitor_id: "Used for entire-display capture.", clip_seconds: "The maximum history kept in memory.", quality: "Higher quality keeps more detail and uses more storage.", desktop_device: "Include sound from your output device.", mic_device: "Choose the microphone to record.", noise: "Reduce background microphone noise." };
+    const hints = { obs_path: "Your installed copy of OBS.", clips_dir: "Where saved replays go.", monitor_id: "Recorded when no game is.", clip_seconds: "How far back a save reaches.", quality: "Higher keeps more detail and takes more space.", desktop_device: "Game and system sound.", mic_device: "Used when Record microphone is on.", noise: "Cuts background noise." };
     function moveField(name, group) {
       const input = $(name);
       const row = input.closest(".field");
@@ -123,7 +123,7 @@
     const setupTitle = document.createElement("strong");
     setupTitle.textContent = "Replay capture isn’t set up yet";
     const setupHint = document.createElement("p");
-    setupHint.textContent = "Choose settings here and select Set up and start, or use the guided setup. OBS closes and reopens on its own.";
+    setupHint.textContent = "Pick your settings, then Set up and start.";
     setupCopy.append(setupTitle, setupHint);
     startup.classList.add("setup-startup");
     startup.querySelector("small").remove();
@@ -305,9 +305,9 @@
     return value;
   }
   const captureNotes = {
-    auto: "Records a fullscreen game while one is running, and the selected display the rest of the time, including notifications.",
-    game: "Captures compatible fullscreen games only. It never records the desktop as a fallback.",
-    desktop: "Entire-display capture includes other windows and notifications. It never uses a game hook."
+    auto: "A fullscreen game while one runs, your display otherwise.",
+    game: "Fullscreen games only.",
+    desktop: "Your whole display, all the time."
   };
   const captureLabels = { auto: "Game or display", game: "Fullscreen games", desktop: "Entire display" };
   function updateDependencies() {
@@ -419,7 +419,6 @@
     $("summary-video").textContent = `${value.output_height ? `${value.output_height}p` : "Original"} / ${value.fps} fps`;
     $("summary-mic").textContent = value.mic_enabled ? "On" : "Off";
     $("capture-folder").textContent = value.clips_dir || "Choose a destination in Settings.";
-    $("capture-note").textContent = captureNotes[value.capture] || captureNotes.auto;
     $("connection-actions").hidden = Boolean(snapshot.connected && snapshot.owned);
     $("setup-intro").hidden = configured() || category !== "capture";
     $("setup-startup-row").hidden = configured();
@@ -443,7 +442,7 @@
   // Clip details as separate pieces (app, saved time, size) so they align and wrap cleanly.
   function fillMeta(container, clip, size = true) {
     container.replaceChildren();
-    for (const [text, name] of [[clip.app, "clip-app"], [formatTime(clip.saved_at), ""], [size ? formatBytes(clip.bytes) : "", ""]]) {
+    for (const [text, name] of [[clip.app ? gameName(clip.app) : "", "clip-app"], [formatTime(clip.saved_at), ""], [size ? formatBytes(clip.bytes) : "", ""]]) {
       if (!text) continue;
       const piece = document.createElement("span");
       if (name) piece.className = name;
@@ -491,8 +490,15 @@
   let playerClip = null;
   let playerReturnFocus = null;
   const clipKey = clip => JSON.stringify([clip.path, clip.bytes, clip.saved_at]);
+  const clipLengths = new Map();
+  function formatLength(seconds) {
+    const total = Math.max(1, Math.round(seconds)), hours = Math.floor(total / 3600), minutes = Math.floor(total / 60) % 60, rest = total % 60;
+    return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${rest}s` : `${rest}s`;
+  }
   function paintThumbnail(image, data, cached = false) {
     if (!image.isConnected) return;
+    const length = clipLengths.get(image.clipKey), chip = image.parentElement.querySelector(".clip-length");
+    if (chip && length) { chip.textContent = formatLength(length); chip.hidden = false; }
     // A frame already in the cache appears at once; only a newly decoded one fades in.
     if (cached) image.style.animation = "none";
     if (data) { image.src = data; image.hidden = false; image.parentElement.dataset.thumbnail = "ready"; }
@@ -547,6 +553,7 @@
       };
       video.onloadeddata = () => {
         video.onloadeddata = null;
+        if (Number.isFinite(video.duration)) clipLengths.set(clipKey(clip), video.duration);
         const position = Math.min(.75, Number.isFinite(video.duration) ? video.duration * .1 : 0);
         if (position > .01) { video.onseeked = capture; video.currentTime = position; }
         else capture();
@@ -568,7 +575,7 @@
           const stillKnown = state.snapshot?.clips?.some(clip => clipKey(clip) === key);
           if (stillKnown) {
             thumbnailCache.set(key, data);
-            while (thumbnailCache.size > 24) thumbnailCache.delete(thumbnailCache.keys().next().value);
+            while (thumbnailCache.size > 120) thumbnailCache.delete(thumbnailCache.keys().next().value);
             for (const image of job.targets) paintThumbnail(image, data);
           }
           thumbnailJobs.delete(key);
@@ -627,6 +634,8 @@
     thumbnail.append(image, play);
     const size = formatBytes(clip.bytes);
     if (size) { const chip = document.createElement("span"); chip.className = "clip-chip"; chip.textContent = size; thumbnail.append(chip); }
+    const length = document.createElement("span"); length.className = "clip-chip clip-length"; length.hidden = true; thumbnail.append(length);
+    image.clipKey = clipKey(clip);
     thumbnail.replayThumbnail = { clip, image };
     thumbnailObserver.observe(thumbnail);
     const info = document.createElement("span");
@@ -634,7 +643,6 @@
     const name = document.createElement("span");
     name.className = "clip-name";
     name.textContent = clip.name || clip.path?.split(/[\\/]/).pop() || "Saved replay";
-    name.title = clip.path || name.textContent;
     const meta = document.createElement("span");
     meta.className = "clip-meta";
     fillMeta(meta, clip, false);
@@ -658,6 +666,7 @@
     const known = new Set(clips.map(clipKey));
     for (const key of thumbnailCache.keys()) if (!known.has(key)) thumbnailCache.delete(key);
     for (const key of thumbnailJobs.keys()) if (!known.has(key)) thumbnailJobs.delete(key);
+    for (const key of clipLengths.keys()) if (!known.has(key)) clipLengths.delete(key);
     if (playerClip && !clips.some(clip => clip.path === playerClip.path)) {
       closePlayer();
       showError("This replay was deleted or moved. Your recent clips have been updated.");
@@ -670,6 +679,62 @@
     const saved = JSON.parse(localStorage.getItem("obsreplay.clipTabs") || "{}");
     for (const list of Object.keys(clipTabs)) if (["replays", "edits"].includes(saved[list])) clipTabs[list] = saved[list];
   } catch {}
+  // Clips page: one game at a time if wanted, 24 clips a page.
+  const pageSize = 24;
+  const clipView = { app: null, page: 0 };
+  // The recorded app is an executable name; drop build suffixes so it reads as the game ("FortniteClient-Win64-Shipping" is Fortnite).
+  function gameName(app) {
+    const name = String(app || "").replace(/\.exe$/i, "").replace(/[-_ ]?(Win64|Win32|WinGDK|x64|x86)([-_ ]?Shipping)?$/i, "").replace(/[-_ ]?Shipping$/i, "").replace(/([a-z])Client$/, "$1").replace(/[-_]+/g, " ").trim();
+    return name || app || "Other";
+  }
+  const pagerIcons = { back: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"/></svg>', next: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"/></svg>' };
+  function renderPager(container, page, pages, first, last, total) {
+    container.hidden = pages < 2;
+    container.replaceChildren();
+    if (pages < 2) return;
+    const step = (label, icon, target, disabled) => {
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "icon-button"; button.innerHTML = icon; button.disabled = disabled;
+      button.setAttribute("aria-label", label);
+      button.addEventListener("click", () => showClipPage(target));
+      return button;
+    };
+    const status = document.createElement("span");
+    status.textContent = `${first}–${last} of ${total}`;
+    container.append(step("Previous page", pagerIcons.back, page - 1, page === 0), status, step("Next page", pagerIcons.next, page + 1, page >= pages - 1));
+  }
+  function renderClipFilters(items) {
+    const counts = new Map();
+    for (const clip of items) { const key = clip.app || ""; counts.set(key, (counts.get(key) || 0) + 1); }
+    if (clipView.app !== null && !counts.has(clipView.app)) clipView.app = null;
+    const filters = $("clips-filters");
+    filters.replaceChildren();
+    if (counts.size > 1) for (const [key, count] of [[null, items.length], ...[...counts].sort((a, b) => b[1] - a[1])]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(clipView.app === key));
+      const total = document.createElement("span");
+      total.textContent = String(count);
+      button.append(key === null ? "All" : gameName(key), total);
+      button.addEventListener("click", () => { if (clipView.app === key) return; clipView.app = key; clipView.page = 0; renderClipLists(); cascade($("clips-list")); });
+      filters.append(button);
+    }
+    return clipView.app === null ? items : items.filter(clip => (clip.app || "") === clipView.app);
+  }
+  function showClipPage(page) {
+    clipView.page = page;
+    renderClipLists();
+    $("main").scrollTop = 0;
+    cascade($("clips-list"));
+  }
+  function cascade(container) {
+    if (!presented || !motionEnabled()) return;
+    [...container.children].slice(0, 12).forEach((row, index) => {
+      const animation = row.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 200, delay: index * 24, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+      entranceAnimations.add(animation);
+      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
+    });
+  }
   const emptyCopy = {
     replays: { title: "No replays saved yet", text: "Start capture, then press your save shortcut. Open your clips folder to find older files.", short: "No replays saved yet. Start capture, then press your save shortcut." },
     edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." }
@@ -684,13 +749,24 @@
       const count = groups[button.dataset.clipTab].length;
       button.querySelector(".tab-count").textContent = count ? String(count) : "";
     }
-    for (const [list, container, limit, compact] of [["clips", $("clips-list"), 50, false], ["latest", $("latest-content"), 8, true]]) {
+    for (let [list, container, limit, compact] of [["clips", $("clips-list"), pageSize, false], ["latest", $("latest-content"), 8, true]]) {
       const tab = clipTabs[list];
-      const items = groups[tab];
+      let items = groups[tab], start = 0;
+      if (!compact) {
+        const all = items.length;
+        items = renderClipFilters(items);
+        const pages = Math.max(1, Math.ceil(items.length / pageSize));
+        clipView.page = Math.min(Math.max(0, clipView.page), pages - 1);
+        start = clipView.page * pageSize;
+        const last = Math.min(items.length, start + pageSize);
+        for (const pager of [$("clips-pager-top"), $("clips-pager-bottom")]) renderPager(pager, clipView.page, pages, start + 1, last, items.length);
+        $("clips-toolbar").hidden = !all || ($("clips-filters").childElementCount === 0 && pages < 2);
+        limit = pageSize;
+      }
       container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
       container.replaceChildren();
       container.className = items.length ? "clips-grid" : "clips-list";
-      if (items.length) for (const clip of items.slice(0, limit)) container.append(clipRow(clip, compact));
+      if (items.length) for (const clip of items.slice(start, start + limit)) container.append(clipRow(clip, compact));
       else {
         const empty = document.createElement("div");
         empty.className = "clips-empty";
@@ -707,15 +783,12 @@
     if (!["replays", "edits"].includes(tab)) return;
     const changed = clipTabs[list] !== tab;
     clipTabs[list] = tab;
+    if (changed && list === "clips") { clipView.app = null; clipView.page = 0; }
     try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
     renderClipLists();
     if (focus) $(`${list}-tab-${tab}`).focus();
     const container = list === "clips" ? $("clips-list") : $("latest-content");
-    if (changed && presented && motionEnabled()) [...container.children].slice(0, 12).forEach((row, index) => {
-      const animation = row.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 200, delay: index * 24, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
-      entranceAnimations.add(animation);
-      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
-    });
+    if (changed) cascade(container);
   }
   async function dispatch(action, payload = {}) {
     if (busy()) return;
@@ -1032,6 +1105,29 @@
 
   arrangeSettings();
   bindSetup();
+  {
+    const reader = $("main");
+    let target = null, expected = 0, frame = 0;
+    const step = () => {
+      frame = 0;
+      if (target === null) return;
+      // Anything else that moved the page (a key, a jump to the top) ends the glide.
+      if (Math.abs(reader.scrollTop - expected) > 2) { target = null; return; }
+      const distance = target - reader.scrollTop;
+      if (Math.abs(distance) < 1) { reader.scrollTop = target; target = null; return; }
+      reader.scrollTop += Math.abs(distance * .3) < 1 ? Math.sign(distance) : distance * .3;
+      expected = reader.scrollTop;
+      frame = requestAnimationFrame(step);
+    };
+    reader.addEventListener("wheel", event => {
+      if (event.defaultPrevented || event.ctrlKey || event.shiftKey || event.deltaX || event.deltaMode !== 0 || Math.abs(event.deltaY) < 50 || !motionEnabled()) { target = null; return; }
+      event.preventDefault();
+      const limit = reader.scrollHeight - reader.clientHeight;
+      target = Math.max(0, Math.min(limit, (target ?? reader.scrollTop) + event.deltaY));
+      expected = reader.scrollTop;
+      if (!frame) frame = requestAnimationFrame(step);
+    }, { passive: false });
+  }
   const readerObserver = new ResizeObserver(() => { scheduleFade(); syncTabIndicators(); });
   readerObserver.observe($("main"));
   readerObserver.observe(document.querySelector(".app-footer"));

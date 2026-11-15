@@ -355,7 +355,6 @@
     const playing = state.ready && !video.paused;
     $("viewer-play").classList.toggle("playing", playing);
     $("viewer-play").setAttribute("aria-label", playing ? "Pause" : "Play");
-    $("viewer-play").title = playing ? "Pause  Space" : "Play  Space";
   }
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

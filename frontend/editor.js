@@ -721,12 +721,22 @@
     return `≈ ${formatBytes(bytes)} · ${plan.original ? `original ${plan.codec}` : `${plan.codec}${plan.height ? ` ${plan.height}p` : ""}`}`;
   }
 
-  async function startExport() {
-    if (!state.mediaReady || $("export").disabled || state.exportStatus === "running") return;
+  // Export first asks for a file name; an empty field keeps the default name.
+  const cleanName = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").replace(/\.mp4$/i, "").trim();
+  function startExport() {
+    if (!state.mediaReady || $("export").disabled || state.exportStatus === "running" || $("export-dialog").open) return;
     video.pause();
+    const original = String(state.native?.clip?.name || "Replay").replace(/\.[^.]+$/, "");
+    $("export-name").value = "";
+    $("export-name").placeholder = `${original} (edited)`;
+    $("export-dialog").showModal();
+    $("export-name").focus();
+  }
+  async function runExport(name) {
+    if (!state.mediaReady || state.exportStatus === "running") return;
     const segments = keptSegments();
     try {
-      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality }));
+      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, name }));
       state.exportStatus = "running";
       state.exportSignature = signature();
       announce("Export started");
@@ -1151,6 +1161,10 @@
   // Sliders and buttons give the keyboard back to the timeline after a pointer interaction.
   for (const element of document.querySelectorAll(".toolbar button, .transport button:not(#tracks-button), #volume-master, #quality, #skip-removed"))
     element.addEventListener("pointerup", () => setTimeout(() => { if (document.activeElement === element) element.blur(); }, 0));
+  $("export-name").addEventListener("input", () => { const input = $("export-name"), clean = input.value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ""); if (clean !== input.value) input.value = clean; });
+  $("export-cancel").addEventListener("click", () => $("export-dialog").close());
+  $("export-dialog").addEventListener("click", event => { if (event.target === $("export-dialog")) $("export-dialog").close(); });
+  $("export-form").addEventListener("submit", event => { event.preventDefault(); const name = cleanName($("export-name").value); $("export-dialog").close(); runExport(name); });
   $("shortcuts-button").addEventListener("click", () => $("shortcuts-dialog").showModal());
   $("shortcuts-close").addEventListener("click", () => $("shortcuts-dialog").close());
   $("shortcuts-dialog").addEventListener("click", event => { if (event.target === $("shortcuts-dialog")) $("shortcuts-dialog").close(); });
@@ -1184,7 +1198,7 @@
   window.addEventListener("editor:close-request", requestClose);
 
   document.addEventListener("keydown", event => {
-    if (event.defaultPrevented || $("confirm-dialog").open || !$("menu").hidden) return;
+    if (event.defaultPrevented || $("confirm-dialog").open || $("export-dialog").open || !$("menu").hidden) return;
     if (!$("tracks-panel").hidden && $("tracks-panel").contains(event.target)) return;
     if ($("shortcuts-dialog").open) { if (event.key === "?") $("shortcuts-dialog").close(); return; }
     const target = event.target;
