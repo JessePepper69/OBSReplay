@@ -31,6 +31,16 @@ bool media_file(const fs::path& path) {
     std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
     return extension == L".mp4" || extension == L".mkv" || extension == L".mov" || extension == L".flv" || extension == L".ts";
 }
+// Recent history keeps up to 50 recorded replays and 50 edited exports (newest first), so exports never push
+// recordings out of the Replays list.
+constexpr std::size_t history_per_kind = 50;
+void trim_history(Json& list) {
+    std::size_t replays = 0, edits = 0;
+    for (auto it = list.begin(); it != list.end();) {
+        auto& count = it->value("edited", false) ? edits : replays;
+        if (++count > history_per_kind) it = list.erase(it); else ++it;
+    }
+}
 bool capture_changed(const Json& before, const Json& after) {
     for (const auto key : {"obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks"})
         if (before.at(key) != after.at(key)) return true;
@@ -231,13 +241,14 @@ struct Controller::Impl {
                 const auto stored = Json::parse(read_text(history_path));
                 Json clips = Json::array();
                 if (stored.is_array()) for (const auto& clip : stored) {
-                    if (clips.size() >= 50) break;
+                    if (clips.size() >= history_per_kind * 2) break;
                     if (!clip.is_object() || !clip.contains("path") || !clip["path"].is_string()) continue;
                     const auto file = from_string(clip["path"].get<std::string>());
                     if (!file.is_absolute() || !media_file(file)) continue;
                     clips.push_back({{"path", path_string(file)}, {"name", path_string(file.filename())}, {"app", clip.value("app", "")}, {"bytes", clip.value("bytes", uint64_t{})}, {"saved_at", clip.value("saved_at", "")}});
                     if (clip.value("edited", false)) clips.back()["edited"] = true;
                 }
+                trim_history(clips);
                 update([&](Json& s) { s["clips"] = clips; });
             }
         } catch (...) { fail("Recent clip history could not be read. Your recordings are still in the clips folder."); }
@@ -254,7 +265,7 @@ struct Controller::Impl {
         update([&](Json& s) {
             s["busy"] = !queue.empty();
             s["operation"] = queue.empty() ? "" : queue.front().name;
-            if (s["error"] == "" && s["message"] == "Checking your OBS setup…") s["message"] = configured ? "Ready when you are" : "Choose your capture settings to configure OBS";
+            if (s["error"] == "" && s["message"] == "Checking your OBS setup…") s["message"] = configured ? "Ready when you are" : "Set up replay capture to get started";
             s["revision"] = s.at("revision").get<uint64_t>() + 1;
         });
         settle();
@@ -481,7 +492,7 @@ struct Controller::Impl {
                 if (it->value("path", "") == text) it = list.erase(it); else ++it;
             }
             list.insert(list.begin(), Json{{"path", text}, {"name", path_string(final.filename())}, {"app", app}, {"bytes", bytes}, {"saved_at", now_iso()}});
-            while (list.size() > 50) list.erase(list.end() - 1);
+            trim_history(list);
             clips = list;
         });
         try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
@@ -801,7 +812,7 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
         auto& list = s["clips"];
         for (auto it = list.begin(); it != list.end();) { if (it->value("path", "") == text) it = list.erase(it); else ++it; }
         list.insert(list.begin(), Json{{"path", text}, {"name", path_string(file.filename())}, {"app", app}, {"bytes", error ? 0 : bytes}, {"saved_at", now_iso()}, {"edited", true}});
-        while (list.size() > 50) list.erase(list.end() - 1);
+        trim_history(list);
         clips = list;
     });
     try { atomic_write(impl_->paths.data / L"clips.json", clips.dump(2)); }

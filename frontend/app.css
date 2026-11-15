@@ -265,3 +265,12 @@ html[data-motion="off"] button:active { translate:none; }
 html[data-motion="off"] .task-list li[data-state="active"] .task-mark { border-top-color:var(--ui-accent-text); }
 @media(max-width:650px) { .setup-actions-row,.task-list{margin-left:0}.setup-steps li:not(:last-child)::after{width:12px}.mode-option{flex-wrap:wrap}.mode-tag{order:-1;width:100%;padding-left:28px} }
 #setup-all-settings { white-space:nowrap; }
+.clip-tabs { margin:-4px 0 6px; }
+.clip-tabs button { gap:0; font-variant-numeric:tabular-nums; }
+.tab-count { margin-left:7px;font-size:12px;font-weight:500;color:var(--dim); }
+.tab-count:empty { display:none; }
+.clip-tabs button[aria-selected="true"] .tab-count { color:#cfe3fb; }
+.latest-heading { display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-width:0; }
+.clip-tabs.compact { margin:0;padding:2px; }
+.clip-tabs.compact button { min-height:28px;padding:4px 11px;font-size:12px; }
+.clip-tabs.compact .tab-count { margin-left:6px;font-size:11px; }

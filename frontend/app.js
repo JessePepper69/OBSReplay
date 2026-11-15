@@ -612,20 +612,58 @@
       closePlayer();
       showError("This replay was deleted or moved. Your recent clips have been updated.");
     }
-    $("clips-list").replaceChildren();
-    $("latest-content").replaceChildren();
-    $("latest-content").className = clips.length ? "" : "empty-line";
-    if (clips.length) {
-      for (const clip of clips.slice(0, 50)) $("clips-list").append(clipRow(clip));
-      for (const clip of clips.slice(0, 5)) $("latest-content").append(clipRow(clip, true));
-    } else {
-      const empty = document.createElement("div");
-      empty.className = "clips-empty";
-      const title = document.createElement("h2"); title.textContent = "No replays saved yet";
-      const description = document.createElement("p"); description.textContent = "Start capture, then press your save shortcut. Open your clips folder to find older files.";
-      empty.append(title, description);
-      $("clips-list").append(empty);
-      $("latest-content").textContent = "No replays saved yet. Start capture, then press your save shortcut.";
+    renderClipLists(clips);
+  }
+  // Recorded replays and edited exports are separate lists, on Clips and in Latest on Capture.
+  const clipTabs = { clips: "replays", latest: "replays" };
+  try {
+    const saved = JSON.parse(localStorage.getItem("obsreplay.clipTabs") || "{}");
+    for (const list of Object.keys(clipTabs)) if (["replays", "edits"].includes(saved[list])) clipTabs[list] = saved[list];
+  } catch {}
+  const emptyCopy = {
+    replays: { title: "No replays saved yet", text: "Start capture, then press your save shortcut. Open your clips folder to find older files.", short: "No replays saved yet. Start capture, then press your save shortcut." },
+    edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." }
+  };
+  function renderClipLists(clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : []) {
+    const groups = { replays: clips.filter(clip => !clip.edited), edits: clips.filter(clip => clip.edited) };
+    for (const button of document.querySelectorAll("[data-clip-tab]")) {
+      const selected = clipTabs[button.dataset.clipList] === button.dataset.clipTab;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      const count = groups[button.dataset.clipTab].length;
+      button.querySelector(".tab-count").textContent = count ? String(count) : "";
+    }
+    for (const [list, container, limit, compact] of [["clips", $("clips-list"), 50, false], ["latest", $("latest-content"), 5, true]]) {
+      const tab = clipTabs[list];
+      const items = groups[tab];
+      container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
+      container.replaceChildren();
+      container.className = list === "clips" ? "clips-list" : items.length ? "" : "empty-line";
+      if (items.length) for (const clip of items.slice(0, limit)) container.append(clipRow(clip, compact));
+      else if (compact) container.textContent = emptyCopy[tab].short;
+      else {
+        const empty = document.createElement("div");
+        empty.className = "clips-empty";
+        const title = document.createElement("h2"); title.textContent = emptyCopy[tab].title;
+        const description = document.createElement("p"); description.textContent = emptyCopy[tab].text;
+        empty.append(title, description);
+        container.append(empty);
+      }
+    }
+    scheduleFade();
+  }
+  function showClipTab(list, tab, focus = false) {
+    if (!["replays", "edits"].includes(tab)) return;
+    const changed = clipTabs[list] !== tab;
+    clipTabs[list] = tab;
+    try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
+    renderClipLists();
+    if (focus) $(`${list}-tab-${tab}`).focus();
+    const container = list === "clips" ? $("clips-list") : $("latest-content");
+    if (changed && presented && motionEnabled()) {
+      const animation = container.animate([{ opacity: .4, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
+      entranceAnimations.add(animation);
+      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     }
   }
   async function dispatch(action, payload = {}) {
@@ -978,7 +1016,16 @@
   for (const button of document.querySelectorAll("[data-help]")) button.addEventListener("click", () => dispatch("help", { topic: button.dataset.help }));
   $("help-button").addEventListener("click", () => showTab("help"));
   $("capture-settings").addEventListener("click", () => showTab("settings"));
-  $("all-clips").addEventListener("click", () => showTab("clips"));
+  $("all-clips").addEventListener("click", () => { showClipTab("clips", clipTabs.latest); showTab("clips"); });
+  for (const button of document.querySelectorAll("[data-clip-tab]")) {
+    button.addEventListener("click", () => showClipTab(button.dataset.clipList, button.dataset.clipTab));
+    button.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? "replays" : event.key === "End" ? "edits" : button.dataset.clipTab === "replays" ? "edits" : "replays";
+      showClipTab(button.dataset.clipList, next, true);
+    });
+  }
   $("dismiss-error").addEventListener("click", () => { state.dismissedError = state.localError || [errorText(state.snapshot?.error), errorText(state.snapshot?.hotkey_error)].filter(Boolean).join("\n"); state.localError = ""; renderFeedback(); });
   $("change-conflicting-shortcut").addEventListener("click", () => {
     showTab("settings");
