@@ -916,7 +916,7 @@
     menu.hidden = false;
     menuAnchor = anchor; menuSelect = onSelect;
     anchor.setAttribute("aria-expanded", "true");
-    const rect = anchor.getBoundingClientRect(), box = menu.getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect(), box = { width: menu.offsetWidth, height: menu.offsetHeight };
     const below = rect.bottom + 6 + box.height <= innerHeight;
     menu.style.left = `${Math.min(innerWidth - box.width - 8, Math.max(8, rect.left))}px`;
     menu.style.top = `${below ? rect.bottom + 6 : Math.max(8, rect.top - box.height - 6)}px`;

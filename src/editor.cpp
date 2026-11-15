@@ -160,6 +160,30 @@ ProcessResult run_tool(const fs::path& exe, const std::wstring& arguments, const
 
 struct FFmpeg { std::string status = "checking"; fs::path exe; std::string version, message; bool nvenc = false, hevc_nvenc = false, x264 = false, x265 = false; };
 
+// Decodes the first audio track to 8 kHz mono and keeps one peak (0..255) per 80 samples: 100 peaks per second.
+// The editor and the replay viewer draw their waveform lanes from this.
+struct Peaks { std::vector<unsigned char> values; bool complete = false; };
+Peaks audio_peaks(const FFmpeg& tool, const fs::path& source, const std::function<bool()>& canceled) {
+    Peaks result;
+    int16_t peak = 0; unsigned counted = 0; std::string carry;
+    const auto wave = run_tool(tool.exe, L"-hide_banner -nostdin -loglevel error -i " + quoted(source) + L" -map 0:a:0 -ac 1 -ar 8000 -f s16le -acodec pcm_s16le pipe:1",
+        [&](std::string_view part) {
+            carry.append(part);
+            const size_t usable = carry.size() & ~size_t{1};
+            for (size_t i = 0; i < usable; i += 2) {
+                int16_t sample; std::memcpy(&sample, carry.data() + i, 2);
+                const int16_t magnitude = sample == INT16_MIN ? INT16_MAX : static_cast<int16_t>(std::abs(sample));
+                peak = std::max(peak, magnitude);
+                if (++counted == 80) { result.values.push_back(static_cast<unsigned char>(std::min(255, peak / 128))); peak = 0; counted = 0; }
+            }
+            carry.erase(0, usable);
+        }, canceled);
+    if (wave.canceled) return result;
+    if (counted) result.values.push_back(static_cast<unsigned char>(std::min(255, peak / 128)));
+    result.complete = wave.code == 0;
+    return result;
+}
+
 FFmpeg inspect_ffmpeg(const fs::path& exe) {
     FFmpeg info; info.exe = exe;
     std::error_code error;
@@ -385,6 +409,10 @@ struct EditorHost::Impl {
     std::list<std::unique_ptr<Session>> sessions;
     uint64_t next_id = 1;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+    // Replay viewer waveform: one decode at a time on a worker; asking for another clip makes the running one stale.
+    std::atomic<uint64_t> wave_run{0};
+    std::map<uint64_t, std::thread> wave_workers;
+    std::string wave_key, wave_json;  // last finished result (UI thread only)
 
     Impl(saucer::application* a, Controller& c, Paths p) : app(a), controller(c), paths(std::move(p)) { try { sweep_previews(); } catch (...) {} }
     // Editor preferences that the page may change. Values are validated before they are saved.
@@ -449,6 +477,43 @@ struct EditorHost::Impl {
         });
     }
     bool detecting() { std::lock_guard lock(ffmpeg_mutex); return ffmpeg.status == "checking"; }
+    void detect_if_needed() {
+        bool retry;
+        { std::lock_guard lock(ffmpeg_mutex); retry = detection == 0 || (ffmpeg.status != "ready" && ffmpeg.status != "checking"); }
+        if (retry) detect();
+    }
+    void waveform(const std::string& path, std::function<void(std::string)> done) {
+        static const std::string unavailable = R"({"status":"unavailable"})";
+        const uint64_t run = ++wave_run;  // a decode that is still running is now stale and stops
+        if (!controller.knows_clip(path)) return done(unavailable);
+        const auto source = from_string(path);
+        std::error_code error;
+        const auto bytes = fs::file_size(source, error);
+        if (error) return done(unavailable);
+        const auto written = fs::last_write_time(source, error);
+        const auto key = path + "|" + std::to_string(bytes) + "|" + std::to_string(error ? 0 : written.time_since_epoch().count());
+        if (key == wave_key) return done(wave_json);
+        detect_if_needed();
+        wave_workers.emplace(run, std::thread([this, run, source, key, token = std::weak_ptr<bool>(alive), done = std::move(done)]() mutable {
+            std::string json = unavailable;
+            try {
+                const auto stale = [&] { return wave_run.load() != run; };
+                for (int i = 0; i < 2000 && detecting() && !stale(); ++i) Sleep(10);
+                const auto tool = ffmpeg_info();
+                if (!stale() && tool.status == "ready") {
+                    const auto wave = audio_peaks(tool, source, stale);
+                    if (wave.complete && !wave.values.empty()) json = Json{{"status", "ready"}, {"rate", 100}, {"peaks", base64(wave.values)}}.dump();
+                }
+            } catch (...) {}
+            // The promise is settled on the UI thread. This worker never waits for it, so it can always be joined.
+            app->post([this, run, key, token, json = std::move(json), done = std::move(done)]() mutable {
+                if (!token.lock()) return;
+                if (const auto worker = wave_workers.find(run); worker != wave_workers.end()) { worker->second.join(); wave_workers.erase(worker); }
+                if (json != unavailable) { wave_key = key; wave_json = json; }
+                done(std::move(json));
+            });
+        }));
+    }
     void remove(uint64_t id);
 };
 
@@ -834,23 +899,9 @@ struct EditorHost::Impl::Session {
     }
 
     void waveform_pass(const FFmpeg& tool) {
-        std::vector<unsigned char> values;
-        int16_t peak = 0; unsigned counted = 0; std::string carry;
-        const auto wave = run_tool(tool.exe, L"-hide_banner -nostdin -loglevel error -i " + quoted(source) + L" -map 0:a:0 -ac 1 -ar 8000 -f s16le -acodec pcm_s16le pipe:1",
-            [&](std::string_view part) {
-                carry.append(part);
-                const size_t usable = carry.size() & ~size_t{1};
-                for (size_t i = 0; i < usable; i += 2) {
-                    int16_t sample; std::memcpy(&sample, carry.data() + i, 2);
-                    const int16_t magnitude = sample == INT16_MIN ? INT16_MAX : static_cast<int16_t>(std::abs(sample));
-                    peak = std::max(peak, magnitude);
-                    if (++counted == 80) { values.push_back(static_cast<unsigned char>(std::min(255, peak / 128))); peak = 0; counted = 0; }
-                }
-                carry.erase(0, usable);
-            }, [&] { return stopping.load(); });
+        auto wave = audio_peaks(tool, source, [&] { return stopping.load(); });
         if (stopping) return;
-        if (counted) values.push_back(static_cast<unsigned char>(std::min(255, peak / 128)));
-        change([&] { peaks = std::move(values); wave_status = wave.code == 0 && !peaks.empty() ? "ready" : "failed"; });
+        change([&] { peaks = std::move(wave.values); wave_status = wave.complete && !peaks.empty() ? "ready" : "failed"; });
     }
 
     std::string waveform() { std::lock_guard lock(mutex); return wave_status == "ready" ? base64(peaks) : std::string{}; }
@@ -1167,6 +1218,8 @@ struct EditorHost::Impl::Session {
 
 EditorHost::Impl::~Impl() {
     alive.reset();
+    ++wave_run;
+    for (auto& [run, worker] : wave_workers) if (worker.joinable()) worker.join();
     sessions.clear();
     for (auto& detector : detectors) if (detector.joinable()) detector.join();
 }
@@ -1190,6 +1243,10 @@ std::string EditorHost::pending() const {
 EditorHost::EditorHost(saucer::application* app, Controller& controller, Paths paths) : impl_(std::make_unique<Impl>(app, controller, std::move(paths))) {}
 EditorHost::~EditorHost() = default;
 
+void EditorHost::waveform(const std::string& path, std::function<void(std::string)> done) {
+    try { impl_->waveform(path, done); } catch (...) { done(R"({"status":"unavailable"})"); }
+}
+
 std::expected<bool, std::string> EditorHost::open(const std::string& path) {
     auto& host = *impl_;
     try {
@@ -1209,11 +1266,7 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             for (const auto& item : Json::parse(host.controller.snapshot()).at("clips")) if (item.value("path", "") == path) { clip = item; break; }
         } catch (...) {}
         if (!clip.contains("name")) clip["name"] = path_string(from_string(path).filename());
-        {
-            bool retry;
-            { std::lock_guard lock(host.ffmpeg_mutex); retry = host.detection == 0 || (host.ffmpeg.status != "ready" && host.ffmpeg.status != "checking"); }
-            if (retry) host.detect();
-        }
+        host.detect_if_needed();
         auto created = saucer::window::create(host.app);
         if (!created) return std::unexpected("Windows could not create the editor window.");
         auto session = std::make_unique<Impl::Session>(host, host.next_id++, clip);

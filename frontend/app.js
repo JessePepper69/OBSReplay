@@ -90,7 +90,7 @@
     groups.app.append($("hotkey-help"), $("hotkey-message"));
     const animationRow = document.createElement("label");
     animationRow.className = "check-row";
-    animationRow.innerHTML = '<span><strong>Animations</strong><small>Smooth page, panel, and control transitions.</small></span><input type="checkbox" id="animations_enabled" name="animations_enabled" checked>';
+    animationRow.innerHTML = '<span><strong>Animations</strong><small>Page, panel and control transitions.</small></span><input type="checkbox" id="animations_enabled" name="animations_enabled" checked>';
     groups.app.append(animationRow);
     for (const name of ["start_at_login", "replay_enabled", "sort_by_app", "save_sound"]) groups.app.append($(name).closest(".check-row"));
     const startup = document.createElement("label");
@@ -129,14 +129,13 @@
     startup.querySelector("small").remove();
     setupCopy.append(startup);
     const webviewHelp = $("setup-intro").querySelector('[data-help="webview2"]');
-    if (webviewHelp) $("help-view").querySelector(".inline-actions").append(webviewHelp);
+    if (webviewHelp) $("help-links").append(webviewHelp);
     const guided = document.createElement("button");
     guided.type = "button";
-    guided.className = "text-button";
     guided.id = "open-guided-setup";
     guided.textContent = "Guided setup";
     $("setup-intro").replaceChildren(setupCopy, guided);
-    for (const item of document.querySelectorAll("#capture-view>*,#clips-view>*,#settings-view>.view-heading,#settings-view>.settings-tabs,#setup-intro,#help-view>.view-heading,#help-view>.help-content,#setup-view>.view-heading,#setup-view>.setup-steps,[data-step-panel]>.setup-panel,[data-step-panel]>.setup-hint")) item.classList.add("entrance-item");
+    for (const item of document.querySelectorAll("#capture-view>*,#clips-view>*,#settings-view>.view-heading,#settings-view>.settings-tabs,#setup-intro,#help-view>.view-heading,#help-view .help-content>.card,#setup-view>.view-heading,#setup-view>.setup-steps,[data-step-panel]>.setup-panel,[data-step-panel]>.setup-hint")) item.classList.add("entrance-item");
   }
 
   function cancelEntrance() {
@@ -151,11 +150,12 @@
     if (!motionEnabled()) cancelEntrance();
   }
   function entranceTargets(view) { return [...view.querySelectorAll(".entrance-item")].filter(element => element.getClientRects().length && !element.closest("[hidden]")); }
-  function playEntrance(view) {
+  function playEntrance(view, from = 0) {
     cancelEntrance();
     if (!motionEnabled() || document.hidden) return;
-    entranceTargets(view).forEach((element, index) => {
-      const animation = element.animate([{ opacity: .35, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 220, delay: Math.min(index * 30, 270), easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+    // Blocks rise in order (260ms, 6px); the fifth and later arrive with the fourth step.
+    entranceTargets(view).slice(0, 24).forEach((element, index) => {
+      const animation = element.animate([{ opacity: from, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 260, delay: Math.min(index, 4) * 40, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
       entranceAnimations.add(animation);
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     });
@@ -166,12 +166,13 @@
     const view = $(state.tab + "-view");
     if (motionEnabled() && typeof api()?.ui_ready === "function") {
       preparedElements = entranceTargets(view);
-      for (const element of preparedElements) { element.style.opacity = ".35"; element.style.transform = "translateY(4px)"; }
+      for (const element of preparedElements) { element.style.opacity = ".35"; element.style.transform = "translateY(6px)"; }
     }
     try { if (typeof api()?.ui_ready === "function") await nativeCall("ui_ready"); }
     catch (error) { showError(error); }
     presented = true;
-    playEntrance($(state.tab + "-view"));
+    playEntrance($(state.tab + "-view"), .35);
+    syncTabIndicators();
   }
   function showCategory(name, animate = true) {
     cancelRecording();
@@ -184,15 +185,17 @@
       $("settings-" + button.dataset.category).hidden = !selected;
     }
     $("setup-intro").hidden = configured() || name !== "capture";
+    $("refresh-devices").hidden = name !== "audio";
     $("main").scrollTop = 0;
     if (changed && presented && animate) playEntrance($("settings-" + name));
+    syncTabIndicators();
     scheduleFade();
   }
 
   function api() { return window.saucer?.exposed; }
   function nativeCall(name, ...args) {
     const call = nativeChain.then(() => {
-      if (typeof api()?.[name] !== "function") throw new Error("The native controller is unavailable. Open OBSReplay.exe to use capture controls.");
+      if (typeof api()?.[name] !== "function") throw new Error("OBSReplay isn’t connected to its background service. Close and reopen OBSReplay.");
       return api()[name](...args);
     });
     nativeChain = call.catch(() => {});
@@ -285,9 +288,13 @@
       }
     }
     state.dirty = false;
+    showPathEnds();
     $("setup-start-at-login").checked = $("start_at_login").checked;
     updateCodecs();
     updateDependencies();
+  }
+  function showPathEnds() {
+    for (const id of ["obs_path", "clips_dir", "setup-folder"]) { const input = $(id); if (document.activeElement !== input) input.scrollLeft = input.scrollWidth; }
   }
   function formValue() {
     const value = { ...settings() };
@@ -341,6 +348,8 @@
     else $("help-button").removeAttribute("aria-current");
     $("main").scrollTop = 0;
     if (changed && presented) playEntrance($(tab + "-view"));
+    syncTabIndicators();
+    showPathEnds();
     scheduleFade();
     renderFeedback();
   }
@@ -356,11 +365,11 @@
     $("settings-actions").hidden = state.tab !== "settings";
     $("footer-hide").hidden = state.tab === "settings" || state.tab === "setup";
     const pending = busy();
-    for (const button of document.querySelectorAll(".player-actions button")) button.disabled = !state.native || pending;
+    for (const button of document.querySelectorAll("#replay-player .viewer-actions button")) button.disabled = !state.native || pending;
     $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : snapshot?.compression_update ? "Apply improved compression" : configured() ? "Apply changes" : "Set up and start";
     $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair() && !snapshot?.compression_update);
     $("discard-settings").disabled = !state.dirty || pending;
-    if (!state.native) $("footer-status").textContent = "Native controller unavailable";
+    if (!state.native) $("footer-status").textContent = "Not connected. Reopen OBSReplay.";
     else if (pending) $("footer-status").textContent = snapshot?.message || "Working…";
     else if (state.tab === "settings" && state.dirty) $("footer-status").textContent = "Unapplied changes";
     else if (state.tab === "setup") $("footer-status").textContent = setupFooterText();
@@ -371,7 +380,8 @@
     const canControl = Boolean(snapshot?.connected && snapshot?.owned);
     const needsAttention = canControl && snapshot?.capture_ready === false;
     $("save-button").disabled = !state.native || pending || !canControl || !snapshot?.replay_active || needsAttention;
-    $("save-button").lastChild.textContent = state.pending?.action === "save" || snapshot?.operation === "save" && snapshot?.busy ? "Saving…" : "Save replay";
+    $("save-label").textContent = state.pending?.action === "save" || snapshot?.operation === "save" && snapshot?.busy ? "Saving…" : "Save replay";
+    $("capture-repair").disabled = !state.native || pending;
     $("toggle-capture").disabled = !state.native || pending || !configured() || Boolean(snapshot?.connected && !snapshot?.owned) || Boolean(needsAttention && !snapshot?.replay_active);
     renderSetup();
     scheduleFade();
@@ -380,23 +390,28 @@
     const snapshot = state.snapshot || {};
     const value = settings();
     const active = Boolean(snapshot.replay_active && snapshot.connected && snapshot.owned);
-    $("connection-label").textContent = !state.native ? "Controller unavailable" : !configured() && !snapshot.connected ? "Not set up yet" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
+    $("connection-label").textContent = !state.native ? "Not connected" : !configured() && !snapshot.connected ? "Not set up yet" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
     $("connection-dot").className = `state-dot${snapshot.connected && snapshot.owned ? " ready" : ""}`;
     let title = "Capture stopped";
     let description = "Start capture to keep your recent moments ready to save.";
-    if (!state.native) { title = "Open the desktop app"; description = "Capture controls need the native OBSReplay controller."; }
+    if (!state.native) { title = "Open the desktop app"; description = "This page needs the OBSReplay app. Open OBSReplay.exe to control capture."; }
     else if (!configured()) { title = "Ready to set up"; description = "Configure a dedicated OBS profile to get started."; }
     else if (snapshot.connected && !snapshot.owned) { title = "Different OBS session"; description = "Switch to the OBSReplay profile and collection before controlling capture."; }
     else if (active) { title = "Capturing"; description = `Save up to the last ${formatDuration(value.clip_seconds)} with your replay shortcut.`; }
     else if (!snapshot.connected) { title = snapshot.busy ? "Connecting…" : "OBS disconnected"; description = "Start capture or reconnect to your dedicated OBS session."; }
     if (snapshot.connected && snapshot.owned && snapshot.capture_ready === false) {
       title = "Capture needs attention";
-      description = `${snapshot.capture_issue || "The dedicated capture source is not ready."} Choose Repair OBS setup in Settings.`;
+      description = `${snapshot.capture_issue || "The dedicated capture source is not ready."}`;
     }
     if (snapshot.busy && ["start", "stop"].includes(snapshot.operation)) title = snapshot.operation === "start" ? "Starting capture…" : "Stopping capture…";
     $("capture-state").textContent = title;
     $("capture-description").textContent = description;
     $("capture-mark").className = `capture-mark${snapshot.connected && (!snapshot.owned || snapshot.capture_ready === false) ? " warning" : active ? " active" : ""}`;
+    $("capture-hero").classList.toggle("live", active);
+    // One primary per state: Save while capturing, Repair when the capture source is broken, otherwise Start.
+    $("capture-repair").hidden = !needsRepair();
+    $("save-button").hidden = !active || needsRepair();
+    $("toggle-capture").classList.toggle("primary", !active && !needsRepair());
     $("toggle-capture").textContent = active ? "Stop capture" : "Start capture";
     $("save-shortcut").textContent = value.save_hotkey;
     $("summary-length").textContent = formatDuration(value.clip_seconds);
@@ -408,15 +423,51 @@
     $("connection-actions").hidden = Boolean(snapshot.connected && snapshot.owned);
     $("setup-intro").hidden = configured() || category !== "capture";
     $("setup-startup-row").hidden = configured();
-    $("settings-subtitle").textContent = configured() ? "Capture, audio, and app preferences." : "Choose your replay capture settings.";
     $("help-status").textContent = snapshot.status ? `${snapshot.status}${snapshot.message ? `: ${snapshot.message}` : ""}` : $("connection-label").textContent;
   }
-  function actionButton(label, action, path) {
+  const icons = {
+    edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5.5" cy="6" r="2"/><circle cx="5.5" cy="14" r="2"/><path d="M7.3 7.2 16 14M7.3 12.8 16 6"/></svg>',
+    open: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 4H16v4.5M16 4l-6.5 6.5M14 11.5v3a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 4 14.5v-7A1.5 1.5 0 0 1 5.5 6h3"/></svg>',
+    folder: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3l1.6 2h6.4A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>'
+  };
+  function iconAction(label, icon, action, clip) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", () => dispatch(action, { path }));
+    button.className = "icon-only";
+    button.setAttribute("aria-label", `${label}: ${clip.name || "replay"}`);
+    button.title = label;
+    button.innerHTML = icon;
+    button.addEventListener("click", () => dispatch(action, { path: clip.path }));
     return button;
+  }
+  // Clip details as separate pieces (app, saved time, size) so they align and wrap cleanly.
+  function fillMeta(container, clip, size = true) {
+    container.replaceChildren();
+    for (const [text, name] of [[clip.app, "clip-app"], [formatTime(clip.saved_at), ""], [size ? formatBytes(clip.bytes) : "", ""]]) {
+      if (!text) continue;
+      const piece = document.createElement("span");
+      if (name) piece.className = name;
+      piece.textContent = text;
+      container.append(piece);
+    }
+  }
+  // Segmented tabs share one selected fill that slides to the chosen tab.
+  function syncTabIndicators() {
+    for (const tabs of document.querySelectorAll(".settings-tabs")) {
+      const selected = tabs.querySelector('[aria-selected="true"]');
+      if (!selected || !selected.offsetWidth) continue;
+      tabs.style.setProperty("--tab-x", `${selected.offsetLeft}px`);
+      tabs.style.setProperty("--tab-w", `${selected.offsetWidth}px`);
+      if (!("indicator" in tabs.dataset)) requestAnimationFrame(() => { tabs.dataset.indicator = ""; });
+    }
+  }
+  function animateDialog(dialog, opening) {
+    if (!motionEnabled()) return Promise.resolve();
+    const animation = opening
+      ? dialog.animate([{ opacity: 0, transform: "translateY(8px) scale(.97)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" })
+      : dialog.animate([{ opacity: 1, transform: "translateY(0) scale(1)" }, { opacity: 0, transform: "translateY(5px) scale(.98)" }], { duration: 150, easing: "ease-in", fill: "forwards" });
+    entranceAnimations.add(animation);
+    return animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
   }
   async function openEditor(clip) {
     try { await nativeCall("open_editor", clip.path); }
@@ -425,10 +476,11 @@
   function editButton(clip) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "edit-clip";
+    button.className = "icon-only edit-clip";
     button.setAttribute("aria-label", `Edit ${clip.name || "replay"}`);
-    button.title = "Cut sections out and export a new video";
-    button.textContent = "Edit";
+    button.dataset.tipTitle = "Edit";
+    button.dataset.tip = "Cut sections out and export a new video";
+    button.innerHTML = icons.edit;
     button.addEventListener("click", () => openEditor(clip));
     return button;
   }
@@ -437,11 +489,12 @@
   let thumbnailRunning = false;
   let cancelThumbnail = null;
   let playerClip = null;
-  let playerRequest = 0;
   let playerReturnFocus = null;
   const clipKey = clip => JSON.stringify([clip.path, clip.bytes, clip.saved_at]);
-  function paintThumbnail(image, data) {
+  function paintThumbnail(image, data, cached = false) {
     if (!image.isConnected) return;
+    // A frame already in the cache appears at once; only a newly decoded one fades in.
+    if (cached) image.style.animation = "none";
     if (data) { image.src = data; image.hidden = false; image.parentElement.dataset.thumbnail = "ready"; }
     else image.parentElement.dataset.thumbnail = "unavailable";
   }
@@ -450,7 +503,7 @@
       thumbnailObserver.unobserve(entry.target);
       const { clip, image } = entry.target.replayThumbnail;
       const key = clipKey(clip);
-      if (thumbnailCache.has(key)) paintThumbnail(image, thumbnailCache.get(key));
+      if (thumbnailCache.has(key)) paintThumbnail(image, thumbnailCache.get(key), true);
       else {
         const job = thumbnailJobs.get(key) || { clip, targets: [] };
         job.targets = job.targets.filter(target => target.isConnected);
@@ -528,48 +581,41 @@
       }
     } finally { thumbnailRunning = false; }
   }
+  // The replay viewer itself (video, transport, timeline) lives in viewer.js; this is the glue around it.
   function stopPlayer() {
-    ++playerRequest;
-    const video = $("player-video");
-    video.pause(); video.removeAttribute("src"); video.load();
+    ReplayViewer.release();
+    // An empty request makes a waveform decode still running for the closed clip stale, so FFmpeg stops.
+    if (typeof api()?.clip_waveform === "function") Promise.resolve(api().clip_waveform("")).catch(() => {});
     playerClip = null;
     drainThumbnails();
   }
+  let playerClosing = false;
   function closePlayer() {
-    if (!$("replay-player").open) return;
-    $("replay-player").close();
+    const dialog = $("replay-player");
+    if (!dialog.open || playerClosing) return;
+    if (!motionEnabled() || document.hidden) { dialog.close(); return; }
+    playerClosing = true;
+    ReplayViewer.pause();
+    dialog.classList.add("closing");
+    animateDialog(dialog, false).then(() => { dialog.classList.remove("closing"); for (const animation of dialog.getAnimations()) animation.cancel(); playerClosing = false; if (dialog.open) dialog.close(); });
   }
-  async function watchReplay(clip) {
+  function watchReplay(clip) {
     const alreadyOpen = $("replay-player").open;
-    if (alreadyOpen) stopPlayer();
     cancelThumbnail?.();
     if (!alreadyOpen) playerReturnFocus = document.activeElement;
     playerClip = clip;
-    const request = ++playerRequest;
-    $("player-title").textContent = clip.name || "Replay";
-    $("player-status").textContent = "Loading replay…";
-    $("player-detail").textContent = [clip.app, formatTime(clip.saved_at)].filter(Boolean).join(" · ");
-    if (!alreadyOpen) $("replay-player").showModal();
-    if (motionEnabled()) {
-      const animation = $("replay-player").animate([{ opacity: .4, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
-      entranceAnimations.add(animation);
-      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
-    }
-    try {
-      const url = await nativeCall("media_url", clip.path);
-      if (request !== playerRequest || !$("replay-player").open) return;
-      const video = $("player-video");
-      video.src = url; video.load();
-      video.play().catch(error => {
-        if (request === playerRequest && error.name === "NotAllowedError") $("player-status").textContent = "Press Play to watch this replay.";
-      });
-    } catch (error) {
-      if (request === playerRequest) $("player-status").textContent = errorText(error);
-    }
+    fillMeta($("player-detail"), clip);
+    ReplayViewer.open(clip, {
+      mediaUrl: path => nativeCall("media_url", path),
+      // Decoding the waveform can take a moment, so it stays out of the serialized native queue.
+      waveform: path => typeof api()?.clip_waveform === "function" ? api().clip_waveform(path) : Promise.reject(new Error("unavailable")),
+      fps: settings().fps
+    });
+    if (!alreadyOpen) animateDialog($("replay-player"), true);
   }
   function clipRow(clip, compact = false) {
     const row = document.createElement("div");
-    row.className = `clip-row${compact ? " latest-clip" : ""}`;
+    row.className = "clip-card";
     const preview = document.createElement("button");
     preview.type = "button"; preview.className = "clip-preview";
     preview.setAttribute("aria-label", `Watch ${clip.name || "replay"}`);
@@ -579,6 +625,8 @@
     const play = document.createElement("span"); play.className = "clip-play";
     play.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>';
     thumbnail.append(image, play);
+    const size = formatBytes(clip.bytes);
+    if (size) { const chip = document.createElement("span"); chip.className = "clip-chip"; chip.textContent = size; thumbnail.append(chip); }
     thumbnail.replayThumbnail = { clip, image };
     thumbnailObserver.observe(thumbnail);
     const info = document.createElement("span");
@@ -589,14 +637,16 @@
     name.title = clip.path || name.textContent;
     const meta = document.createElement("span");
     meta.className = "clip-meta";
-    meta.textContent = [clip.app, formatTime(clip.saved_at), formatBytes(clip.bytes)].filter(Boolean).join(" · ");
-    info.append(name, meta);
+    fillMeta(meta, clip, false);
+    info.append(name);
+    const foot = document.createElement("div");
+    foot.className = "clip-foot";
     const actions = document.createElement("div");
     actions.className = "clip-actions";
-    actions.append(actionButton("Open", "open_clip", clip.path), editButton(clip));
-    if (!compact) actions.append(actionButton("Show in folder", "reveal_clip", clip.path));
+    actions.append(editButton(clip), iconAction("Open in your video player", icons.open, "open_clip", clip), iconAction("Show in folder", icons.folder, "reveal_clip", clip));
     preview.append(thumbnail, info);
-    row.append(preview, actions);
+    foot.append(meta);
+    row.append(preview, foot, actions);
     return row;
   }
   function renderClips() {
@@ -625,6 +675,7 @@
     edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." }
   };
   function renderClipLists(clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : []) {
+    thumbnailObserver.disconnect();
     const groups = { replays: clips.filter(clip => !clip.edited), edits: clips.filter(clip => clip.edited) };
     for (const button of document.querySelectorAll("[data-clip-tab]")) {
       const selected = clipTabs[button.dataset.clipList] === button.dataset.clipTab;
@@ -633,14 +684,13 @@
       const count = groups[button.dataset.clipTab].length;
       button.querySelector(".tab-count").textContent = count ? String(count) : "";
     }
-    for (const [list, container, limit, compact] of [["clips", $("clips-list"), 50, false], ["latest", $("latest-content"), 5, true]]) {
+    for (const [list, container, limit, compact] of [["clips", $("clips-list"), 50, false], ["latest", $("latest-content"), 8, true]]) {
       const tab = clipTabs[list];
       const items = groups[tab];
       container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
       container.replaceChildren();
-      container.className = list === "clips" ? "clips-list" : items.length ? "" : "empty-line";
+      container.className = items.length ? "clips-grid" : "clips-list";
       if (items.length) for (const clip of items.slice(0, limit)) container.append(clipRow(clip, compact));
-      else if (compact) container.textContent = emptyCopy[tab].short;
       else {
         const empty = document.createElement("div");
         empty.className = "clips-empty";
@@ -650,6 +700,7 @@
         container.append(empty);
       }
     }
+    syncTabIndicators();
     scheduleFade();
   }
   function showClipTab(list, tab, focus = false) {
@@ -660,11 +711,11 @@
     renderClipLists();
     if (focus) $(`${list}-tab-${tab}`).focus();
     const container = list === "clips" ? $("clips-list") : $("latest-content");
-    if (changed && presented && motionEnabled()) {
-      const animation = container.animate([{ opacity: .4, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
+    if (changed && presented && motionEnabled()) [...container.children].slice(0, 12).forEach((row, index) => {
+      const animation = row.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 200, delay: index * 24, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
       entranceAnimations.add(animation);
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
-    }
+    });
   }
   async function dispatch(action, payload = {}) {
     if (busy()) return;
@@ -675,7 +726,7 @@
     renderFeedback();
     try {
       const result = unpack(await nativeCall("dispatch", action, JSON.stringify(payload)));
-      if (result === false || result?.error || result?.ok === false) throw new Error(errorText(result?.error) || "The native controller did not accept this action.");
+      if (result === false || result?.error || result?.ok === false) throw new Error(errorText(result?.error) || "OBSReplay couldn’t start that action. Try again.");
       state.pending.accepted = true;
       schedulePoll(0);
     } catch (error) {
@@ -691,7 +742,7 @@
     polling = true;
     try {
       const snapshot = unpack(await nativeCall("snapshot"));
-      if (!snapshot || typeof snapshot !== "object" || !snapshot.settings) throw new Error("The controller returned an invalid state. Reopen OBSReplay if this continues.");
+      if (!snapshot || typeof snapshot !== "object" || !snapshot.settings) throw new Error("OBSReplay couldn’t read its state. Reopen the app if this continues.");
       if (state.native && state.loaded && !state.pending && snapshot.revision === state.snapshot?.revision && snapshot.hotkey_error === state.snapshot?.hotkey_error) {
         polling = false;
         schedulePoll(snapshot.busy ? 500 : 1000);
@@ -716,15 +767,17 @@
           if (!snapshot.error && ["setup", "apply", "install_obs", "locate_obs"].includes(action)) fillForm(snapshot.settings);
         } else if (Date.now() - state.pending.started > 120000) {
           state.pending = null;
-          showError("The controller has not confirmed completion. Check OBS and the connection state before trying again. Replay saves are never retried automatically.");
+          showError("OBSReplay hasn’t heard back from OBS. Check that OBS is open, then try again. A replay save is never retried on its own.");
         }
       }
       if (!state.initialRoute && !snapshot.busy) { state.initialRoute = true; if (!configured()) { setup.step = snapshot.obs_supported ? "capture" : "obs"; showTab("setup"); } }
+      document.documentElement.dataset.loaded = "";
       renderCapture();
       renderClips();
       renderFeedback();
     } catch (error) {
       state.native = false;
+      document.documentElement.dataset.loaded = "";
       if (state.loaded || state.pending) showError(error);
       state.pending = null;
       renderCapture();
@@ -744,11 +797,7 @@
     dialogClosing = false;
     $("confirm-dialog").showModal();
     if (destructive) $("confirm-dialog").querySelector('[value="cancel"]').focus();
-    if (motionEnabled()) {
-      const animation = $("confirm-dialog").animate([{ opacity: .4, transform: "translateY(5px) scale(.985)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)" });
-      entranceAnimations.add(animation);
-      animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
-    }
+    animateDialog($("confirm-dialog"), true);
     return new Promise(resolve => $("confirm-dialog").addEventListener("close", () => resolve($("confirm-dialog").returnValue === "confirm"), { once: true }));
   }
   function closeDialog(value) {
@@ -756,9 +805,8 @@
     const dialog = $("confirm-dialog");
     if (!motionEnabled()) { dialog.close(value); return; }
     dialogClosing = true;
-    const animation = dialog.animate([{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(4px)" }], { duration: 110, easing: "ease-in" });
-    entranceAnimations.add(animation);
-    animation.finished.catch(() => {}).finally(() => { entranceAnimations.delete(animation); if (dialog.open) dialog.close(value); dialogClosing = false; });
+    dialog.classList.add("closing");
+    animateDialog(dialog, false).then(() => { dialog.classList.remove("closing"); for (const animation of dialog.getAnimations()) animation.cancel(); if (dialog.open) dialog.close(value); dialogClosing = false; });
   }
   async function nativeWindowAction(action) {
     try { await nativeCall(action); } catch (error) { showError(error); }
@@ -800,7 +848,7 @@
     $("setup-monitor-row").hidden = $("capture").value === "game";
     const auto = state.snapshot?.options?.encoders?.[0]?.label || "";
     const encoder = auto.replace(/^Automatic · /, "");
-    $("setup-defaults").textContent = `${encoder && !/CPU/.test(encoder) ? `Encoding uses ${encoder} automatically. ` : encoder ? "No supported GPU encoder was found, so encoding uses the CPU. " : ""}Frame rate, audio devices and shortcuts start with sensible defaults; change them anytime in Settings.`;
+    $("setup-defaults").textContent = `${encoder && !/CPU/.test(encoder) ? `Encoding uses ${encoder} automatically. ` : encoder ? "No supported GPU encoder was found, so encoding uses the CPU. " : ""}You can change frame rate, audio devices and shortcuts in Settings.`;
   }
   function setTask(item, status) {
     if (item.dataset.state === status) return;
@@ -858,9 +906,10 @@
       const name = button.dataset.setupStep;
       const current = name === setup.step;
       if (current) button.setAttribute("aria-current", "step"); else button.removeAttribute("aria-current");
-      button.dataset.state = complete[name] && !current ? "done" : "";
+      const finished = complete[name] && (!current || setup.flow === "done");
+      button.dataset.state = finished ? "done" : "";
       const mark = button.querySelector(".step-mark");
-      const markup = complete[name] && !current ? checkIcon : String(setupSteps.indexOf(name) + 1);
+      const markup = finished ? checkIcon : String(setupSteps.indexOf(name) + 1);
       if (mark.dataset.markup !== markup) { mark.innerHTML = markup; mark.dataset.markup = markup; }
       button.disabled = !state.native || pending || !reached[name] || (setup.flow === "done" && name !== "start");
     }
@@ -976,19 +1025,21 @@
     $("setup-pick-folder").addEventListener("click", async () => {
       try {
         const result = await nativeCall("pick_folder", $("clips_dir").value);
-        if (result) { $("clips_dir").value = result; markDirty(); }
+        if (result) { $("clips_dir").value = result; markDirty(); showPathEnds(); }
       } catch (error) { showError(error); }
     });
   }
 
   arrangeSettings();
   bindSetup();
-  const readerObserver = new ResizeObserver(scheduleFade);
+  const readerObserver = new ResizeObserver(() => { scheduleFade(); syncTabIndicators(); });
   readerObserver.observe($("main"));
   readerObserver.observe(document.querySelector(".app-footer"));
   for (const view of $("main").children) readerObserver.observe(view);
+  for (const tab of document.querySelectorAll('.settings-tabs [role="tab"]')) readerObserver.observe(tab);
   $("main").addEventListener("scroll", scheduleFade, { passive: true });
-  for (const button of document.querySelectorAll("[data-tab]")) button.addEventListener("click", () => showTab(button.dataset.tab));
+  const leaveRail = event => { if (event.detail) $("main").focus({ preventScroll: true }); };
+  for (const button of document.querySelectorAll("[data-tab]")) button.addEventListener("click", event => { showTab(button.dataset.tab); leaveRail(event); });
   for (const button of document.querySelectorAll("[data-category]")) {
     button.addEventListener("click", () => showCategory(button.dataset.category));
     button.addEventListener("keydown", event => {
@@ -1014,8 +1065,10 @@
   });
   for (const button of document.querySelectorAll("[data-action]")) button.addEventListener("click", () => dispatch(button.dataset.action));
   for (const button of document.querySelectorAll("[data-help]")) button.addEventListener("click", () => dispatch("help", { topic: button.dataset.help }));
-  $("help-button").addEventListener("click", () => showTab("help"));
+  $("help-button").addEventListener("click", event => { showTab("help"); leaveRail(event); });
   $("capture-settings").addEventListener("click", () => showTab("settings"));
+  // Repair re-runs setup with the saved settings; unapplied edits are reviewed in Settings first.
+  $("capture-repair").addEventListener("click", () => { if (state.dirty) showTab("settings"); else dispatch("setup", formValue()); });
   $("all-clips").addEventListener("click", () => { showClipTab("clips", clipTabs.latest); showTab("clips"); });
   for (const button of document.querySelectorAll("[data-clip-tab]")) {
     button.addEventListener("click", () => showClipTab(button.dataset.clipList, button.dataset.clipTab));
@@ -1035,7 +1088,7 @@
     document.querySelector(`[data-record="${name}"]`).focus();
   });
   $("toggle-capture").addEventListener("click", async () => {
-    if (state.snapshot?.replay_active && !await confirmAction("Stop replay capture?", "The unsaved replay buffer will be discarded. Replays already saved stay in your clips folder.", "Stop capture")) return;
+    if (state.snapshot?.replay_active && !await confirmAction("Stop replay capture?", "The unsaved replay buffer will be discarded. Replays already saved stay in your clips folder.", "Stop capture", true)) return;
     dispatch(state.snapshot?.replay_active ? "stop" : "start");
   });
   $("settings-form").addEventListener("input", markDirty);
@@ -1056,7 +1109,7 @@
   for (const [buttonId, functionName, fieldId] of [["pick-folder", "pick_folder", "clips_dir"], ["pick-obs", "pick_obs", "obs_path"]]) $(buttonId).addEventListener("click", async () => {
     try {
       const result = await nativeCall(functionName, $(fieldId).value);
-      if (result) { $(fieldId).value = result; markDirty(); }
+      if (result) { $(fieldId).value = result; markDirty(); showPathEnds(); }
     } catch (error) { showError(error); }
   });
   $("refresh-devices").addEventListener("click", () => dispatch("refresh_options"));
@@ -1114,6 +1167,7 @@
     else $("main").focus();
   });
   $("replay-player").addEventListener("click", event => { if (event.target === $("replay-player")) closePlayer(); });
+  $("replay-player").addEventListener("cancel", event => { event.preventDefault(); closePlayer(); });
   $("player-external").addEventListener("click", () => {
     if (!playerClip || busy()) return;
     const clip = playerClip;
@@ -1126,26 +1180,23 @@
   });
   $("player-reveal").addEventListener("click", () => {
     if (!playerClip || busy()) return;
-    $("player-video").pause();
+    ReplayViewer.pause();
     dispatch("reveal_clip", { path: playerClip.path });
   });
   $("player-delete").addEventListener("click", async () => {
     if (!playerClip || busy()) return;
     const clip = playerClip;
-    const video = $("player-video");
-    const wasPlaying = !video.paused;
-    video.pause();
+    const wasPlaying = ReplayViewer.isPlaying();
+    ReplayViewer.pause();
     const confirmed = await confirmAction("Delete replay?", `Permanently delete “${clip.name || "this replay"}” from your computer? This cannot be undone.`, "Delete replay", true);
+    // A confirmed delete goes through even if the player was closed while the confirmation was closing.
+    // The video is released first so nothing is still reading the file, and the viewer no longer counts as showing it.
+    if (confirmed) { ReplayViewer.release(); playerClip = null; closePlayer(); dispatch("delete_clip", { path: clip.path }); return; }
     if (playerClip?.path !== clip.path || !$("replay-player").open) return;
-    if (confirmed) { closePlayer(); dispatch("delete_clip", { path: clip.path }); }
-    else if (wasPlaying && !document.hidden) video.play().catch(() => {});
-  });
-  $("player-video").addEventListener("loadeddata", () => { if (playerClip) $("player-status").textContent = ""; });
-  $("player-video").addEventListener("error", () => {
-    if (playerClip && $("player-video").getAttribute("src")) $("player-status").textContent = "Windows could not play this video. You can try Open file.";
+    else if (wasPlaying && !document.hidden) ReplayViewer.play();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { cancelThumbnail?.(); $("player-video").pause(); }
+    if (document.hidden) { cancelThumbnail?.(); ReplayViewer.pause(); }
     else drainThumbnails();
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { schedulePoll(0); scheduleFade(); } else { cancelEntrance(); cancelAnimationFrame(fadeFrame); fadeFrame = 0; if (!state.pending) clearTimeout(pollTimer); } });

@@ -57,7 +57,7 @@
   function place(element) {
     const rect = element.getBoundingClientRect();
     tip.style.left = "0px"; tip.style.top = "0px";
-    const box = tip.getBoundingClientRect();
+    const box = { width: tip.offsetWidth, height: tip.offsetHeight };
     const gap = 8;
     let top = rect.top - box.height - gap;
     let below = false;

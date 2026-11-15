@@ -403,6 +403,9 @@ coco::stray start(saucer::application* app) {
     view.expose("media_url",[&](std::string path) { return media.url(path); });
     view.expose("open_editor",[&](std::string path) { return editors.open(path); });
     view.expose("editors_pending",[&] { return editors.pending(); });
+    view.expose("clip_waveform",[&](std::string path,saucer::executor<std::string> executor) {
+        editors.waveform(path,[executor=std::move(executor)](std::string result) { executor.resolve(std::move(result)); });
+    });
     view.expose("dispatch",[&](std::string action,std::string payload) { return desktop.dispatch(std::move(action),std::move(payload)); });
     view.expose("pick_folder",[&](std::string current) { return pick_path(desktop.hwnd,current,true); });
     view.expose("pick_obs",[&](std::string current) { return pick_path(desktop.hwnd,current,false); });

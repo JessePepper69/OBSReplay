@@ -14,7 +14,7 @@
 <body class="editor">
   <div class="editor-app">
     <header class="app-header" data-webview-drag data-webview-maximize="double">
-      <div class="wordmark"><svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path d="M8 5h8a8 8 0 0 1 0 16H9M8 5v8m0-8 6 5M9 21l5-5"/></svg><span>Editor</span><button type="button" class="title-menu" id="scale-button" data-webview-ignore aria-haspopup="listbox" aria-expanded="false" aria-label="Interface scale, 100%" title="Interface scale"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8V3.5H8M12 3.5h4.5V8M16.5 12v4.5H12M8 16.5H3.5V12"/></svg><span id="scale-value">100%</span><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><button type="button" class="title-menu" id="preview-button" data-webview-ignore aria-haspopup="listbox" aria-expanded="false" aria-label="Preview quality, Full" data-tip="Preview quality"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h14v9H3z"/><path d="m8.5 8 3.5 2-3.5 2z"/></svg><span id="preview-value">Full</span><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><span class="title-clip" id="clip-title">Loading replay…</span></div>
+      <div class="wordmark"><span class="mark"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M5.5 14a8.5 8.5 0 1 0 2.8-6.3M5.5 5v5h5"/></svg></span><span>Editor</span><button type="button" class="title-menu" id="scale-button" data-webview-ignore aria-haspopup="listbox" aria-expanded="false" aria-label="Interface scale, 100%" title="Interface scale"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8V3.5H8M12 3.5h4.5V8M16.5 12v4.5H12M8 16.5H3.5V12"/></svg><span id="scale-value">100%</span><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><button type="button" class="title-menu" id="preview-button" data-webview-ignore aria-haspopup="listbox" aria-expanded="false" aria-label="Preview quality, Full" data-tip="Preview quality"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h14v9H3z"/><path d="m8.5 8 3.5 2-3.5 2z"/></svg><span id="preview-value">Full</span><svg class="chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button><span class="title-clip" id="clip-title">Loading replay…</span></div>
       <div class="connection"><span class="state-dot" id="edit-dot"></span><span id="edit-state">No changes</span></div>
       <div class="window-controls" data-webview-ignore>
         <button type="button" data-window="minimize" data-webview-minimize aria-label="Minimize" title="Minimize"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button>
@@ -64,8 +64,8 @@
           <button type="button" class="icon-button" id="redo" aria-label="Redo (Ctrl+Shift+Z)" title="Redo  Ctrl+Shift+Z"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 16 8.5 12.5 12M16 8.5H8a4 4 0 0 0 0 8h3"/></svg></button>
         </div>
         <span class="toolbar-spacer"></span>
-        <button type="button" class="text-button" id="zoom-fit" title="Show the whole clip  0" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg>Fit timeline</button>
-        <button type="button" class="text-button" id="shortcuts-button" title="Keyboard shortcuts  ?"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="15" height="10" rx="2"/><path d="M5.5 8h1m2.5 0h1m2.5 0h1M6 12h8"/></svg>Shortcuts</button>
+        <button type="button" id="zoom-fit" title="Show the whole clip  0" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h14M6 7l-3 3 3 3M14 7l3 3-3 3"/></svg>Fit timeline</button>
+        <button type="button" id="shortcuts-button" title="Keyboard shortcuts  ?"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="15" height="10" rx="2"/><path d="M5.5 8h1m2.5 0h1m2.5 0h1M6 12h8"/></svg>Shortcuts</button>
       </div>
 
       <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Timeline. Use arrow keys to move the playhead." aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
@@ -99,7 +99,7 @@
       </div>
       <div class="ffmpeg-notice" id="ffmpeg-notice" hidden>
         <div><strong id="ffmpeg-title">FFmpeg is needed to export</strong><p id="ffmpeg-text">Editing works now. Install FFmpeg, or locate ffmpeg.exe if it is already on this PC.</p></div>
-        <div class="notice-actions"><button type="button" id="ffmpeg-copy" class="text-button" title="Copy the install command">Copy winget command</button><button type="button" id="ffmpeg-help" class="text-button">Get FFmpeg</button><button type="button" id="ffmpeg-locate">Locate ffmpeg.exe</button><button type="button" id="probe-retry" hidden>Try again</button></div>
+        <div class="notice-actions"><button type="button" id="ffmpeg-copy" title="Copy the install command">Copy winget command</button><button type="button" id="ffmpeg-help">Get FFmpeg</button><button type="button" id="ffmpeg-locate">Locate ffmpeg.exe</button><button type="button" id="probe-retry" hidden>Try again</button></div>
       </div>
       <div class="export-progress" id="export-progress" hidden>
         <div class="progress-copy"><strong id="progress-title">Exporting…</strong><span id="progress-detail"></span></div>
@@ -109,7 +109,7 @@
       <div class="export-result" id="export-result" hidden>
         <span class="result-mark" id="result-mark" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg></span>
         <div class="result-copy"><strong id="result-title">Video exported</strong><span id="result-text"></span></div>
-        <div class="notice-actions"><button type="button" id="result-reveal">Show in folder</button><button type="button" id="result-open">Open file</button><button type="button" class="text-button" id="result-dismiss">Done</button></div>
+        <div class="notice-actions"><button type="button" id="result-reveal">Show in folder</button><button type="button" id="result-open">Open file</button><button type="button" id="result-dismiss">Done</button></div>
       </div>
     </footer>
   </div>
