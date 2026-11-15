@@ -1,6 +1,7 @@
 #include "controller.hpp"
 #include "media.hpp"
 #include "editor.hpp"
+#include "audio_sessions.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -438,6 +439,7 @@ int main(int argc,char** argv) {
             ShellExecuteW(nullptr,L"open",L"https://developer.microsoft.com/microsoft-edge/webview2/",nullptr,nullptr,SW_SHOWNORMAL);
     } else {
         try {
+            const replay::AudioSessionLabel audio_label;  // volume mixer shows OBSReplay, not Microsoft Edge WebView2
             auto app=saucer::application::create({.id="OBSReplay",.quit_on_last_window_closed=false});
             if (app) result=app->run(start);
             else MessageBoxW(nullptr,L"The OBSReplay application could not start.",L"OBSReplay",MB_OK|MB_ICONERROR);

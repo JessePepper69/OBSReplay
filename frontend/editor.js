@@ -18,7 +18,7 @@
     exportStatus: "idle", lastExport: null, waveform: null, waveRate: 100, waveRequested: false,
     thumbs: [], thumbsRequested: false, motion: true,
     timecode: "duration", scale: 1, master: 0.5, masterMuted: false, tracks: [], tracksFromProbe: false, savedTrackLevels: {},
-    stems: [], previewSwapped: false, prefsLoaded: false
+    stems: [], prefsLoaded: false, previewLevel: "full", originalUrl: "", previewUrls: {}
   };
   const trackFor = index => state.tracks.find(track => track.index === index);
   let nativeChain = Promise.resolve();
@@ -752,7 +752,8 @@
     if (Number.isFinite(master) && master >= 0 && master <= 1) state.master = master;
     if (prefs.track_volumes && typeof prefs.track_volumes === "object") state.savedTrackLevels = { ...prefs.track_volumes };
     if (typeof prefs.preview_cuts === "boolean") { state.skipRemoved = prefs.preview_cuts; $("skip-removed").checked = prefs.preview_cuts; }
-    renderScale(); applyVolumes();
+    if (PREVIEW_LEVELS.some(level => level.id === prefs.preview_quality)) state.previewLevel = prefs.preview_quality;
+    renderScale(); renderPreviewLevel(); applyVolumes();
   }
   // Per-track sliders use the names stored in the recording. When the first track is a mix of the
   // others (OBS: Mix, Desktop, Microphone), only the individual tracks are listed. Mirrors native.
@@ -818,11 +819,38 @@
     placeTracksPanel();
     (panel.querySelector("input") || panel).focus?.();
   }
-  async function useGeneratedPreview() {
+  // ---------- Preview quality ----------
+  // Full plays the original recording. Half and Quarter play a smaller copy, built once per editor, whose
+  // short keyframe interval makes scrubbing instant on long-GOP recordings.
+  const PREVIEW_LEVELS = [
+    { id: "full", label: "Full", divisor: 1, hint: "Original video, sharpest" },
+    { id: "half", label: "Half", divisor: 2, hint: "Smoother scrubbing" },
+    { id: "quarter", label: "Quarter", divisor: 4, hint: "Fastest scrubbing" },
+  ];
+  function previewLevel(id = state.previewLevel) { return PREVIEW_LEVELS.find(level => level.id === id) || PREVIEW_LEVELS[0]; }
+  function renderPreviewLevel() {
+    const level = previewLevel();
+    $("preview-value").textContent = level.label;
+    $("preview-button").setAttribute("aria-label", `Preview quality, ${level.label}`);
+  }
+  // Swaps the playing source, keeping position and play state. A copy that fails to load falls back to the original.
+  function useSource(url) {
+    if (!url || video.getAttribute("src") === url) return;
+    const position = currentTime(), playing = !video.paused;
+    const restore = () => { video.currentTime = position; if (playing) video.play().catch(() => {}); };
+    video.addEventListener("loadedmetadata", restore, { once: true });
+    if (url !== state.originalUrl) video.addEventListener("error", () => {
+      if (video.getAttribute("src") === url && state.originalUrl) { flash("The preview copy couldn't play, so the original is shown."); useSource(state.originalUrl); }
+    }, { once: true });
+    video.addEventListener("loadedmetadata", () => { if (!state.thumbsRequested) buildThumbnails(); }, { once: true });
+    video.src = url;
+    video.load();
+  }
+  async function loadStems() {
     if (state.previewRequested) return;
     state.previewRequested = true;
     let urls;
-    try { urls = JSON.parse(await nativeCall("preview_urls")); } catch { return; }
+    try { urls = JSON.parse(await nativeCall("preview_urls")); } catch { state.previewRequested = false; return; }
     for (const stem of urls.stems || []) {
       const track = trackFor(stem.track);
       if (!track || track.audio) continue;
@@ -832,23 +860,33 @@
       state.stems.push({ track: stem.track, audio });
     }
     applyVolumes(); syncStems(true);
-    if (urls.video && !state.previewSwapped) {
-      state.previewSwapped = true;
-      const position = currentTime(), playing = !video.paused, original = video.src;
-      const restore = () => { video.currentTime = position; if (playing) video.play().catch(() => {}); };
-      video.addEventListener("loadedmetadata", restore, { once: true });
-      video.addEventListener("error", () => { if (video.src !== original) { video.src = original; video.addEventListener("loadedmetadata", restore, { once: true }); } }, { once: true });
-      video.addEventListener("loadedmetadata", () => { if (!state.thumbsRequested) buildThumbnails(); }, { once: true });
-      video.src = urls.video;
-      video.load();
-    }
+  }
+  async function syncPreviewSource(preview = state.native?.preview || {}) {
+    if (!state.mediaReady) return;
+    const level = state.previewLevel;
+    if (level === "full") { useSource(state.originalUrl); return; }
+    if (state.previewUrls[level]) { useSource(state.previewUrls[level]); return; }
+    if (preview.status !== "ready" || preview.level !== level) return;  // keep the current picture until the copy is ready
+    let urls;
+    try { urls = JSON.parse(await nativeCall("preview_urls")); } catch { return; }
+    if (urls.level !== level || !urls.video) return;
+    state.previewUrls[level] = urls.video;
+    if (state.previewLevel === level) useSource(urls.video);
+  }
+  function choosePreviewLevel(id) {
+    if (!PREVIEW_LEVELS.some(level => level.id === id) || id === state.previewLevel) return;
+    state.previewLevel = id;
+    renderPreviewLevel();
+    savePref("preview_quality", id);
+    syncPreviewSource();
+    schedulePoll(150);
   }
   function renderPreview(preview = {}) {
     const building = preview.status === "building" || (preview.status === "pending" && state.mediaReady && state.native?.ffmpeg?.status === "ready");
     $("preview-status").hidden = !building;
     if (building) {
       const percent = Math.round((Number(preview.progress) || 0) * 100);
-      $("preview-text").textContent = preview.stage === "video" ? `Preparing smooth scrubbing… ${percent}%` : "Preparing audio tracks…";
+      $("preview-text").textContent = preview.stage === "video" ? `Preparing ${previewLevel(preview.level).label.toLowerCase()}-size preview… ${percent}%` : "Preparing audio tracks…";
     }
   }
 
@@ -924,8 +962,13 @@
       }).catch(() => {});
     }
     renderPreview(native.preview);
-    if (state.mediaReady && !state.thumbsRequested && ["failed", "unavailable"].includes(native.preview?.status)) buildThumbnails();
-    if (native.preview?.status === "ready" && state.mediaReady) useGeneratedPreview();
+    const preview = native.preview || {};
+    if (state.mediaReady && !state.thumbsRequested && ["failed", "unavailable", "original"].includes(preview.status)) buildThumbnails();
+    if (state.mediaReady && (["ready", "original", "failed"].includes(preview.status) || (preview.status === "building" && preview.stage === "video"))) loadStems();
+    if (preview.status === "failed" && preview.level === state.previewLevel && state.previewLevel !== "full" && !state.previewFailedShown) {
+      state.previewFailedShown = true; flash("The smaller preview couldn't be built, so the original is shown.");
+    }
+    syncPreviewSource(preview);
     const job = native.export || {};
     if (state.exportStatus === "running" && job.status && job.status !== "running") {
       if (job.status === "done") {
@@ -954,6 +997,7 @@
   async function loadMedia() {
     try {
       const url = await nativeCall("media_url", state.clip.path);
+      state.originalUrl = url;
       video.src = url;
       video.load();
     } catch (error) { $("stage-message").textContent = errorText(error); }
@@ -971,7 +1015,7 @@
     applyVolumes();
     changed();
     maybeBuildThumbnails();
-    if (state.native?.preview?.status === "ready") useGeneratedPreview();
+    syncPreviewSource();
   });
   video.addEventListener("error", () => {
     if (!video.getAttribute("src")) return;
@@ -998,7 +1042,7 @@
   // The filmstrip decodes from the seek-friendly preview when one is coming; otherwise from the clip.
   function maybeBuildThumbnails() {
     const preview = state.native?.preview?.status;
-    if (state.previewSwapped || !["pending", "building"].includes(preview) || state.native?.ffmpeg?.status !== "ready") buildThumbnails();
+    if (state.previewLevel === "full" || !["pending", "building"].includes(preview) || state.native?.ffmpeg?.status !== "ready") buildThumbnails();
   }
   async function buildThumbnails() {
     if (state.thumbsRequested) return;
@@ -1077,6 +1121,13 @@
   $("scale-button").addEventListener("click", () => openMenu($("scale-button"), [0.75, 1, 1.25, 1.5].map(value => ({ value, label: `${Math.round(value * 100)}%` })), state.scale, value => {
     state.scale = value; renderScale(); savePref("scale", value);
   }));
+  $("preview-button").addEventListener("click", () => {
+    const height = Number(state.native?.probe?.height) || 0;
+    openMenu($("preview-button"), PREVIEW_LEVELS.map(level => ({
+      value: level.id, label: level.label,
+      hint: height ? `${Math.max(144, Math.floor(height / level.divisor / 2) * 2)}p · ${level.hint}` : level.hint,
+    })), state.previewLevel, choosePreviewLevel);
+  });
   $("result-summary").addEventListener("click", () => {
     const sample = state.mediaReady ? state.duration : 94.8;
     openMenu($("result-summary"), TIME_FORMATS.map(format => ({ value: format.id, label: format.label, hint: formatAs(format.id, sample, 1) })), state.timecode, value => {

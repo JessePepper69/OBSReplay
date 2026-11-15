@@ -21,6 +21,7 @@
 #include <format>
 #include <functional>
 #include <list>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <regex>
@@ -399,6 +400,7 @@ struct EditorHost::Impl {
         }
         else if (key == "scale") valid = value.is_number() && (value == 0.75 || value == 1.0 || value == 1.25 || value == 1.5);
         else if (key == "preview_cuts") valid = value.is_boolean();
+        else if (key == "preview_quality") valid = value.is_string() && (value == "full" || value == "half" || value == "quarter");
         else return std::unexpected("Unknown editor preference.");
         if (!valid) return std::unexpected("That preference value isn't supported.");
         store_preference(key.c_str(), value);
@@ -465,7 +467,14 @@ struct EditorHost::Impl::Session {
     std::vector<unsigned char> peaks;
     Json export_state = {{"status", "idle"}};
     Json preview = {{"status", "pending"}, {"progress", 0.0}};
-    fs::path preview_folder, proxy;
+    fs::path preview_folder;
+    // Preview quality: "full" plays the original clip; "half"/"quarter" play a smaller copy with a short
+    // keyframe interval for instant scrubbing. Each copy is built once per editor and kept until it closes.
+    std::string preview_level = "full";
+    std::map<std::string, fs::path> proxies;
+    std::thread previewer;
+    std::mutex preview_requests;
+    std::atomic<bool> cancel_preview{};
     std::vector<int64_t> cut_frames;  // keyframes where the original video can be copied from or to cleanly
     int64_t frame_count = 0;
     double reorder_delay = 0;         // seconds a packet is decoded before it is shown (B-frames)
@@ -481,6 +490,7 @@ struct EditorHost::Impl::Session {
     ~Session() {
         stopping = true; cancel_export = true;
         if (analysis.joinable()) analysis.join();
+        { std::lock_guard serial(preview_requests); cancel_preview = true; if (previewer.joinable()) previewer.join(); }
         if (exporter.joinable()) exporter.join();
         media.reset();
         view.reset();
@@ -543,7 +553,9 @@ struct EditorHost::Impl::Session {
                 if (stopping) return;
                 if (tracks) waveform_pass(tool);
                 if (stopping) return;
-                build_proxy(tool, parsed);
+                std::string level = "full";
+                try { level = host.preferences().value("preview_quality", "full"); } catch (...) {}
+                request_preview(level == "half" || level == "quarter" ? level : "full", true);
                 return;
             }
             if (tool.status == "missing" || tool.status == "invalid") change([&] {
@@ -671,25 +683,59 @@ struct EditorHost::Impl::Session {
         const auto result = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -i " + quoted(source) + outputs, {}, [&] { return stopping.load(); }, 120000);
         if (result.code == 0 && !result.canceled) { std::lock_guard lock(mutex); stems = made; ++revision; }
     }
-    void build_proxy(const FFmpeg& tool, const Json& info) {
-        if (!ensure_preview_folder()) { change([&] { preview = {{"status", "failed"}}; }); return; }
+    bool preview_halted() const { return stopping.load() || cancel_preview.load(); }
+    // Switches the preview to a quality level, building that level's copy in the background when needed.
+    // While the clip is still being analysed only the choice is recorded; analysis applies it when it finishes.
+    void request_preview(const std::string& level, bool from_analysis = false) {
+        if (!from_analysis && analyzing) { std::lock_guard lock(mutex); preview_level = level; return; }
+        std::lock_guard serial(preview_requests);
+        cancel_preview = true;
+        if (previewer.joinable()) previewer.join();
+        cancel_preview = false;
+        Json info;
+        {
+            std::lock_guard lock(mutex);
+            preview_level = level;
+            info = probe;
+            if (level == "full") { preview = {{"status", "original"}, {"level", level}}; ++revision; return; }
+            if (proxies.contains(level)) { preview = {{"status", "ready"}, {"level", level}, {"progress", 1.0}}; ++revision; return; }
+        }
+        const auto tool = host.ffmpeg_info();
+        if (info.value("status", "") != "ready" || tool.status != "ready") return;  // analysis requests it once the clip is read
+        previewer = std::thread([this, tool, info, level] { build_proxy(tool, info, level); });
+    }
+    void preview_failed(const std::string& level) {
+        change([&] { if (preview_level == level) preview = {{"status", "failed"}, {"level", level}}; });
+    }
+    void preview_built(const std::string& level, const fs::path& file, const char* engine) {
+        std::lock_guard lock(mutex);
+        proxies[level] = file;
+        if (preview_level == level) preview = {{"status", "ready"}, {"level", level}, {"progress", 1.0}, {"engine", engine}};
+        ++revision;
+    }
+    void build_proxy(const FFmpeg& tool, const Json& info, const std::string& level) {
+        if (!ensure_preview_folder()) { preview_failed(level); return; }
         const double duration = info.value("duration", 0.0);
         const int height = info.value("height", 0);
-        const int target = height > 0 ? std::min(height, 720) : 720;
-        const auto file = preview_folder / L"preview.mp4";
-        const auto partial = preview_folder / L"preview.part.mp4";
-        if (tool.nvenc && build_proxy_halves(tool, info, target, file, partial)) return;
+        const int divisor = level == "quarter" ? 4 : 2;
+        const int target = height > 0 ? std::max(144, (height / divisor) & ~1) : 540;
+        const auto name = wide(level);
+        const auto file = preview_folder / (L"preview-" + name + L".mp4");
+        const auto partial = preview_folder / (L"preview-" + name + L".part.mp4");
+        // Visually clean at its size: these copies are what the editor shows, not just a scrubbing aid.
+        const std::wstring cq = L"21";
+        if (tool.nvenc && build_proxy_halves(tool, info, level, target, cq, file, partial)) return;
         // Short GOP without B-frames: any frame decodes from at most 5 neighbours, so scrubbing is immediate.
         const std::wstring gop = L" -g 6 -bf 0 -an -movflags +faststart -f mp4 " + quoted(partial);
-        const auto nvenc = L" -c:v h264_nvenc -preset p1 -rc vbr -cq 30 -b:v 0" + gop;
+        const auto nvenc = L" -c:v h264_nvenc -preset p2 -rc vbr -cq " + cq + L" -b:v 0" + gop;
         std::vector<std::pair<const char*, std::wstring>> attempts;
         if (tool.nvenc) {
             attempts.emplace_back("GPU", L"-threads 1 -hwaccel cuda -hwaccel_output_format cuda -i " + quoted(source) + L" -map 0:v:0 -vf scale_cuda=-2:" + std::to_wstring(target) + L":format=yuv420p" + nvenc);
             attempts.emplace_back("GPU encode", L"-i " + quoted(source) + L" -map 0:v:0 -vf scale=-2:" + std::to_wstring(target) + L",format=yuv420p" + nvenc);
         }
-        if (tool.x264) attempts.emplace_back("CPU", L"-i " + quoted(source) + L" -map 0:v:0 -vf scale=-2:" + std::to_wstring(target) + L",format=yuv420p -c:v libx264 -preset ultrafast -tune fastdecode -crf 26" + gop);
+        if (tool.x264) attempts.emplace_back("CPU", L"-i " + quoted(source) + L" -map 0:v:0 -vf scale=-2:" + std::to_wstring(target) + L",format=yuv420p -c:v libx264 -preset veryfast -tune fastdecode -crf 20" + gop);
         for (const auto& [label, input] : attempts) {
-            change([&] { preview = {{"status", "building"}, {"stage", "video"}, {"progress", 0.0}, {"engine", label}}; });
+            change([&] { if (preview_level == level) preview = {{"status", "building"}, {"stage", "video"}, {"level", level}, {"progress", 0.0}, {"engine", label}}; });
             std::string carry;
             const auto result = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats " + input, [&](std::string_view part) {
                 carry.append(part);
@@ -698,31 +744,25 @@ struct EditorHost::Impl::Session {
                     auto line = carry.substr(0, newline);
                     carry.erase(0, newline + 1);
                     if (line.starts_with("out_time_us=") && duration > 0) {
-                        try { const double done = std::clamp(std::stod(line.substr(12)) / 1e6 / duration, 0.0, 1.0); change([&] { preview["progress"] = done; }); } catch (...) {}
+                        try { const double done = std::clamp(std::stod(line.substr(12)) / 1e6 / duration, 0.0, 1.0); change([&] { if (preview_level == level) preview["progress"] = done; }); } catch (...) {}
                     }
                 }
-            }, [&] { return stopping.load(); });
-            if (stopping || result.canceled) return;
+            }, [&] { return preview_halted(); });
+            if (preview_halted() || result.canceled) { std::error_code ignored; fs::remove(partial, ignored); return; }
             std::error_code error;
             if (result.code == 0 && fs::file_size(partial, error) > 0 && !error) {
                 fs::rename(partial, file, error);
-                if (!error) {
-                    std::lock_guard lock(mutex);
-                    proxy = file;
-                    preview = {{"status", "ready"}, {"progress", 1.0}, {"engine", label}};
-                    ++revision;
-                    return;
-                }
+                if (!error) { preview_built(level, file, label); return; }
             }
             std::error_code ignored; fs::remove(partial, ignored);
         }
-        change([&] { preview = {{"status", "failed"}}; });
+        preview_failed(level);
     }
     // NVIDIA only: one FFmpeg process leaves the GPU video decoder about half idle, so the two halves of
     // the clip are encoded at the same time (about 40% faster), split on a clean keyframe so they join
     // without re-encoding. Returns false (nothing kept) when the clip doesn't qualify or anything goes
     // wrong, including GPU session limits, and the single-process build then runs as before.
-    bool build_proxy_halves(const FFmpeg& tool, const Json& info, int target, const fs::path& file, const fs::path& partial) {
+    bool build_proxy_halves(const FFmpeg& tool, const Json& info, const std::string& level, int target, const std::wstring& cq, const fs::path& file, const fs::path& partial) {
         const double fps = info.value("fps", 0.0), duration = info.value("duration", 0.0);
         std::vector<int64_t> cuts; int64_t frames;
         { std::lock_guard lock(mutex); cuts = cut_frames; frames = frame_count; }
@@ -732,12 +772,13 @@ struct EditorHost::Impl::Session {
             if (cut >= frames * 3 / 10 && cut <= frames * 7 / 10 && (split < 0 || std::llabs(cut - frames / 2) < std::llabs(split - frames / 2))) split = cut;
         if (split < 0) return false;
         const std::array<std::pair<int64_t, int64_t>, 2> halves{{{0, split}, {split, frames - split}}};
-        const std::array<fs::path, 2> parts{preview_folder / L"preview-0.ts", preview_folder / L"preview-1.ts"};
-        const auto list = preview_folder / L"preview.ffconcat";
+        const auto name = wide(level);
+        const std::array<fs::path, 2> parts{preview_folder / (L"preview-" + name + L"-0.ts"), preview_folder / (L"preview-" + name + L"-1.ts")};
+        const auto list = preview_folder / (L"preview-" + name + L".ffconcat");
         const auto cleanup = [&] { std::error_code ignored; for (const auto& part : parts) fs::remove(part, ignored); fs::remove(list, ignored); fs::remove(partial, ignored); };
         std::array<std::atomic<double>, 2> encoded{};
         std::array<ProcessResult, 2> results;
-        change([&] { preview = {{"status", "building"}, {"stage", "video"}, {"progress", 0.0}, {"engine", "GPU"}}; });
+        change([&] { if (preview_level == level) preview = {{"status", "building"}, {"stage", "video"}, {"level", level}, {"progress", 0.0}, {"engine", "GPU"}}; });
         const auto encode = [&](size_t index) {
             try {
                 const auto [first, count] = halves[index];
@@ -747,19 +788,19 @@ struct EditorHost::Impl::Session {
                 int64_t written = -1;
                 results[index] = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats -threads 1 -hwaccel cuda -hwaccel_output_format cuda" + seek +
                     L" -i " + quoted(source) + L" -map 0:v:0 -vf scale_cuda=-2:" + std::to_wstring(target) + L":format=yuv420p -frames:v " + std::to_wstring(count) +
-                    L" -c:v h264_nvenc -preset p1 -rc vbr -cq 30 -b:v 0 -g 6 -bf 0 -an -f mpegts " + quoted(parts[index]),
+                    L" -c:v h264_nvenc -preset p2 -rc vbr -cq " + cq + L" -b:v 0 -g 6 -bf 0 -an -f mpegts " + quoted(parts[index]),
                     progress_reader(carry, written, [&](double seconds, double) {
                         if (seconds < 0) return;
                         encoded[index] = seconds;
                         const double done = std::clamp((encoded[0] + encoded[1]) / duration, 0.0, 0.98);
-                        change([&] { preview["progress"] = done; });
-                    }), [&] { return stopping.load(); });
+                        change([&] { if (preview_level == level) preview["progress"] = done; });
+                    }), [&] { return preview_halted(); });
             } catch (...) { results[index] = {}; }
         };
         std::thread other(encode, 1);
         encode(0);
         other.join();
-        if (stopping) { cleanup(); return true; }
+        if (preview_halted()) { cleanup(); return true; }
         bool ready = true;
         for (size_t i = 0; i < 2; ++i) { std::error_code error; ready = ready && results[i].code == 0 && !results[i].canceled && fs::file_size(parts[i], error) > 0 && !error; }
         if (ready) {
@@ -768,8 +809,8 @@ struct EditorHost::Impl::Session {
                 std::string carry;
                 int64_t written = -1;
                 const auto joined = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats -f concat -safe 0 -i " + quoted(list) +
-                    L" -map 0:v:0 -c copy -movflags +faststart -f mp4 " + quoted(partial), progress_reader(carry, written, [](double, double) {}), [&] { return stopping.load(); });
-                if (stopping) { cleanup(); return true; }
+                    L" -map 0:v:0 -c copy -movflags +faststart -f mp4 " + quoted(partial), progress_reader(carry, written, [](double, double) {}), [&] { return preview_halted(); });
+                if (preview_halted()) { cleanup(); return true; }
                 // Every source frame must be in the joined preview, or it is rebuilt the usual way.
                 ready = joined.code == 0 && written == frames;
             } catch (...) { ready = false; }
@@ -778,18 +819,16 @@ struct EditorHost::Impl::Session {
         if (ready) fs::rename(partial, file, error);
         if (!ready || error) { cleanup(); return false; }
         { std::error_code ignored; for (const auto& part : parts) fs::remove(part, ignored); fs::remove(list, ignored); }
-        std::lock_guard lock(mutex);
-        proxy = file;
-        preview = {{"status", "ready"}, {"progress", 1.0}, {"engine", "GPU (2 parts)"}};
-        ++revision;
+        preview_built(level, file, "GPU (2 parts)");
         return true;
     }
 
     // URLs for the generated preview files, served only to this editor's page.
     std::string preview_urls() {
-        Json result = {{"video", ""}, {"stems", Json::array()}};
+        Json result = {{"video", ""}, {"level", ""}, {"stems", Json::array()}};
         std::lock_guard lock(mutex);
-        if (!proxy.empty()) result["video"] = media->generated_url(proxy);
+        result["level"] = preview_level;
+        if (const auto found = proxies.find(preview_level); found != proxies.end()) result["video"] = media->generated_url(found->second);
         for (const auto& [track, file] : stems) result["stems"].push_back({{"track", track}, {"url", media->generated_url(file)}});
         return result.dump();
     }
@@ -1283,6 +1322,7 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
                 const auto parsed = Json::parse(value);
                 const auto saved = impl->save_page_preference(key, parsed);
                 if (saved && key == "scale") self->view->native().controller->put_ZoomFactor(parsed.get<double>());
+                if (saved && key == "preview_quality") self->request_preview(parsed.get<std::string>());
                 if (saved) { std::lock_guard lock(self->mutex); ++self->revision; }
                 return saved;
             } catch (const std::exception&) { return std::unexpected("That preference couldn't be read."); }
