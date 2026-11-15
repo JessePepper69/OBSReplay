@@ -33,6 +33,53 @@
     <div class="content-shell">
     <main id="main" tabindex="-1">
       <div class="notice error" id="error-notice" role="alert" hidden><div><strong id="error-title">Action couldn’t complete</strong><p id="error-text"></p><button type="button" id="change-conflicting-shortcut" hidden>Change shortcut</button></div><button type="button" id="dismiss-error" aria-label="Dismiss error">Dismiss</button></div>
+      <section id="setup-view" aria-labelledby="setup-title" hidden>
+        <div class="view-heading"><div><h1 id="setup-title">Set up replay capture</h1><p>OBS Studio records in the background. OBSReplay installs it, sets it up and keeps it running.</p></div><button type="button" class="text-button" id="setup-all-settings">All settings</button></div>
+        <ol class="setup-steps" aria-label="Setup steps">
+          <li><button type="button" data-setup-step="obs"><span class="step-mark" aria-hidden="true">1</span><span>OBS Studio</span></button></li>
+          <li><button type="button" data-setup-step="capture"><span class="step-mark" aria-hidden="true">2</span><span>Capture</span></button></li>
+          <li><button type="button" data-setup-step="start"><span class="step-mark" aria-hidden="true">3</span><span>Start</span></button></li>
+        </ol>
+        <div class="notice setup-error" id="setup-error" role="alert" hidden><div><strong id="setup-error-title">Setup couldn’t finish</strong><p id="setup-error-text"></p></div></div>
+        <div class="setup-stage" data-step-panel="obs">
+          <div class="setup-panel">
+            <div class="setup-state"><span class="capture-mark" id="obs-mark"></span><div><h2 id="obs-title">Looking for OBS Studio…</h2><p id="obs-text"></p><p class="file-path" id="obs-path" hidden></p></div></div>
+            <ol class="task-list" id="install-tasks" aria-label="Install progress" hidden>
+              <li data-task="downloading"><span class="task-mark" aria-hidden="true"></span><span>Download OBS Studio</span></li>
+              <li data-task="installing"><span class="task-mark" aria-hidden="true"></span><span>Install it <small>Windows asks for permission</small></span></li>
+              <li data-task="verifying"><span class="task-mark" aria-hidden="true"></span><span>Check the installation</span></li>
+            </ol>
+            <div class="setup-actions-row" id="obs-actions"><button type="button" class="primary" id="install-obs">Install OBS Studio</button><button type="button" id="download-obs">Download from obsproject.com</button><button type="button" class="text-button" id="locate-obs">Locate obs64.exe…</button></div>
+          </div>
+          <p class="setup-hint" id="obs-hint">OBS Studio is free and open source. OBSReplay gives it a separate profile, so any OBS setup you already have stays as it is.</p>
+        </div>
+        <div class="setup-stage" data-step-panel="capture" hidden>
+          <fieldset class="mode-choice entrance-item"><legend>What to record</legend>
+            <label class="mode-option"><input type="radio" name="setup-capture" value="auto"><span class="mode-copy"><strong>Game or display</strong><small>Records a fullscreen game while one is running, and your display the rest of the time.</small></span><span class="mode-tag">Recommended</span></label>
+            <label class="mode-option"><input type="radio" name="setup-capture" value="game"><span class="mode-copy"><strong>Fullscreen games only</strong><small>Records nothing until a compatible fullscreen game is running.</small></span></label>
+            <label class="mode-option"><input type="radio" name="setup-capture" value="desktop"><span class="mode-copy"><strong>Entire display</strong><small>Always records one display, including other windows and notifications.</small></span></label>
+          </fieldset>
+          <div class="setting-row entrance-item" id="setup-monitor-row"><div class="setting-copy"><label for="setup-monitor">Display</label><p>The screen recorded when no game is captured.</p></div><select class="setting-control" id="setup-monitor"></select></div>
+          <div class="setting-row entrance-item"><div class="setting-copy"><label for="setup-length">Replay length</label><p>How far back a save reaches.</p></div><select class="setting-control" id="setup-length"></select></div>
+          <div class="setting-row entrance-item"><div class="setting-copy"><label for="setup-quality">Quality</label><p>Higher quality keeps more detail and uses more storage.</p></div><select class="setting-control" id="setup-quality"></select></div>
+          <label class="setting-row entrance-item"><span class="setting-copy"><strong>Record microphone</strong><small>Your voice is included only when this is on.</small></span><span class="switch-control"><span class="switch-label" data-switch-label="setup-mic" aria-hidden="true"></span><input type="checkbox" role="switch" id="setup-mic"><span class="switch-track" aria-hidden="true"></span></span></label>
+          <div class="setting-row entrance-item"><div class="setting-copy"><label for="setup-folder">Clips folder</label><p>Where saved replays go.</p></div><div class="path-input setting-control"><input id="setup-folder" type="text" spellcheck="false" autocomplete="off"><button type="button" id="setup-pick-folder">Browse</button></div></div>
+          <label class="setting-row entrance-item"><span class="setting-copy"><strong>Start with Windows</strong><small>Replay capture is ready after you sign in.</small></span><span class="switch-control"><span class="switch-label" data-switch-label="setup-start-login" aria-hidden="true"></span><input type="checkbox" role="switch" id="setup-start-login"><span class="switch-track" aria-hidden="true"></span></span></label>
+          <p class="setup-hint entrance-item" id="setup-defaults"></p>
+        </div>
+        <div class="setup-stage" data-step-panel="start" hidden>
+          <div class="setup-panel">
+            <div class="setup-state"><span class="capture-mark" id="start-mark"></span><div><h2 id="start-title">Setting up…</h2><p id="start-text">OBS closes and reopens on its own. This takes a few seconds.</p></div></div>
+            <ol class="task-list" id="setup-tasks" aria-label="Setup progress">
+              <li data-task="closing" hidden><span class="task-mark" aria-hidden="true"></span><span>Close OBS</span></li>
+              <li data-task="configuring"><span class="task-mark" aria-hidden="true"></span><span>Create the OBSReplay profile</span></li>
+              <li data-task="launching"><span class="task-mark" aria-hidden="true"></span><span>Open OBS in the tray</span></li>
+              <li data-task="starting"><span class="task-mark" aria-hidden="true"></span><span>Start replay capture</span></li>
+            </ol>
+          </div>
+          <p class="setup-hint" id="start-hint" hidden>If Windows asks whether OBS can use your network, either choice works. OBSReplay talks to OBS on this PC only.</p>
+        </div>
+      </section>
       <section id="capture-view" aria-labelledby="capture-title">
         <div class="view-heading"><h1 id="capture-title">Replay capture</h1><button type="button" class="text-button" id="capture-settings">Edit settings</button></div>
         <div class="capture-panel">
@@ -56,7 +103,7 @@
         <form id="settings-form">
           <fieldset><legend>Capture</legend>
             <div class="field"><label for="obs_path">OBS Studio executable</label><div class="path-input"><input id="obs_path" name="obs_path" type="text" spellcheck="false" autocomplete="off" placeholder="C:\Program Files\obs-studio\bin\64bit\obs64.exe"><button type="button" id="pick-obs">Browse</button></div></div>
-            <div class="form-grid"><div class="field"><label for="capture">Capture mode</label><select id="capture" name="capture"><option value="game">Fullscreen game</option><option value="desktop">Entire display</option></select></div><div class="field"><label for="monitor_id">Display</label><select id="monitor_id" name="monitor_id"></select></div><div class="field"><label for="clip_seconds">Replay length</label><select id="clip_seconds" name="clip_seconds"><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="180">3 minutes</option><option value="300">5 minutes</option><option value="600">10 minutes</option></select></div><div class="field"><label for="quality">Quality</label><select id="quality" name="quality"><option value="16">Very high</option><option value="18">High</option><option value="20">Balanced</option><option value="24">Low</option><option value="28">Very low</option></select></div></div>
+            <div class="form-grid"><div class="field"><label for="capture">Capture mode</label><select id="capture" name="capture"><option value="auto">Game or display</option><option value="game">Fullscreen games only</option><option value="desktop">Entire display</option></select></div><div class="field"><label for="monitor_id">Display</label><select id="monitor_id" name="monitor_id"></select></div><div class="field"><label for="clip_seconds">Replay length</label><select id="clip_seconds" name="clip_seconds"><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="180">3 minutes</option><option value="300">5 minutes</option><option value="600">10 minutes</option></select></div><div class="field"><label for="quality">Quality</label><select id="quality" name="quality"><option value="16">Very high</option><option value="18">High</option><option value="20">Balanced</option><option value="24">Low</option><option value="28">Very low</option></select></div></div>
             <p class="field-hint" id="capture-hint">Game mode captures compatible fullscreen games. It never records the desktop as a fallback.</p>
             <div class="field"><label for="clips_dir">Clips folder</label><div class="path-input"><input id="clips_dir" name="clips_dir" type="text" spellcheck="false" autocomplete="off" placeholder="Choose a folder…"><button type="button" id="pick-folder">Browse</button></div></div>
           </fieldset>
@@ -67,9 +114,9 @@
           <p class="apply-explanation" id="apply-explanation">Capture and audio changes restart OBS and resume replay capture. Streams and full recordings must be stopped first.</p>
         </form>
       </section>
-      <section id="help-view" aria-labelledby="help-title" hidden><div class="view-heading"><h1 id="help-title">Help & connection</h1></div><div class="help-content"><h2>Capture runs in OBS</h2><p>OBSReplay uses its own OBS profile and scene collection. Save a replay with the app button or your global shortcut. Stopping capture discards the unsaved replay buffer.</p><h2>Running in the tray</h2><p>Hide the window to keep OBSReplay and its shortcuts running. Quitting OBSReplay leaves OBS and any active replay capture running, but the app’s shortcuts stop working.</p><div class="inline-actions"><button type="button" id="hide-window">Hide to tray</button><button type="button" id="quit-app">Quit OBSReplay</button></div><h2>Connection</h2><p id="help-status">Waiting for controller.</p><div class="inline-actions"><button type="button" data-action="reconnect">Reconnect</button><button type="button" data-action="open_obs">Open OBS</button><button type="button" data-help="obs">OBS help</button><button type="button" data-help="notices">Software notices</button></div><h2>Capture privacy</h2><p>Entire-display capture includes other windows and notifications. Fullscreen-game capture relies on OBS compatibility; it never silently switches to the desktop. Microphone recording is opt-in.</p><details><summary>Dedicated profile</summary><div class="details-content"><p>Reset only the OBSReplay integration if configuration needs repair. Saved clips remain. OBS must be closed.</p><button type="button" class="danger" id="reset-integration">Reset integration…</button></div></details></div></section>
+      <section id="help-view" aria-labelledby="help-title" hidden><div class="view-heading"><h1 id="help-title">Help & connection</h1></div><div class="help-content"><h2>Capture runs in OBS</h2><p>OBSReplay uses its own OBS profile and scene collection. Save a replay with the app button or your global shortcut. Stopping capture discards the unsaved replay buffer.</p><h2>Running in the tray</h2><p>Hide the window to keep OBSReplay and its shortcuts running. Quitting OBSReplay leaves OBS and any active replay capture running, but the app’s shortcuts stop working.</p><div class="inline-actions"><button type="button" id="hide-window">Hide to tray</button><button type="button" id="quit-app">Quit OBSReplay</button></div><h2>Connection</h2><p id="help-status">Waiting for controller.</p><div class="inline-actions"><button type="button" data-action="reconnect">Reconnect</button><button type="button" data-action="open_obs">Open OBS</button><button type="button" data-help="obs">OBS help</button><button type="button" data-help="notices">Software notices</button></div><h2>Capture privacy</h2><p>Game or display records your display, including other windows and notifications, whenever no fullscreen game is captured. Fullscreen games only never records the desktop. Entire display always records the selected display. Microphone recording is opt-in.</p><details><summary>Dedicated profile</summary><div class="details-content"><p>Reset only the OBSReplay integration if configuration needs repair. Saved clips remain. OBS must be closed.</p><button type="button" class="danger" id="reset-integration">Reset integration…</button></div></details></div></section>
     </main>
-    <footer class="app-footer"><span id="footer-status" role="status" aria-live="polite">Loading controller…</span><div id="settings-actions" hidden><button type="button" id="discard-settings">Discard</button><button type="submit" form="settings-form" class="primary" id="apply-settings">Apply changes</button></div><button type="button" class="text-button" id="footer-hide">Hide to tray</button></footer>
+    <footer class="app-footer"><span id="footer-status" role="status" aria-live="polite">Loading controller…</span><div id="setup-actions" class="footer-actions" hidden><button type="button" id="setup-back">Back</button><button type="button" class="primary" id="setup-next">Continue</button></div><div id="settings-actions" hidden><button type="button" id="discard-settings">Discard</button><button type="submit" form="settings-form" class="primary" id="apply-settings">Apply changes</button></div><button type="button" class="text-button" id="footer-hide">Hide to tray</button></footer>
     </div>
     </div>
   </div>

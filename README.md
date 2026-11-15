@@ -6,16 +6,19 @@ The application lives at repository root. `ShadOBS-main` is an untouched third-p
 
 ## Run
 
-1. Install OBS Studio 31+ and Microsoft Edge WebView2 Runtime.
-2. Run `dist/OBSReplay.exe` from a location you intend to keep.
-3. Close OBS, choose capture mode and destination, then select **Configure OBS**.
-4. Select **Start capture**. Press **Ctrl+Shift+F10** to save a replay and **Alt+X** to show or hide the window. Shortcuts are configurable.
+1. Make sure Microsoft Edge WebView2 Runtime is installed (it ships with Windows 11).
+2. Run `dist/OBSReplay.exe` from a location you intend to keep. Guided setup opens on first launch.
+3. **OBS Studio:** if OBS 31+ isn't installed, select **Install OBS Studio**. OBSReplay installs (or updates) it with Windows Package Manager (`winget install OBSProject.OBSStudio`); Windows asks for permission once. Without winget, **Download from obsproject.com** opens the download page and setup continues as soon as OBS is installed; **Locate obs64.exe…** picks a copy in another folder.
+4. **Capture:** choose what to record, the display, replay length, quality, microphone, clips folder and Start with Windows. Encoder, frame rate, audio devices and shortcuts start with defaults (the best detected hardware encoder) and stay editable in Settings.
+5. Select **Set up and start capture**. Any open OBS closes gracefully, the dedicated profile is written, OBS reopens minimized in the tray and the replay buffer starts. Press **Ctrl+Shift+F10** to save a replay and **Alt+X** to show or hide the window. Shortcuts are configurable.
 
-Setup creates an OBSReplay profile and scene collection. The companion starts with Windows by default after setup; this can be disabled in App settings. Microphone recording is opt-in. Game mode captures a compatible fullscreen game; display mode records the selected entire monitor, including other windows and notifications. Game mode never falls back to desktop capture.
+Setup creates an OBSReplay profile and scene collection and marks OBS's first run as complete, so OBS's auto-configuration wizard doesn't open over the hidden session. If an open OBS is streaming or recording, setup stops and asks you to stop it first; OBS's own exit confirmation also stays in effect, and no process is forced to stop. The dedicated session starts with `--disable-updater`, so an update prompt never appears over a game; opening OBS normally still checks for updates. The companion starts with Windows by default after setup; this can be disabled in App settings. Microphone recording is opt-in. Settings → Capture also offers **Set up and start** for anyone who skips the guided setup.
+
+Capture modes: **Game or display** (the default for new setups) layers a fullscreen-game capture over display capture, so the selected display is recorded, including other windows and notifications, whenever no compatible fullscreen game is captured. **Fullscreen games only** never falls back to desktop capture. **Entire display** always records the selected monitor.
 
 OBSReplay runs alongside OBS. Once capture is enabled, login startup launches the companion and starts OBS minimized with its rolling replay buffer. OBS performs all capture and encoding. Closing the companion window keeps it in the tray. Quitting the controller leaves OBS and capture running, but the controller's shortcuts stop. Stopping capture discards unsaved buffer history.
 
-Apply handles capture and audio changes by saving the current healthy replay buffer, closing the dedicated OBS session, applying the settings and reopening OBS. Active replay capture resumes afterward. Streams, full recordings and other OBS profiles prevent a disruptive restart. App-only settings apply while capture continues. First-time setup still requires OBS closed once. Saved replays use MP4 with web playback metadata at the beginning of the file, preserving separate AAC audio tracks. H.264 offers the widest playback compatibility; HEVC and AV1 remain available for efficient compression. Replay length is an upper limit constrained by the configured memory budget.
+Apply handles capture and audio changes by saving the current healthy replay buffer, closing the dedicated OBS session, applying the settings and reopening OBS. Active replay capture resumes afterward. Streams, full recordings and other OBS profiles prevent a disruptive restart. App-only settings apply while capture continues. Saved replays use MP4 with web playback metadata at the beginning of the file, preserving separate AAC audio tracks. H.264 offers the widest playback compatibility; HEVC and AV1 remain available for efficient compression. Replay length is an upper limit constrained by the configured memory budget.
 
 Quality choices are **Very high, High, Balanced, Low and Very low**. NVIDIA recording combines quality targets with bitrate ceilings scaled to resolution and frame rate, plus a more efficient encoding preset. Other encoders use retuned quality targets. Resolution and FPS stay as selected; higher quality allows larger files. Balanced remains the default. Existing installations can select **Apply improved compression** without editing their preferences.
 
@@ -35,7 +38,7 @@ Use Windows x64, Visual Studio C++ desktop tools (MSVC 19.44+), a recent Windows
 ./build.ps1
 ```
 
-The output is `dist/OBSReplay.exe`. The frontend (including the editor window), application icon, notices, saucer, JSON library and MSVC runtime are compiled into that one file. OBS Studio and Evergreen WebView2 remain installed prerequisites.
+The output is `dist/OBSReplay.exe`. The frontend (including the editor window), application icon, notices, saucer, JSON library and MSVC runtime are compiled into that one file. OBS Studio (installed by guided setup when missing) and Evergreen WebView2 remain separate installs.
 
 The frontend uses plain HTML, CSS and JavaScript; there is no npm build or frontend framework. Native worker threads own OBS transport and setup. The UI only submits actions and reads state; a completed OBS save event and file existence confirm a replay.
 

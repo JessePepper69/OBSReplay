@@ -23,6 +23,8 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 
 namespace replay {
 namespace {
@@ -163,8 +165,8 @@ fs::path find_obs() {
     wchar_t value[32768]{};
     DWORD bytes = sizeof(value);
     if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\OBS Studio", nullptr, RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, nullptr, value, &bytes) == ERROR_SUCCESS)
-        candidates.emplace_back(fs::path(value) / L"bin/64bit/obs64.exe");
-    candidates.emplace_back(folder(FOLDERID_ProgramFiles) / L"obs-studio/bin/64bit/obs64.exe");
+        candidates.emplace_back(fs::path(value) / L"bin\\64bit\\obs64.exe");
+    candidates.emplace_back(folder(FOLDERID_ProgramFiles) / L"obs-studio\\bin\\64bit\\obs64.exe");
     for (const auto& candidate : candidates) {
         std::error_code error;
         if (fs::is_regular_file(candidate, error)) return candidate;
@@ -172,9 +174,29 @@ fs::path find_obs() {
     return {};
 }
 
+std::optional<std::array<int,3>> file_version(const fs::path& file) {
+    DWORD unused = 0;
+    const DWORD length = GetFileVersionInfoSizeW(file.c_str(), &unused);
+    if (!length) return std::nullopt;
+    std::vector<unsigned char> buffer(length);
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT size = 0;
+    if (!GetFileVersionInfoW(file.c_str(), 0, length, buffer.data()) ||
+        !VerQueryValueW(buffer.data(), L"\\", reinterpret_cast<void**>(&info), &size) ||
+        size < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd) return std::nullopt;
+    return std::array<int,3>{HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS), HIWORD(info->dwFileVersionLS)};
+}
+
+fs::path winget_path() {
+    try {
+        const auto alias = folder(FOLDERID_LocalAppData) / L"Microsoft/WindowsApps/winget.exe";
+        return GetFileAttributesW(alias.c_str()) != INVALID_FILE_ATTRIBUTES ? alias.lexically_normal() : fs::path{};
+    } catch (...) { return {}; }
+}
+
 Json default_settings(const Paths&) {
     return Json{{"obs_path", path_string(find_obs())}, {"clips_dir", path_string(folder(FOLDERID_Videos) / L"OBSReplay")},
-        {"clip_seconds",120},{"capture","game"},{"monitor_id",""},{"output_height",1080},{"fps",60},
+        {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
         {"encoder","auto"},{"codec","h264"},{"quality",20},{"mic_enabled",false},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
         {"save_sound",true},{"start_at_login",true},{"save_hotkey","Ctrl+Shift+F10"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true}};
@@ -205,7 +227,7 @@ void validate_settings(const Json& settings) {
         const auto value=settings[key].get<std::string>();
         if (std::none_of(values.begin(),values.end(),[&](const char* allowed){return value==allowed;})) throw std::runtime_error(std::string("Unsupported ")+key+".");
     };
-    member("capture",{"game","desktop"}); member("encoder",{"auto","nvidia","amd","intel","cpu"});
+    member("capture",{"auto","game","desktop"}); member("encoder",{"auto","nvidia","amd","intel","cpu"});
     member("codec",{"h264","hevc","av1"}); member("noise",{"off","rnnoise","speex"});
     if (settings["encoder"]=="cpu" && settings["codec"]!="h264") throw std::runtime_error("CPU encoding supports H.264. Choose H.264 or a supported hardware encoder.");
     for (const auto key : {"save_hotkey","show_hotkey"})
@@ -256,7 +278,8 @@ bool obs_running() {
 void launch_obs(const fs::path& exe) {
     if (obs_running()) throw std::runtime_error("OBS is already open. Connect to the OBSReplay profile or close OBS before starting it here.");
     if (!fs::is_regular_file(exe)) throw std::runtime_error("OBS was not found. Browse for obs64.exe in Settings.");
-    auto command=quote(exe)+L" --profile \"OBSReplay\" --collection \"OBSReplay\" --minimize-to-tray";
+    // The dedicated session runs in the tray; an update prompt would appear over games, so it checks for updates only when the user opens OBS normally.
+    auto command=quote(exe)+L" --profile \"OBSReplay\" --collection \"OBSReplay\" --minimize-to-tray --disable-updater";
     STARTUPINFOW startup{}; startup.cb=sizeof(startup); PROCESS_INFORMATION process{};
     auto directory=exe.parent_path().wstring();
     if (!CreateProcessW(exe.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,directory.c_str(),&startup,&process)) throw failure("Could not launch OBS");
@@ -294,6 +317,43 @@ void close_obs(const fs::path& exe) {
     if(!request.sent) throw std::runtime_error("OBS's main window is not ready to close. Your settings were not changed.");
     if(WaitForSingleObject(process.value,20000)!=WAIT_OBJECT_0)
         throw std::runtime_error("OBS has not finished closing. Check for an OBS dialog, then try Apply again. No process was forced to stop.");
+}
+
+unsigned close_all_obs(unsigned timeout_ms) {
+    std::vector<DWORD> ids;
+    {
+        Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
+        if(snapshot.value==INVALID_HANDLE_VALUE) throw failure("Cannot locate OBS");
+        PROCESSENTRY32W entry{}; entry.dwSize=sizeof(entry);
+        if(Process32FirstW(snapshot.value,&entry)) do { if(_wcsicmp(entry.szExeFile,L"obs64.exe")==0) ids.push_back(entry.th32ProcessID); } while(Process32NextW(snapshot.value,&entry));
+    }
+    std::vector<HANDLE> waits;
+    struct Guard { std::vector<HANDLE>& list; ~Guard() { for(auto h:list) CloseHandle(h); } } guard{waits};
+    for(const auto id:ids) {
+        HANDLE process=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,id);
+        if(!process) continue;
+        waits.push_back(process);
+        struct Request { DWORD process; bool sent{}; } request{id};
+        EnumWindows([](HWND window,LPARAM param)->BOOL {
+            auto& request=*reinterpret_cast<Request*>(param);
+            DWORD owner{}; GetWindowThreadProcessId(window,&owner);
+            if(owner!=request.process) return TRUE;
+            wchar_t title[256]{}; GetWindowTextW(window,title,256);
+            if(!std::wstring_view(title).starts_with(L"OBS ")) return TRUE;
+            request.sent=PostMessageW(window,WM_CLOSE,0,0)!=FALSE;
+            return !request.sent;
+        },reinterpret_cast<LPARAM>(&request));
+        if(!request.sent && WaitForSingleObject(process,0)!=WAIT_OBJECT_0)
+            throw std::runtime_error("OBS is still starting, so it can't be closed yet. Wait a moment, then try again.");
+    }
+    if(waits.empty()) return 0;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout_ms);
+    for(auto handle:waits) {
+        const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now()).count();
+        if(WaitForSingleObject(handle,static_cast<DWORD>(std::max<long long>(0,left)))!=WAIT_OBJECT_0)
+            throw std::runtime_error("OBS didn't close. It may be asking for confirmation because it's recording or streaming. Answer in OBS, then try again. Nothing was forced to stop.");
+    }
+    return static_cast<unsigned>(waits.size());
 }
 
 Json monitors() {
@@ -343,38 +403,44 @@ Json audio_devices(bool input) {
     return result;
 }
 
-std::string run_capture(const fs::path& exe,const std::wstring& arguments,unsigned timeout_ms) {
-    if(!fs::is_regular_file(exe)) return {};
+int run_process(const fs::path& exe,const std::wstring& arguments,unsigned timeout_ms,const std::function<void(const std::string&)>& output,const std::function<bool()>& cancelled,const fs::path& directory) {
     SECURITY_ATTRIBUTES security{sizeof(security),nullptr,TRUE}; HANDLE read_raw=nullptr,write_raw=nullptr;
-    if(!CreatePipe(&read_raw,&write_raw,&security,0)) throw failure("Cannot create probe output pipe");
+    if(!CreatePipe(&read_raw,&write_raw,&security,0)) throw failure("Cannot create process output pipe");
     Handle reader(read_raw),writer(write_raw);
-    if(!SetHandleInformation(reader.value,HANDLE_FLAG_INHERIT,0)) throw failure("Cannot protect probe pipe");
+    if(!SetHandleInformation(reader.value,HANDLE_FLAG_INHERIT,0)) throw failure("Cannot protect process pipe");
     STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
     startup.wShowWindow=SW_HIDE; startup.hStdOutput=writer.value; startup.hStdError=writer.value;
     Handle null_input(CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,&security,OPEN_EXISTING,0,nullptr));
     startup.hStdInput=null_input.value;
     PROCESS_INFORMATION process{}; auto command=quote(exe)+(arguments.empty()?L"":L" "+arguments);
-    auto directory=exe.parent_path().wstring();
-    if(!CreateProcessW(exe.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,directory.c_str(),&startup,&process)) return {};
+    const auto working=directory.wstring();
+    if(!CreateProcessW(exe.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,working.empty()?nullptr:working.c_str(),&startup,&process)) return -1;
     Handle child(process.hProcess),thread(process.hThread);
     CloseHandle(writer.value); writer.value=nullptr;
-    std::string output; const auto start=std::chrono::steady_clock::now(); bool ended=false;
+    const auto start=std::chrono::steady_clock::now(); bool ended=false;
     for(;;) {
         DWORD available=0;
         if(PeekNamedPipe(reader.value,nullptr,0,nullptr,&available,nullptr)&&available) {
             std::array<char,8192> buffer{}; DWORD read=0;
-            if(ReadFile(reader.value,buffer.data(),std::min<DWORD>(available,static_cast<DWORD>(buffer.size())),&read,nullptr)) output.append(buffer.data(),read);
-            if(output.size()>1024*1024) { TerminateProcess(child.value,1); WaitForSingleObject(child.value,1000); return {}; }
+            if(ReadFile(reader.value,buffer.data(),std::min<DWORD>(available,static_cast<DWORD>(buffer.size())),&read,nullptr)&&read&&output) output(std::string(buffer.data(),read));
             continue;
         }
         if(ended) break;
+        if(cancelled&&cancelled()) return -2;
         if(WaitForSingleObject(child.value,10)==WAIT_OBJECT_0) ended=true;
         if(std::chrono::steady_clock::now()-start>std::chrono::milliseconds(timeout_ms)) {
-            TerminateProcess(child.value,1); WaitForSingleObject(child.value,1000); return {};
+            TerminateProcess(child.value,1); WaitForSingleObject(child.value,1000); return -1;
         }
     }
     DWORD code=1; GetExitCodeProcess(child.value,&code);
-    return code==0?output:std::string{};
+    return static_cast<int>(code);
+}
+
+std::string run_capture(const fs::path& exe,const std::wstring& arguments,unsigned timeout_ms) {
+    if(!fs::is_regular_file(exe)) return {};
+    std::string output; bool overflow=false;
+    const int code=run_process(exe,arguments,timeout_ms,[&](const std::string& chunk) { if(output.size()+chunk.size()>1024*1024) overflow=true; else output+=chunk; },{},exe.parent_path());
+    return code==0&&!overflow?output:std::string{};
 }
 
 std::string safe_name(const std::string& text) {

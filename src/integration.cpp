@@ -6,8 +6,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <map>
+#include <optional>
 #include <sstream>
+#include <string_view>
+#include <vector>
 #include <stdexcept>
 #include <tuple>
 
@@ -34,18 +38,50 @@ std::string uuid() {
     return utf8(result.substr(1, result.size() - 2));
 }
 
+// OBS shows its auto-configuration wizard on the first launch unless user.ini records FirstRun.
+// Returns the new user.ini text, or nothing when it is already recorded.
+std::optional<std::string> first_run_recorded(const fs::path& file) {
+    std::string text;
+    bool bom = true;
+    if (fs::exists(file)) {
+        std::ifstream raw(file, std::ios::binary);
+        char head[3]{};
+        raw.read(head, 3);
+        bom = raw.gcount() == 3 && std::string_view(head, 3) == "\xEF\xBB\xBF";
+        text = read_text(file);
+    }
+    const std::string newline = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    std::vector<std::string> lines;
+    std::istringstream input(text);
+    for (std::string line; std::getline(input, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
+    auto section = std::find(lines.begin(), lines.end(), "[General]");
+    if (section == lines.end()) {
+        lines.insert(lines.begin(), {"[General]", "FirstRun=true"});
+    } else {
+        auto it = section + 1;
+        for (; it != lines.end() && !(it->size() >= 2 && it->front() == '[' && it->back() == ']'); ++it) {
+            if (it->starts_with("FirstRun=")) {
+                if (*it == "FirstRun=true") return std::nullopt;
+                *it = "FirstRun=true";
+                break;
+            }
+        }
+        if (it == lines.end() || (it->size() >= 2 && it->front() == '[')) lines.insert(section + 1, "FirstRun=true");
+    }
+    std::string result = bom ? "\xEF\xBB\xBF" : "";
+    for (const auto& line : lines) result += line + newline;
+    return result;
+}
+
 void verify_version(const fs::path& exe) {
     if (!fs::is_regular_file(exe) || _wcsicmp(exe.filename().c_str(), L"obs64.exe") != 0)
         throw std::runtime_error("Choose OBS Studio's bin/64bit/obs64.exe.");
-    DWORD unused = 0;
-    const DWORD length = GetFileVersionInfoSizeW(exe.c_str(), &unused);
-    std::vector<unsigned char> buffer(length);
-    VS_FIXEDFILEINFO* info = nullptr;
-    UINT size = 0;
-    if (!length || !GetFileVersionInfoW(exe.c_str(), 0, length, buffer.data()) ||
-        !VerQueryValueW(buffer.data(), L"\\", reinterpret_cast<void**>(&info), &size) ||
-        size < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd || HIWORD(info->dwFileVersionMS) < 31)
-        throw std::runtime_error("OBS Studio 31 or newer is required. Update OBS and choose its executable.");
+    const auto version = file_version(exe);
+    if (!version || (*version)[0] < 31)
+        throw std::runtime_error("OBS Studio 31 or newer is required. Update OBS from the setup screen, or choose a newer obs64.exe.");
 }
 
 using Sections = std::map<std::string, std::map<std::string, std::string>>;
@@ -209,22 +245,29 @@ Json source(const std::string& kind, const std::string& name, const std::string&
 }
 
 Json scene_collection(const Json& s, const Json& display) {
-    const bool desktop = s["capture"] == "desktop";
-    const std::string input_uuid = uuid(), scene_uuid = uuid();
-    const std::string input_name = desktop ? "OBSReplay Display" : "OBSReplay Game";
-    Json capture = desktop
-        ? Json{{"monitor_id", display["id"]}, {"capture_cursor", true}, {"method", 0}}
-        : Json{{"capture_mode", "any_fullscreen"}, {"capture_cursor", true}, {"capture_overlays", false},
-               {"anti_cheat_hook", true}, {"allow_transparency", false}, {"limit_framerate", false}, {"capture_audio", false}};
-    Json item = {{"name", input_name}, {"source_uuid", input_uuid}, {"id", 1}, {"visible", true}, {"locked", true},
-                 {"pos", {{"x", 0.0}, {"y", 0.0}}}, {"scale", {{"x", 1.0}, {"y", 1.0}}}, {"rot", 0.0},
-                 {"align", 5}, {"bounds_type", 2}, {"bounds_align", 0}, {"bounds_crop", false},
-                 {"bounds", {{"x", display["width"]}, {"y", display["height"]}}},
-                 {"crop_left", 0}, {"crop_right", 0}, {"crop_top", 0}, {"crop_bottom", 0}, {"scale_filter", "disable"},
-                 {"blend_method", "default"}, {"blend_type", "normal"}, {"private_settings", Json::object()}};
-    Json scene = source("scene", product, scene_uuid, {{"id_counter", 1}, {"custom_size", false}, {"items", Json::array({item})}});
+    // "auto" layers game capture over display capture: the display shows until a fullscreen game is hooked.
+    // Scene items are stored bottom to top.
+    const std::string mode = s["capture"];
+    const std::string scene_uuid = uuid();
+    Json items = Json::array(), sources = Json::array();
+    const auto add = [&](const char* kind, const char* name, Json settings) {
+        const std::string input_uuid = uuid();
+        const int id = static_cast<int>(items.size()) + 1;
+        items.push_back({{"name", name}, {"source_uuid", input_uuid}, {"id", id}, {"visible", true}, {"locked", true},
+                         {"pos", {{"x", 0.0}, {"y", 0.0}}}, {"scale", {{"x", 1.0}, {"y", 1.0}}}, {"rot", 0.0},
+                         {"align", 5}, {"bounds_type", 2}, {"bounds_align", 0}, {"bounds_crop", false},
+                         {"bounds", {{"x", display["width"]}, {"y", display["height"]}}},
+                         {"crop_left", 0}, {"crop_right", 0}, {"crop_top", 0}, {"crop_bottom", 0}, {"scale_filter", "disable"},
+                         {"blend_method", "default"}, {"blend_type", "normal"}, {"private_settings", Json::object()}});
+        sources.push_back(source(kind, name, input_uuid, std::move(settings)));
+    };
+    if (mode != "game") add("monitor_capture", "OBSReplay Display", {{"monitor_id", display["id"]}, {"capture_cursor", true}, {"method", 0}});
+    if (mode != "desktop") add("game_capture", "OBSReplay Game", {{"capture_mode", "any_fullscreen"}, {"capture_cursor", true}, {"capture_overlays", false},
+        {"anti_cheat_hook", true}, {"allow_transparency", false}, {"limit_framerate", false}, {"capture_audio", false}});
+    Json scene = source("scene", product, scene_uuid, {{"id_counter", items.size()}, {"custom_size", false}, {"items", items}});
+    sources.insert(sources.begin(), scene);
     Json value = {{"name", product}, {"current_scene", product}, {"current_program_scene", product},
-                  {"scene_order", Json::array({{{"name", product}}})}, {"sources", Json::array({scene, source(desktop ? "monitor_capture" : "game_capture", input_name, input_uuid, capture)})},
+                  {"scene_order", Json::array({{{"name", product}}})}, {"sources", sources},
                   {"current_transition", "Fade"}, {"transition_duration", 200}, {"transitions", Json::array()},
                   {"groups", Json::array()}, {"quick_transitions", Json::array()}, {"saved_projectors", Json::array()},
                   {"preview_locked", true}, {"scaling_enabled", false}, {"scaling_level", 0}, {"scaling_off_x", 0.0}, {"scaling_off_y", 0.0},
@@ -436,6 +479,10 @@ Json Integration::prepare(const Json& settings) {
     add_change(changes, profile / ".obsreplay-owner.json", marker);
     add_change(changes, marker_path, marker);
     if (next_socket != shared) add_change(changes, socket, next_socket.dump(2));
+    // Mark OBS's first run as done so a fresh install opens straight into the tray, without its setup wizard.
+    const auto user_ini = paths_.obs_config / "user.ini";
+    require_plain_path(paths_.obs_config, "user.ini");
+    if (const auto seeded = first_run_recorded(user_ini)) add_change(changes, user_ini, *seeded);
     const auto settings_path = paths_.data / "settings.json";
     if (fs::is_regular_file(settings_path)) add_change(changes, paths_.data / "settings.backup.json", read_text(settings_path));
     add_change(changes, settings_path, resolved.dump(2));
@@ -453,6 +500,16 @@ Credentials Integration::credentials() const {
     const auto password = config.value("server_password", "");
     if (port < 1 || port > 65535 || password.empty()) throw std::runtime_error("OBS WebSocket settings are incomplete. Run setup again with OBS closed.");
     return {static_cast<unsigned short>(port), password};
+}
+
+std::optional<Credentials> Integration::shared_credentials() const {
+    try {
+        const auto config = json_file(paths_.obs_config / socket_relative);
+        const int port = config.value("server_port", 4455);
+        const auto password = config.value("server_password", "");
+        if (!config.value("server_enabled", false) || !config.value("auth_required", false) || password.empty() || port < 1 || port > 65535) return std::nullopt;
+        return Credentials{static_cast<unsigned short>(port), password};
+    } catch (...) { return std::nullopt; }
 }
 
 void Integration::reset() {

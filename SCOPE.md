@@ -6,7 +6,7 @@ One release OBSReplay.exe with compiled-in HTML/CSS/JavaScript and statically li
 
 ## Core workflows
 
-- First run: detect or browse for OBS; choose capture mode, monitor, clip duration and destination; create a separate OBS profile/collection and configure authenticated local WebSocket control while OBS is closed. Back up the exact shared config changed. Explain any missing prerequisite with an actionable link.
+- First run: guided setup in three steps. OBS Studio: detect it, install or update it through Windows Package Manager (winget) with the user's permission prompt, or download/locate it; a manual install is picked up automatically. Capture: choose what to record, display, clip duration, quality, microphone, destination and login startup. Start: gracefully close any open OBS (refusing when its WebSocket reports a stream or recording), create a separate OBS profile/collection, configure authenticated local WebSocket control, mark OBS's first run complete in user.ini, launch OBS in the tray and start the replay buffer. Back up the exact shared config changed.
 - Capture: start/stop replay buffer, save via button or configurable global hotkey; show actual connection and replay state, pending work, timeout/failure and confirmed saved file. Stopping discards buffered history. Reconnect without blindly retrying a save.
 - Settings: duration, 30/60/120/144 FPS, original/1440p/1080p/720p resolution, probed H.264/HEVC/AV1 hardware encoder choices with explicit CPU fallback, quality, display/fullscreen-game capture, desktop and microphone audio devices, RNNoise/Speex noise suppression and separate tracks, save folder, sound, best-effort app folders, login startup and tray behavior. One explicit Apply model with pending state; settings that require OBS restart are applied only when the dedicated session is closed and clearly explained.
 - Recent clips: bounded local list from confirmed saves, open/reveal file and open destination folder. Never invent media, counters or successful operations.
@@ -16,7 +16,7 @@ One release OBSReplay.exe with compiled-in HTML/CSS/JavaScript and statically li
 
 Use CMake, C++23, saucer v8.0.5, plain embedded web UI and Windows APIs. Keep modules limited to platform/settings, OBS profile/setup, WebSocket/session and application/UI. Use native WinHTTP WebSocket transport, correlated request IDs, protocol authentication, bounded waits, serialized actions and live event reconciliation. Store app settings atomically, validate inputs in C++, keep secrets out of logs and frontend responses.
 
-OBS's actual game hook is not exposed by standard WebSocket events. Fullscreen-game capture uses OBS's native game source; best-effort app labels are kept distinct from capture readiness. Desktop mode excludes game-hook sources entirely.
+OBS's actual game hook is not exposed by standard WebSocket events. Fullscreen-game capture uses OBS's native game source; best-effort app labels are kept distinct from capture readiness. Desktop mode excludes game-hook sources entirely. Game-or-display mode (the default for new setups) layers game capture over display capture and is labelled as recording the display between games.
 
 Do not edit an active personal OBS profile/session. Check profile and scene ownership before recording actions. Setup must not overwrite unrelated profile/collection paths or rewrite global config while OBS is running. Existing active recording/streaming always prevents disruptive work.
 
@@ -31,9 +31,9 @@ Do not edit an active personal OBS profile/session. Check profile and scene owne
 ## Review resolutions
 
 - Quit closes the controller; OBS and any active capture continue. Window close hides to tray. Both behaviors are stated in the UI. Replay enabled/disabled intent persists; optional login startup starts capture only if that intent is enabled.
-- Apply saves a healthy active replay buffer, closes the owned OBSReplay session gracefully, applies capture/audio changes and reopens OBS with replay capture resumed when it was active. App-only settings do not restart OBS. Streams, full recordings and other profiles block disruptive work. First setup requires OBS closed once; the controller never forces a process to stop.
+- Apply saves a healthy active replay buffer, closes the owned OBSReplay session gracefully, applies capture/audio changes and reopens OBS with replay capture resumed when it was active. App-only settings do not restart OBS. Streams, full recordings and other profiles block disruptive work. Setup closes an open OBS through its main window (never by force) and stops if OBS reports a stream or recording.
 - Setup uses owned-path markers, validates collisions, stages and atomically replaces generated files, and rolls back failures. Shared WebSocket configuration is backed up. Reset integration, while OBS is closed, restores only shared values that still match this app's applied values and removes only owned files. Clips remain intact.
-- Missing/disconnected devices and monitors are surfaced; selected devices are validated at apply time. No silent switch from game capture to desktop capture.
+- Missing/disconnected devices and monitors are surfaced; selected devices are validated at apply time. Fullscreen-games-only mode never switches to desktop capture; display capture between games happens only in the explicitly chosen Game or display mode.
 - Replay coverage says “up to” the configured duration. No promise that a running buffer contains a full-duration clip, and no fake fill meter.
 - Setup, probing, file work and network requests run off the UI thread. Native bridge access stays restricted to the embedded UI; external help opens separately through a fixed allowlist.
 - Sorting uses the request-time best-effort app label, collision-safe destinations and no overwrite. Sorting failure retains and displays the confirmed original clip.

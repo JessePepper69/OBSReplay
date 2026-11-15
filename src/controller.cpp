@@ -18,6 +18,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -50,13 +51,14 @@ struct Controller::Impl {
     std::thread worker;
     std::atomic<bool> stopping{};
     std::optional<Save> pending_save;
-    Clock::time_point next_connect{}, next_refresh{};
+    Clock::time_point next_connect{}, next_refresh{}, next_detect{};
     unsigned failures{};
     bool refresh_needed{};
 
     explicit Impl(Paths value) : paths(std::move(value)), integration(paths) {
         state = {{"settings", Json::object()}, {"options", {{"monitors", Json::array()}, {"audio_inputs", Json::array()}, {"audio_outputs", Json::array()}, {"encoders", Json::array()}}},
-            {"integration", false}, {"obs_found", false}, {"obs_running", false}, {"connected", false}, {"owned", false}, {"replay_active", false}, {"capture_ready", false}, {"capture_issue", ""},
+            {"integration", false}, {"obs_found", false}, {"obs_version", ""}, {"obs_supported", false}, {"winget", false},
+            {"install_stage", ""}, {"setup_stage", ""}, {"obs_running", false}, {"connected", false}, {"owned", false}, {"replay_active", false}, {"capture_ready", false}, {"capture_issue", ""},
             {"busy", true}, {"operation", "initializing"}, {"status", "initializing"}, {"message", "Checking your OBS setup…"}, {"error", ""}, {"revision", 0}, {"clips", Json::array()}};
         worker = std::thread([this] { run(); });
     }
@@ -75,6 +77,7 @@ struct Controller::Impl {
     }
     Json settings() const { std::lock_guard lock(mutex); return state.at("settings"); }
     bool flag(const char* name) const { std::lock_guard lock(mutex); return state.value(name, false); }
+    std::string state_value(const char* name) const { std::lock_guard lock(mutex); return state.value(name, ""); }
     void message(const std::string& text) { update([&](Json& s) { s["message"] = text; }); }
     void settle() {
         update([](Json& s) {
@@ -91,9 +94,101 @@ struct Controller::Impl {
         std::error_code error;
         const auto executable = from_string(value.value("obs_path", ""));
         const bool found = !executable.empty() && fs::is_regular_file(executable, error);
-        update([&](Json& s) { s["settings"] = value; s["obs_found"] = found; });
+        std::string version;
+        bool supported{};
+        if (found) if (const auto parts = file_version(executable)) {
+            version = std::to_string((*parts)[0]) + "." + std::to_string((*parts)[1]) + "." + std::to_string((*parts)[2]);
+            supported = (*parts)[0] >= 31;
+        }
+        update([&](Json& s) { s["settings"] = value; s["obs_found"] = found; s["obs_version"] = version; s["obs_supported"] = supported; });
     }
     void store_settings(const Json& value) { save_settings(paths, value); set_settings(value); }
+    void stage(const char* name, const char* key = "setup_stage") { update([&](Json& s) { s[key] = name; }); }
+
+    // Picks up an OBS installed outside the app (for example from obsproject.com) while setup is open.
+    void detect_obs() {
+        if (flag("obs_supported")) return;
+        try {
+            auto value = settings();
+            const auto found = find_obs();
+            if (found.empty()) return;
+            if (path_string(found) != value.value("obs_path", "")) {
+                value["obs_path"] = path_string(found);
+                try { store_settings(value); } catch (...) { set_settings(value); }
+            } else set_settings(value);
+        } catch (...) {}
+    }
+
+    void use_obs(const fs::path& exe) {
+        if (!exe.is_absolute() || _wcsicmp(exe.filename().c_str(), L"obs64.exe") != 0 || !fs::is_regular_file(exe))
+            throw std::runtime_error("Choose obs64.exe, in OBS Studio's bin\\64bit folder.");
+        const auto version = file_version(exe);
+        if (!version || (*version)[0] < 31) throw std::runtime_error("This copy of OBS Studio is older than version 31. Update it, then try again.");
+        auto value = settings();
+        value["obs_path"] = path_string(exe);
+        store_settings(value);
+    }
+
+    void install_obs() {
+        const auto winget = winget_path();
+        if (winget.empty())
+            throw std::runtime_error("Automatic install isn't available because Windows Package Manager (winget) is missing on this PC. Download OBS Studio from obsproject.com; setup continues as soon as it's installed.");
+        const bool upgrade = flag("obs_found");
+        if (upgrade && obs_running()) { message("Closing OBS so it can be updated…"); socket.close(); close_all_obs(); }
+        stage("preparing", "install_stage");
+        message(upgrade ? "Preparing the OBS Studio update…" : "Preparing to install OBS Studio…");
+        std::string tail;
+        const std::wstring args = std::wstring(upgrade ? L"upgrade" : L"install") +
+            L" --id OBSProject.OBSStudio --exact --source winget --silent --accept-package-agreements --accept-source-agreements";
+        int reached = 0;
+        const int code = run_process(winget, args, 30 * 60 * 1000, [&](const std::string& chunk) {
+            tail += chunk;
+            if (tail.size() > 16384) tail.erase(0, tail.size() - 16384);
+            if (reached < 1 && tail.find("Downloading") != std::string::npos) {
+                reached = 1; stage("downloading", "install_stage"); message("Downloading OBS Studio…");
+            }
+            if (reached < 2 && (tail.find("Starting package install") != std::string::npos || tail.find("Successfully verified") != std::string::npos)) {
+                reached = 2; stage("installing", "install_stage"); message("Installing OBS Studio. Approve the Windows permission prompt if it appears.");
+            }
+        }, [&] { return stopping.load(); });
+        if (code == -2) return;
+        stage("verifying", "install_stage");
+        message("Checking the OBS Studio installation…");
+        const auto found = find_obs();
+        const auto version = found.empty() ? std::nullopt : file_version(found);
+        if (version && (*version)[0] >= 31) {
+            auto value = settings();
+            value["obs_path"] = path_string(found);
+            store_settings(value);
+            stage("", "install_stage");
+            message("OBS Studio " + std::to_string((*version)[0]) + "." + std::to_string((*version)[1]) + " is ready.");
+            return;
+        }
+        stage("", "install_stage");
+        if (code == -1) throw std::runtime_error("The OBS Studio installer didn't finish. Check your internet connection and try again, or download OBS Studio from obsproject.com.");
+        if (tail.find("No available upgrade") != std::string::npos || tail.find("No newer package") != std::string::npos)
+            throw std::runtime_error("winget has no newer OBS Studio for this copy. Update OBS from obsproject.com, or choose a newer obs64.exe.");
+        if (tail.find("already installed") != std::string::npos)
+            throw std::runtime_error("OBS Studio seems to be installed in a location OBSReplay can't find. Choose Locate OBS and select its obs64.exe.");
+        std::ostringstream text;
+        text << "OBS Studio wasn't installed (winget code 0x" << std::hex << static_cast<unsigned>(code)
+             << "). If you declined the Windows permission prompt, select Install again. You can also download OBS Studio from obsproject.com.";
+        throw std::runtime_error(text.str());
+    }
+
+    // Asks the user's own OBS session whether it is streaming or recording before closing it for setup.
+    bool other_session_busy() {
+        const auto credentials = integration.shared_credentials();
+        if (!credentials) return false;
+        ObsSocket probe;
+        try {
+            probe.connect(*credentials);
+            const bool busy = probe.request("GetStreamStatus", Json::object(), 3000).value("outputActive", false) ||
+                              probe.request("GetRecordStatus", Json::object(), 3000).value("outputActive", false);
+            probe.close();
+            return busy;
+        } catch (...) { probe.close(); return false; }
+    }
 
     void reconcile_clips() {
         Json clips;
@@ -126,8 +221,10 @@ struct Controller::Impl {
         try { value = load_settings(paths); }
         catch (const std::exception& e) { value = default_settings(paths); fail(e.what()); }
         set_settings(value);
+        detect_obs();
         const bool configured = integration.configured();
-        update([&](Json& s) { s["integration"] = configured; s["compression_update"] = integration.needs_update(); });
+        const bool winget = !winget_path().empty();
+        update([&](Json& s) { s["integration"] = configured; s["compression_update"] = integration.needs_update(); s["winget"] = winget; });
         try {
             const auto history_path = paths.data / L"clips.json";
             if (fs::exists(history_path)) {
@@ -172,7 +269,7 @@ struct Controller::Impl {
         const auto endpoints = [](const Json& list) {
             return std::any_of(list.begin(), list.end(), [](const Json& item) { const auto id = item.value("id", ""); return id != "default" && id != "off" && !id.empty(); });
         };
-        if (value.value("capture", "game") == "desktop") {
+        if (value.value("capture", "auto") != "game") {
             const auto selected = value.value("monitor_id", "");
             if (!selected.empty() && !contains(monitors(), selected)) return {"The selected display is disconnected. Choose an available display in Settings and Apply before starting capture.", true};
         }
@@ -192,22 +289,32 @@ struct Controller::Impl {
     std::string scene_issue() {
         try {
         const auto value = settings();
-        const bool desktop = value.value("capture", "game") == "desktop";
-        const std::string expected = desktop ? "OBSReplay Display" : "OBSReplay Game";
+        const std::string mode = value.value("capture", "auto");
+        struct Expected { const char* name; const char* kind; };
+        std::vector<Expected> expected;  // bottom to top
+        if (mode != "game") expected.push_back({"OBSReplay Display", "monitor_capture"});
+        if (mode != "desktop") expected.push_back({"OBSReplay Game", "game_capture"});
         const auto current = socket.request("GetCurrentProgramScene");
         if (current.value("currentProgramSceneName", "") != "OBSReplay") return "OBS is using a different scene. Select the OBSReplay scene or Apply your capture settings again.";
         const auto items = socket.request("GetSceneItemList", {{"sceneName", "OBSReplay"}}).at("sceneItems");
-        if (!items.is_array() || items.size() != 1 || items[0].value("sourceName", "") != expected || !items[0].value("sceneItemEnabled", false))
+        if (!items.is_array() || items.size() != expected.size())
             return "The dedicated OBS scene was changed. Apply to restore the selected capture mode before starting or saving.";
-        const auto input = socket.request("GetInputSettings", {{"inputName", expected}});
-        const auto capture = input.value("inputSettings", Json::object());
-        if (input.value("inputKind", "") != (desktop ? "monitor_capture" : "game_capture"))
-            return "The OBS capture source no longer matches your settings. Apply before starting or saving.";
-        if (desktop) {
-            if (_wcsicmp(wide(capture.value("monitor_id", "")).c_str(), wide(value.value("monitor_id", "")).c_str()) != 0)
-                return "OBS is configured for another display. Apply your selected display before starting or saving.";
-        } else if (capture.value("capture_mode", "") != "any_fullscreen")
-            return "OBS game capture no longer matches the fullscreen-game setting. Apply before starting or saving.";
+        std::vector<Json> ordered(items.begin(), items.end());
+        std::sort(ordered.begin(), ordered.end(), [](const Json& a, const Json& b) { return a.value("sceneItemIndex", 0) < b.value("sceneItemIndex", 0); });
+        for (std::size_t i = 0; i != expected.size(); ++i)
+            if (ordered[i].value("sourceName", "") != expected[i].name || !ordered[i].value("sceneItemEnabled", false))
+                return "The dedicated OBS scene was changed. Apply to restore the selected capture mode before starting or saving.";
+        for (const auto& item : expected) {
+            const auto input = socket.request("GetInputSettings", {{"inputName", item.name}});
+            const auto capture = input.value("inputSettings", Json::object());
+            if (input.value("inputKind", "") != item.kind)
+                return "The OBS capture source no longer matches your settings. Apply before starting or saving.";
+            if (std::string_view(item.kind) == "monitor_capture") {
+                if (_wcsicmp(wide(capture.value("monitor_id", "")).c_str(), wide(value.value("monitor_id", "")).c_str()) != 0)
+                    return "OBS is configured for another display. Apply your selected display before starting or saving.";
+            } else if (capture.value("capture_mode", "") != "any_fullscreen")
+                return "OBS game capture no longer matches the fullscreen-game setting. Apply before starting or saving.";
+        }
         return {};
         } catch (const std::exception&) {
             if (!socket.connected()) throw;
@@ -451,11 +558,25 @@ struct Controller::Impl {
         const bool startup_changed = previous.value("start_at_login", false) != value.value("start_at_login", false);
         bool startup_applied{};
         bool restart{}, resume{};
+        if (setup) stage("");
         try {
-            if (prepare && obs_running()) {
-                if (!was_configured) throw std::runtime_error("Close OBS once for initial OBSReplay setup. Later settings changes restart your dedicated OBS session automatically.");
-                ensure_connection(false);
-                require_owned();
+            bool own_session{};
+            if (prepare && obs_running() && was_configured) {
+                // The shared WebSocket login is ours once configured, so any OBS session should answer. If it can't be
+                // reached, don't risk closing an active OBSReplay buffer without saving it.
+                try { ensure_connection(false); events(); refresh(); own_session = flag("owned"); } catch (...) { socket.close(); throw; }
+            }
+            if (prepare && obs_running() && !own_session) {
+                // Another OBS session (or one we can't verify) is open. Close it gracefully so setup can write the
+                // dedicated profile; OBS's own exit confirmation still protects any stream or recording.
+                stage("closing");
+                message("Closing OBS so it can be set up…");
+                socket.close();
+                if (other_session_busy()) throw std::runtime_error("OBS is streaming or recording. Stop it in OBS, then try again. Nothing was changed.");
+                close_all_obs();
+                update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["obs_running"] = false; });
+            } else if (prepare && obs_running()) {
+                stage("closing");
                 if (socket.request("GetStreamStatus").value("outputActive", false) || socket.request("GetRecordStatus").value("outputActive", false))
                     throw std::runtime_error("Stop your stream or full recording before applying capture settings. OBS was left running.");
                 resume = flag("replay_active");
@@ -477,6 +598,7 @@ struct Controller::Impl {
             if (prepare) {
                 socket.close();
                 update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["obs_running"] = false; });
+                stage("configuring");
                 message("Preparing your dedicated OBS profile…");
                 value = integration.prepare(value);
                 set_settings(value);
@@ -507,6 +629,15 @@ struct Controller::Impl {
         if (prepare) update([](Json& s) { s["error"] = ""; });
         message(restart ? resume ? "Settings applied. Replay capture resumed." : "Settings applied. OBS is ready." : prepare ? "OBS is configured. Start capture when you're ready." : "Settings saved.");
         next_connect = Clock::now();
+        if (setup && payload.value("start", false) && !flag("replay_active")) {
+            stage("launching");
+            message("Opening OBS in the tray…");
+            ensure_connection(true);
+            stage("starting");
+            message("Starting replay capture…");
+            start();
+        }
+        if (setup) stage("done");
     }
 
     void reset() {
@@ -524,6 +655,8 @@ struct Controller::Impl {
 
     void perform(const Action& action) {
         if (action.name == "setup" || action.name == "apply") apply(action.payload, action.name == "setup");
+        else if (action.name == "install_obs") install_obs();
+        else if (action.name == "locate_obs") { use_obs(from_string(action.payload.value("path", ""))); message("Using OBS Studio " + std::string(state_value("obs_version")) + "."); }
         else if (action.name == "start") start();
         else if (action.name == "stop") stop();
         else if (action.name == "save") save(action.app);
@@ -629,7 +762,12 @@ struct Controller::Impl {
             if (stopping.load()) break;
             try {
                 events();
-                if (Clock::now() >= next_poll) { reconcile_clips(); background_connection(); next_poll = Clock::now() + std::chrono::seconds(1); }
+                if (Clock::now() >= next_poll) {
+                    reconcile_clips();
+                    if (Clock::now() >= next_detect) { detect_obs(); next_detect = Clock::now() + std::chrono::seconds(3); }
+                    background_connection();
+                    next_poll = Clock::now() + std::chrono::seconds(1);
+                }
             } catch (const std::exception& e) {
                 socket.close();
                 update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; });
@@ -672,7 +810,7 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
 }
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "start", "stop", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
     if (!allowed.contains(action)) return std::unexpected("Unknown controller action.");
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;
@@ -690,6 +828,8 @@ std::expected<bool, std::string> Controller::dispatch(std::string action, std::s
         s.queue.push_back({action, std::move(data), std::move(app)});
         s.state["busy"] = true; s.state["operation"] = action;
         s.state["error"] = ""; s.state["message"] = action == "save" ? "Waiting for OBS to save your replay…" : "Working…";
+        if (action == "install_obs") s.state["install_stage"] = "preparing";
+        if (action == "setup") s.state["setup_stage"] = "";
         s.state["revision"] = s.state.at("revision").get<uint64_t>() + 1;
     }
     s.wake.notify_one();

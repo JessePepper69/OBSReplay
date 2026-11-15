@@ -12,6 +12,8 @@ public:
     Json prepare(const Json& settings);
     void reset();
     Credentials credentials() const;
+    // The WebSocket login of whatever OBS session is configured, when it allows authenticated control.
+    std::optional<Credentials> shared_credentials() const;
 private:
     Paths paths_;
 };

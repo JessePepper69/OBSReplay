@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "game", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Ctrl+Shift+F10", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Ctrl+Shift+F10", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -121,18 +121,22 @@
     }
     const setupCopy = document.createElement("div");
     const setupTitle = document.createElement("strong");
-    setupTitle.textContent = "Configure OBS to get started";
+    setupTitle.textContent = "Replay capture isn’t set up yet";
     const setupHint = document.createElement("p");
-    setupHint.textContent = "Close OBS once for initial setup, then select Configure OBS. Later changes restart it automatically.";
+    setupHint.textContent = "Choose settings here and select Set up and start, or use the guided setup. OBS closes and reopens on its own.";
     setupCopy.append(setupTitle, setupHint);
     startup.classList.add("setup-startup");
     startup.querySelector("small").remove();
     setupCopy.append(startup);
-    const obsHelp = $("setup-intro").querySelector('[data-help="obs"]');
     const webviewHelp = $("setup-intro").querySelector('[data-help="webview2"]');
     if (webviewHelp) $("help-view").querySelector(".inline-actions").append(webviewHelp);
-    $("setup-intro").replaceChildren(setupCopy, obsHelp);
-    for (const item of document.querySelectorAll("#capture-view>*,#clips-view>*,#settings-view>.view-heading,#settings-view>.settings-tabs,#setup-intro,#help-view>.view-heading,#help-view>.help-content")) item.classList.add("entrance-item");
+    const guided = document.createElement("button");
+    guided.type = "button";
+    guided.className = "text-button";
+    guided.id = "open-guided-setup";
+    guided.textContent = "Guided setup";
+    $("setup-intro").replaceChildren(setupCopy, guided);
+    for (const item of document.querySelectorAll("#capture-view>*,#clips-view>*,#settings-view>.view-heading,#settings-view>.settings-tabs,#setup-intro,#help-view>.view-heading,#help-view>.help-content,#setup-view>.view-heading,#setup-view>.setup-steps,[data-step-panel]>.setup-panel,[data-step-panel]>.setup-hint")) item.classList.add("entrance-item");
   }
 
   function cancelEntrance() {
@@ -268,7 +272,9 @@
       const input = $(name);
       if (input.type === "checkbox") input.checked = Boolean(current[name]);
       else {
-        const text = String(current[name] ?? "");
+        let text = String(current[name] ?? "");
+        // A fresh setup has no display chosen yet; show the primary display (listed first) instead of a blank entry.
+        if (name === "monitor_id" && !text && input.options.length && input.options[0].value) text = input.options[0].value;
         if (input.tagName === "SELECT" && ![...input.options].some(option => option.value === text)) {
           const option = document.createElement("option");
           option.value = text;
@@ -291,12 +297,19 @@
     }
     return value;
   }
+  const captureNotes = {
+    auto: "Records a fullscreen game while one is running, and the selected display the rest of the time, including notifications.",
+    game: "Captures compatible fullscreen games only. It never records the desktop as a fallback.",
+    desktop: "Entire-display capture includes other windows and notifications. It never uses a game hook."
+  };
+  const captureLabels = { auto: "Game or display", game: "Fullscreen games", desktop: "Entire display" };
   function updateDependencies() {
-    const desktop = $("capture").value === "desktop";
-    $("capture-hint").textContent = desktop ? "Entire-display capture includes other windows and notifications. It never uses a game hook." : "Game mode captures compatible fullscreen games. It never records the desktop as a fallback.";
-    $("monitor_id").disabled = !desktop || busy();
+    const mode = $("capture").value;
+    $("capture-hint").textContent = captureNotes[mode] || captureNotes.auto;
+    $("monitor_id").disabled = mode === "game" || busy();
     $("mic_device").disabled = !$("mic_enabled").checked || busy();
     $("noise").disabled = !$("mic_enabled").checked || busy();
+    syncSetupControls();
     for (const label of document.querySelectorAll("[data-switch-label]")) label.textContent = $(label.dataset.switchLabel).checked ? "On" : "Off";
   }
   function updateCodecs(chooseSupported = false) {
@@ -315,13 +328,15 @@
   }
   function showTab(tab) {
     cancelRecording();
+    if (tab === "capture" && state.snapshot && (!configured() || setup.flow === "running")) tab = "setup";
     const changed = state.tab !== tab;
     state.tab = tab;
-    for (const name of ["capture", "clips", "settings", "help"]) $(name + "-view").hidden = name !== tab;
+    for (const name of ["setup", "capture", "clips", "settings", "help"]) $(name + "-view").hidden = name !== tab;
     for (const button of document.querySelectorAll("[data-tab]")) {
-      if (button.dataset.tab === tab) button.setAttribute("aria-current", "page");
+      if (button.dataset.tab === tab || (tab === "setup" && button.dataset.tab === "capture")) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
+    if (tab === "setup") renderSetup();
     if (tab === "help") $("help-button").setAttribute("aria-current", "page");
     else $("help-button").removeAttribute("aria-current");
     $("main").scrollTop = 0;
@@ -334,21 +349,22 @@
     const backendError = [errorText(snapshot?.error), errorText(snapshot?.hotkey_error)].filter(Boolean).join("\n");
     const error = state.localError || backendError;
     const visibleError = error && error !== state.dismissedError;
-    $("error-notice").hidden = !visibleError;
+    $("error-notice").hidden = !visibleError || state.tab === "setup";
     $("error-text").textContent = visibleError ? error : "";
     $("change-conflicting-shortcut").hidden = !errorText(snapshot?.hotkey_error) || !visibleError;
     $("change-conflicting-shortcut").disabled = !state.native || busy();
     $("settings-actions").hidden = state.tab !== "settings";
-    $("footer-hide").hidden = state.tab === "settings";
+    $("footer-hide").hidden = state.tab === "settings" || state.tab === "setup";
     const pending = busy();
     for (const button of document.querySelectorAll(".player-actions button")) button.disabled = !state.native || pending;
-    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : snapshot?.compression_update ? "Apply improved compression" : configured() ? "Apply changes" : "Configure OBS";
+    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : snapshot?.compression_update ? "Apply improved compression" : configured() ? "Apply changes" : "Set up and start";
     $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair() && !snapshot?.compression_update);
     $("discard-settings").disabled = !state.dirty || pending;
     if (!state.native) $("footer-status").textContent = "Native controller unavailable";
     else if (pending) $("footer-status").textContent = snapshot?.message || "Working…";
     else if (state.tab === "settings" && state.dirty) $("footer-status").textContent = "Unapplied changes";
-    else $("footer-status").textContent = snapshot?.message || (configured() ? "Settings saved" : "Configure OBS to get started");
+    else if (state.tab === "setup") $("footer-status").textContent = setupFooterText();
+    else $("footer-status").textContent = snapshot?.message || (configured() ? "Settings saved" : "Set up replay capture to get started");
     for (const element of document.querySelectorAll("[data-action], [data-help], #footer-hide, #hide-window, #quit-app, #reset-integration, #refresh-devices, #pick-obs, #pick-folder, #setup-start-at-login")) element.disabled = !state.native || pending;
     for (const element of $("settings-form").elements) if (element.id !== "apply-settings") element.disabled = !state.native || pending;
     if (state.native && !pending) updateDependencies();
@@ -357,13 +373,14 @@
     $("save-button").disabled = !state.native || pending || !canControl || !snapshot?.replay_active || needsAttention;
     $("save-button").lastChild.textContent = state.pending?.action === "save" || snapshot?.operation === "save" && snapshot?.busy ? "Saving…" : "Save replay";
     $("toggle-capture").disabled = !state.native || pending || !configured() || Boolean(snapshot?.connected && !snapshot?.owned) || Boolean(needsAttention && !snapshot?.replay_active);
+    renderSetup();
     scheduleFade();
   }
   function renderCapture() {
     const snapshot = state.snapshot || {};
     const value = settings();
     const active = Boolean(snapshot.replay_active && snapshot.connected && snapshot.owned);
-    $("connection-label").textContent = !state.native ? "Controller unavailable" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
+    $("connection-label").textContent = !state.native ? "Controller unavailable" : !configured() && !snapshot.connected ? "Not set up yet" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
     $("connection-dot").className = `state-dot${snapshot.connected && snapshot.owned ? " ready" : ""}`;
     let title = "Capture stopped";
     let description = "Start capture to keep your recent moments ready to save.";
@@ -383,11 +400,11 @@
     $("toggle-capture").textContent = active ? "Stop capture" : "Start capture";
     $("save-shortcut").textContent = value.save_hotkey;
     $("summary-length").textContent = formatDuration(value.clip_seconds);
-    $("summary-mode").textContent = value.capture === "desktop" ? "Entire display" : "Fullscreen game";
+    $("summary-mode").textContent = captureLabels[value.capture] || captureLabels.auto;
     $("summary-video").textContent = `${value.output_height ? `${value.output_height}p` : "Original"} / ${value.fps} fps`;
     $("summary-mic").textContent = value.mic_enabled ? "On" : "Off";
     $("capture-folder").textContent = value.clips_dir || "Choose a destination in Settings.";
-    $("capture-note").textContent = value.capture === "desktop" ? "Entire-display capture includes other windows and notifications." : "Game mode captures compatible fullscreen games. It never records the desktop as a fallback.";
+    $("capture-note").textContent = captureNotes[value.capture] || captureNotes.auto;
     $("connection-actions").hidden = Boolean(snapshot.connected && snapshot.owned);
     $("setup-intro").hidden = configured() || category !== "capture";
     $("setup-startup-row").hidden = configured();
@@ -643,7 +660,9 @@
         return;
       }
       state.native = true;
+      const previousObs = state.snapshot?.settings?.obs_path;
       state.snapshot = snapshot;
+      if (state.loaded && previousObs !== snapshot.settings.obs_path) $("obs_path").value = snapshot.settings.obs_path || "";
       syncMotion();
       renderOptions();
       if (!state.loaded) { fillForm(snapshot.settings); state.loaded = true; }
@@ -654,13 +673,15 @@
         if (!snapshot.busy && (changed || state.pending.sawBusy)) {
           const action = state.pending.action;
           state.pending = null;
-          if (!snapshot.error && ["setup", "apply"].includes(action)) { fillForm(snapshot.settings); if (action === "setup" && snapshot.integration) showTab("capture"); }
+          if (action === "setup") setup.flow = snapshot.error ? "failed" : "done";
+          if (action === "install_obs" && !snapshot.error && snapshot.obs_supported && setup.step === "obs") goStep("capture");
+          if (!snapshot.error && ["setup", "apply", "install_obs", "locate_obs"].includes(action)) fillForm(snapshot.settings);
         } else if (Date.now() - state.pending.started > 120000) {
           state.pending = null;
           showError("The controller has not confirmed completion. Check OBS and the connection state before trying again. Replay saves are never retried automatically.");
         }
       }
-      if (!state.initialRoute) { state.initialRoute = true; if (!configured()) showTab("settings"); }
+      if (!state.initialRoute && !snapshot.busy) { state.initialRoute = true; if (!configured()) { setup.step = snapshot.obs_supported ? "capture" : "obs"; showTab("setup"); } }
       renderCapture();
       renderClips();
       renderFeedback();
@@ -713,7 +734,217 @@
     $("hotkey-message").textContent = "Shortcut change canceled.";
     nativeCall("hotkey_recording", false).catch(showError);
   }
+  // Guided setup: install OBS if needed, choose the essentials, then set up and start in one step.
+  const setup = { step: null, flow: null, closing: false };
+  const setupSteps = ["obs", "capture", "start"];
+  const setupTasks = ["closing", "configuring", "launching", "starting"];
+  const installTasks = ["downloading", "installing", "verifying"];
+  const checkIcon = '<svg viewBox="0 0 12 12"><path d="m2.5 6.2 2.3 2.3 4.7-5"/></svg>';
+  const crossIcon = '<svg viewBox="0 0 12 12"><path d="m3 3 6 6m0-6-6 6"/></svg>';
+  const setupBindings = [["setup-monitor", "monitor_id"], ["setup-length", "clip_seconds"], ["setup-quality", "quality"], ["setup-mic", "mic_enabled"], ["setup-folder", "clips_dir"], ["setup-start-login", "start_at_login"]];
+  function operating(name) { return state.pending?.action === name || Boolean(state.snapshot?.busy && state.snapshot?.operation === name); }
+  function mirrorOptions(source, target) {
+    const key = [...source.options].map(option => `${option.value}\u0000${option.textContent}`).join("\u0001");
+    if (target.dataset.mirror !== key) {
+      target.replaceChildren(...[...source.options].map(option => option.cloneNode(true)));
+      target.dataset.mirror = key;
+    }
+    if (target.value !== source.value) target.value = source.value;
+  }
+  function syncSetupControls() {
+    for (const [id, field] of setupBindings) {
+      const control = $(id), source = $(field);
+      if (control.type === "checkbox") control.checked = source.checked;
+      else if (control.tagName === "SELECT") mirrorOptions(source, control);
+      else if (control.value !== source.value && document.activeElement !== control) control.value = source.value;
+    }
+    for (const radio of document.querySelectorAll('[name="setup-capture"]')) radio.checked = radio.value === $("capture").value;
+    $("setup-monitor-row").hidden = $("capture").value === "game";
+    const auto = state.snapshot?.options?.encoders?.[0]?.label || "";
+    const encoder = auto.replace(/^Automatic · /, "");
+    $("setup-defaults").textContent = `${encoder && !/CPU/.test(encoder) ? `Encoding uses ${encoder} automatically. ` : encoder ? "No supported GPU encoder was found, so encoding uses the CPU. " : ""}Frame rate, audio devices and shortcuts start with sensible defaults; change them anytime in Settings.`;
+  }
+  function setTask(item, status) {
+    if (item.dataset.state === status) return;
+    item.dataset.state = status;
+    item.querySelector(".task-mark").innerHTML = status === "done" ? checkIcon : status === "failed" ? crossIcon : "";
+  }
+  function goStep(step) {
+    if (setup.step === step) return;
+    setup.step = step;
+    // Moving between steps dismisses an error from the previous one; a new action shows its own.
+    const shown = [state.localError, errorText(state.snapshot?.error)].find(Boolean);
+    if (shown) { state.dismissedError = shown; state.localError = ""; }
+    renderFeedback();
+    $("main").scrollTop = 0;
+    const panel = document.querySelector(`[data-step-panel="${step}"]`);
+    if (presented && panel) playEntrance(panel);
+    const focusTarget = step === "capture" ? document.querySelector('[name="setup-capture"]:checked') : step === "obs" && !$("install-obs").hidden ? $("install-obs") : null;
+    focusTarget?.focus({ preventScroll: true });
+  }
+  function runSetup(value) {
+    if (busy()) return;
+    if (!value.obs_path) value.obs_path = state.snapshot?.settings?.obs_path || "";
+    if (!value.clips_dir) { goStep("capture"); showTab("setup"); showError("Choose a clips folder for your replays."); $("setup-folder").focus(); return; }
+    if (value.save_hotkey.toLowerCase() === value.show_hotkey.toLowerCase()) { showError("Save replay and Show / hide window need different shortcuts."); return; }
+    setup.flow = "running";
+    setup.closing = false;
+    for (const item of $("setup-tasks").children) setTask(item, "pending");
+    showTab("setup");
+    goStep("start");
+    dispatch("setup", { settings: value, start: true });
+  }
+  function setupFooterText() {
+    const snapshot = state.snapshot || {};
+    if (busy()) return snapshot.message || "Working…";
+    if (setup.step === "obs") return snapshot.obs_supported ? `OBS Studio ${snapshot.obs_version} is ready` : "OBS Studio is needed for capture";
+    if (setup.step === "capture") return "Step 2 of 3";
+    if (setup.flow === "done") return "Replay capture is running";
+    return snapshot.message || "";
+  }
+  function renderSetup() {
+    const snapshot = state.snapshot;
+    const visible = state.tab === "setup";
+    $("setup-actions").hidden = !visible;
+    if (!visible || !snapshot) return;
+    if (!setup.step) setup.step = snapshot.obs_supported ? "capture" : "obs";
+    const pending = busy();
+    const installing = operating("install_obs");
+    const running = operating("setup");
+    const obsReady = Boolean(snapshot.obs_supported);
+    const failedError = [state.localError, errorText(snapshot.error)].find(Boolean) || "";
+    // Steps
+    const reached = { obs: true, capture: obsReady, start: setup.flow !== null };
+    const complete = { obs: obsReady, capture: setup.flow !== null, start: setup.flow === "done" };
+    for (const button of document.querySelectorAll("[data-setup-step]")) {
+      const name = button.dataset.setupStep;
+      const current = name === setup.step;
+      if (current) button.setAttribute("aria-current", "step"); else button.removeAttribute("aria-current");
+      button.dataset.state = complete[name] && !current ? "done" : "";
+      const mark = button.querySelector(".step-mark");
+      const markup = complete[name] && !current ? checkIcon : String(setupSteps.indexOf(name) + 1);
+      if (mark.dataset.markup !== markup) { mark.innerHTML = markup; mark.dataset.markup = markup; }
+      button.disabled = !state.native || pending || !reached[name] || (setup.flow === "done" && name !== "start");
+    }
+    for (const panel of document.querySelectorAll("[data-step-panel]")) panel.hidden = panel.dataset.stepPanel !== setup.step;
+    // Step 1: OBS Studio
+    const version = snapshot.obs_version ? `OBS Studio ${snapshot.obs_version}` : "OBS Studio";
+    let obsTitle, obsText, mark = "";
+    if (installing) {
+      const stage = snapshot.install_stage || "preparing";
+      obsTitle = snapshot.obs_found ? "Updating OBS Studio…" : "Installing OBS Studio…";
+      obsText = stage === "installing" ? "Approve the Windows permission prompt if it appears. Setup continues on its own." : "This usually takes a minute or two. You can leave this window open.";
+      mark = "working";
+      const index = installTasks.indexOf(stage);
+      [...$("install-tasks").children].forEach((item, i) => setTask(item, index < 0 ? "pending" : i < index ? "done" : i === index ? "active" : "pending"));
+    } else if (obsReady) {
+      obsTitle = `${version} is ready`;
+      obsText = snapshot.obs_running ? "OBS is open right now. It closes and reopens on its own when you start." : "OBSReplay opens it in the tray whenever capture runs.";
+      mark = "active";
+    } else if (snapshot.obs_found) {
+      obsTitle = `${version} needs an update`;
+      obsText = "OBSReplay needs OBS Studio 31 or newer. Updating keeps your existing OBS profiles and scenes.";
+      mark = "warning";
+    } else {
+      obsTitle = "Install OBS Studio";
+      obsText = snapshot.winget ? "OBSReplay uses OBS Studio to capture and encode your replays. Installing takes a minute or two, and Windows asks for permission once." :"Automatic install isn’t available on this PC. Download OBS Studio from obsproject.com and run its installer; setup continues as soon as it’s installed.";
+    }
+    if (!installing && !obsReady && failedError) mark = "failed";
+    $("obs-title").textContent = obsTitle;
+    $("obs-text").textContent = obsText;
+    $("obs-mark").className = `capture-mark${mark ? ` ${mark}` : ""}`;
+    $("obs-path").hidden = !obsReady || installing;
+    $("obs-path").textContent = snapshot.settings?.obs_path || "";
+    $("install-tasks").hidden = !installing;
+    $("obs-actions").hidden = installing || obsReady;
+    $("install-obs").hidden = !snapshot.winget;
+    $("install-obs").textContent = snapshot.obs_found ? "Update OBS Studio" : "Install OBS Studio";
+    $("download-obs").className = snapshot.winget ? "" : "primary";
+    $("download-obs").textContent = snapshot.winget ? "Download from obsproject.com" : "Download OBS Studio";
+    for (const id of ["install-obs", "download-obs", "locate-obs"]) $(id).disabled = !state.native || pending;
+    // Step 2: capture essentials
+    for (const element of document.querySelectorAll('[data-step-panel="capture"] input, [data-step-panel="capture"] select, [data-step-panel="capture"] button')) element.disabled = !state.native || pending;
+    if (!pending) $("setup-monitor").disabled = $("capture").value === "game";
+    // Step 3: start
+    const stage = snapshot.setup_stage || "";
+    if (running && stage === "closing") setup.closing = true;
+    $("setup-tasks").querySelector('[data-task="closing"]').hidden = !setup.closing;
+    const stageIndex = stage === "done" ? setupTasks.length : setupTasks.indexOf(stage);
+    const tasks = [...$("setup-tasks").children];
+    tasks.forEach((item, i) => {
+      if (setup.flow === "done") setTask(item, "done");
+      else if (setup.flow === "failed") setTask(item, i < stageIndex ? "done" : i === Math.max(stageIndex, 0) ? "failed" : "pending");
+      else if (setup.flow === "running") setTask(item, stageIndex < 0 ? "pending" : i < stageIndex ? "done" : i === stageIndex ? "active" : "pending");
+    });
+    const value = settings();
+    if (setup.flow === "done") {
+      $("start-title").textContent = "Replay capture is running";
+      $("start-text").innerHTML = "";
+      const keys = document.createElement("kbd");
+      keys.textContent = value.save_hotkey;
+      $("start-text").append("Press ", keys, ` to save the last ${formatDuration(value.clip_seconds)}. Closing this window keeps OBSReplay running in the tray.`);
+      $("start-text").classList.add("setup-done");
+    } else {
+      $("start-text").classList.remove("setup-done");
+      $("start-title").textContent = setup.flow === "failed" ? "Setup needs attention" : "Setting up…";
+      $("start-text").textContent = setup.flow === "failed" ? (configured() ? "Your settings were saved. Check the problem above, then try again." : "Nothing was started. Check the problem above, then try again.") : "OBS closes and reopens on its own. This takes a few seconds.";
+    }
+    $("start-mark").className = `capture-mark ${setup.flow === "done" ? "active" : setup.flow === "failed" ? "failed" : "working"}`;
+    $("start-hint").hidden = setup.flow !== "done";
+    // Inline error
+    const showSetupError = Boolean(failedError) && failedError !== state.dismissedError && !installing && !running;
+    $("setup-error").hidden = !showSetupError;
+    $("setup-error-title").textContent = setup.step === "obs" ? "OBS Studio isn’t ready" : "Setup couldn’t finish";
+    $("setup-error-text").textContent = showSetupError ? failedError : "";
+    // Footer actions
+    const back = $("setup-back"), next = $("setup-next");
+    back.hidden = setup.step === "obs" || setup.flow === "done" || running;
+    next.hidden = running || (setup.step === "obs" && !obsReady);
+    back.disabled = next.disabled = !state.native || pending;
+    if (setup.step === "obs") next.textContent = "Continue";
+    else if (setup.step === "capture") next.textContent = "Set up and start capture";
+    else next.textContent = setup.flow === "done" ? "Go to Capture" : "Try again";
+  }
+  function setupNext() {
+    if (setup.step === "obs") goStep("capture");
+    else if (setup.step === "capture" || setup.flow === "failed") runSetup(formValue());
+    else if (setup.flow === "done") { setup.flow = null; setup.step = null; showTab("capture"); }
+  }
+  function setupBack() {
+    if (setup.step === "capture") goStep("obs");
+    else if (setup.step === "start") { setup.flow = null; goStep("capture"); }
+  }
+  function bindSetup() {
+    $("setup-next").addEventListener("click", setupNext);
+    $("setup-back").addEventListener("click", setupBack);
+    for (const button of document.querySelectorAll("[data-setup-step]")) button.addEventListener("click", () => goStep(button.dataset.setupStep));
+    $("install-obs").addEventListener("click", () => dispatch("install_obs"));
+    $("download-obs").addEventListener("click", () => dispatch("help", { topic: "obs" }));
+    $("locate-obs").addEventListener("click", async () => {
+      try {
+        const path = await nativeCall("pick_obs", state.snapshot?.settings?.obs_path || "");
+        if (path) dispatch("locate_obs", { path });
+      } catch (error) { showError(error); }
+    });
+    $("setup-all-settings").addEventListener("click", () => { showTab("settings"); showCategory("capture", false); });
+    $("open-guided-setup").addEventListener("click", () => showTab("setup"));
+    for (const [id, field] of setupBindings) $(id).addEventListener("input", () => {
+      const control = $(id), target = $(field);
+      if (control.type === "checkbox") target.checked = control.checked; else target.value = control.value;
+      if (field === "start_at_login") $("setup-start-at-login").checked = control.checked;
+      markDirty();
+    });
+    for (const radio of document.querySelectorAll('[name="setup-capture"]')) radio.addEventListener("change", () => { $("capture").value = radio.value; markDirty(); renderSetup(); });
+    $("setup-pick-folder").addEventListener("click", async () => {
+      try {
+        const result = await nativeCall("pick_folder", $("clips_dir").value);
+        if (result) { $("clips_dir").value = result; markDirty(); }
+      } catch (error) { showError(error); }
+    });
+  }
+
   arrangeSettings();
+  bindSetup();
   const readerObserver = new ResizeObserver(scheduleFade);
   readerObserver.observe($("main"));
   readerObserver.observe(document.querySelector(".app-footer"));
@@ -768,10 +999,11 @@
   $("settings-form").addEventListener("submit", event => {
     event.preventDefault();
     const value = formValue();
-    if (!value.obs_path) { showError("Choose the OBS Studio executable before configuring."); $("obs_path").focus(); return; }
+    if (!value.obs_path && !state.snapshot?.obs_supported) { setup.step = "obs"; showTab("setup"); return; }
     if (!value.clips_dir) { showError("Choose a clips folder before configuring."); $("clips_dir").focus(); return; }
     if (value.save_hotkey.toLowerCase() === value.show_hotkey.toLowerCase()) { showError("Save replay and Show / hide window need different shortcuts."); $("save_hotkey").focus(); return; }
-    dispatch(configured() && !needsRepair() ? "apply" : "setup", value);
+    if (!configured()) { runSetup(value); return; }
+    dispatch(needsRepair() ? "setup" : "apply", value);
   });
   $("discard-settings").addEventListener("click", () => { cancelRecording(); fillForm(settings()); renderFeedback(); });
   for (const [buttonId, functionName, fieldId] of [["pick-folder", "pick_folder", "clips_dir"], ["pick-obs", "pick_obs", "obs_path"]]) $(buttonId).addEventListener("click", async () => {
