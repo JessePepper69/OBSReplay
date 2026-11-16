@@ -42,7 +42,7 @@ This file covers what OBSReplay is, who uses it, the product rules every change 
 | Respect existing OBS sessions | OBSReplay asks OBS to close through its main window. It never terminates an OBS process. A stream or a full recording blocks setup and Apply. |
 | Ownership checks | OBSReplay controls capture only while OBS runs the `OBSReplay` profile and scene collection. |
 | Microphone is opt-in | `mic_enabled` defaults to `false`. The UI states that the voice is recorded only when the switch is on. |
-| Desktop capture is explicit | **Game or display** (default) is labelled as recording the display between games. **Fullscreen games only** never falls back to the desktop. **Entire display** records the selected monitor at all times. |
+| Desktop capture is explicit | **Game or display (Hybrid)** (default) is labelled as recording the display between games. **Fullscreen games only** never falls back to the desktop. **Entire display** records the selected monitor at all times. |
 | Start with Windows is on by default | `start_at_login` defaults to `true`. Setup shows the switch, and the user can turn it off. The login entry changes only through a successful setup or **Apply changes**. |
 | Guided first run | First run is a three-step setup: **OBS Studio**, **Capture**, **Start**. It installs OBS when needed, closes and reopens OBS, and starts capture in one step. |
 | Tray behavior | Closing the window hides it to the tray. Hotkeys keep working. **Quit OBSReplay** exits the controller and leaves OBS and any active capture running. The UI states both facts. |
@@ -60,7 +60,7 @@ This file covers what OBSReplay is, who uses it, the product rules every change 
 - The navigation rail holds **Capture** and **Clips** at the top, **Settings** and **Help** at the bottom.
 - Settings has three groups: **Capture**, **Audio** and **App**.
 - The **Animations** setting (`animations_enabled`) controls app transitions. It does not follow the Windows animation setting.
-- Seven color themes ship: Original, Mono, Light, Rose, Forest, Amethyst, Ember.
+- Six color themes ship: Original, Mono, Light, Rose, Amethyst, Ember.
 - See [design](design.md) for the visual contract.
 
 ## Working rules for contributors

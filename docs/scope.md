@@ -79,7 +79,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Start at Windows login | Done | Current-user `Run` entry. |
 | Configurable hotkeys with conflict detection | Done | |
 | Animations switch | Done | |
-| Seven color themes | Done | Applied to every window. |
+| Six color themes | Done | Applied to every window. |
 | One explicit Apply with pending state | Done | Capture and audio changes restart the owned OBS session and resume capture. |
 
 ## Clips and viewer

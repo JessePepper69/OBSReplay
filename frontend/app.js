@@ -87,10 +87,10 @@
       row.replaceChildren(copy, controls);
       groups.app.append(row);
     }
-    groups.app.append($("hotkey-help"), $("hotkey-message"));
+    groups.app.append($("hotkey-message"));
     const themeRow = document.createElement("div");
     themeRow.className = "setting-row theme-row entrance-item";
-    themeRow.innerHTML = '<div class="setting-copy"><strong id="theme-label">Theme</strong><small>Colours for every OBSReplay window.</small></div><input type="hidden" id="theme" name="theme" value="original"><div class="theme-picker" id="theme-picker" role="radiogroup" aria-labelledby="theme-label"></div>';
+    themeRow.innerHTML = '<div class="setting-copy"><strong id="theme-label">Theme</strong></div><input type="hidden" id="theme" name="theme" value="original"><div class="theme-picker" id="theme-picker" role="radiogroup" aria-labelledby="theme-label"></div>';
     for (const theme of Theme.list) {
       const option = document.createElement("button");
       option.type = "button";
@@ -350,7 +350,7 @@
     game: "Fullscreen games only.",
     desktop: "Your whole display, all the time."
   };
-  const captureLabels = { auto: "Game or display", game: "Fullscreen games", desktop: "Entire display" };
+  const captureLabels = { auto: "Game or display (Hybrid)", game: "Fullscreen games", desktop: "Entire display" };
   function updateDependencies() {
     const mode = $("capture").value;
     $("capture-hint").textContent = captureNotes[mode] || captureNotes.auto;
@@ -425,6 +425,7 @@
     $("capture-repair").disabled = !state.native || pending;
     $("toggle-capture").disabled = !state.native || pending || !configured() || Boolean(snapshot?.connected && !snapshot?.owned) || Boolean(needsAttention && !snapshot?.replay_active);
     renderSetup();
+    syncDropdowns();
     scheduleFade();
   }
   function renderCapture() {
@@ -1236,7 +1237,148 @@
     });
   }
 
+  // Dropdowns: each <select> keeps the value and its listeners; a button and a listbox replace the system menu.
+  const dropdowns = [];
+  let openDropdown = null;
+  const chevron = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+  function syncDropdowns() {
+    for (const item of dropdowns) {
+      const text = item.select.selectedOptions[0]?.textContent || "";
+      if (item.label.textContent !== text) item.label.textContent = text;
+      if (item.button.disabled !== item.select.disabled) item.button.disabled = item.select.disabled;
+      if (item.select.disabled && openDropdown === item) closeDropdown();
+    }
+  }
+  function closeDropdown(focus = false) {
+    const item = openDropdown;
+    if (!item) return;
+    openDropdown = null;
+    item.list.remove();
+    item.button.setAttribute("aria-expanded", "false");
+    item.button.removeAttribute("aria-activedescendant");
+    if (focus) item.button.focus({ preventScroll: true });
+  }
+  function placeDropdown(item) {
+    const box = item.button.getBoundingClientRect(), gap = 6, edge = 8;
+    const wanted = Math.min(item.list.scrollHeight + 2, 320);
+    const below = innerHeight - box.bottom - gap - edge, above = box.top - gap - edge;
+    const up = below < Math.min(wanted, 160) && above > below;
+    const height = Math.max(64, Math.min(wanted, up ? above : below));
+    item.list.classList.toggle("above", up);
+    Object.assign(item.list.style, { left: `${box.left}px`, width: `${box.width}px`, maxHeight: `${height}px`, top: up ? "" : `${box.bottom + gap}px`, bottom: up ? `${innerHeight - box.top + gap}px` : "" });
+  }
+  function activateOption(item, index, scroll = true) {
+    const rows = [...item.list.children];
+    if (!rows[index] || rows[index].getAttribute("aria-disabled") === "true") return;
+    rows.forEach((row, i) => row.classList.toggle("active", i === index));
+    item.active = index;
+    item.button.setAttribute("aria-activedescendant", rows[index].id);
+    if (scroll) rows[index].scrollIntoView({ block: "nearest" });
+  }
+  function moveOption(item, step, from = item.active) {
+    const rows = [...item.list.children];
+    for (let index = from + step; index >= 0 && index < rows.length; index += step) if (rows[index].getAttribute("aria-disabled") !== "true") { activateOption(item, index); return; }
+  }
+  function chooseOption(item, index) {
+    const option = item.select.options[index];
+    if (!option || option.disabled) return;
+    closeDropdown(true);
+    if (item.select.selectedIndex === index) return;
+    item.select.selectedIndex = index;
+    item.select.dispatchEvent(new Event("input", { bubbles: true }));
+    item.select.dispatchEvent(new Event("change", { bubbles: true }));
+    syncDropdowns();
+  }
+  function openDropdownFor(item) {
+    closeDropdown();
+    if (item.select.disabled || !item.select.options.length) return;
+    item.list.replaceChildren(...[...item.select.options].map((option, index) => {
+      const row = document.createElement("li");
+      row.id = `${item.list.id}-${index}`;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(index === item.select.selectedIndex));
+      if (option.disabled) row.setAttribute("aria-disabled", "true");
+      const text = document.createElement("span");
+      text.textContent = option.textContent;
+      row.append(text);
+      row.insertAdjacentHTML("beforeend", checkIcon);
+      row.addEventListener("pointermove", () => { if (item.active !== index) activateOption(item, index, false); });
+      row.addEventListener("click", () => chooseOption(item, index));
+      return row;
+    }));
+    document.body.append(item.list);
+    openDropdown = item;
+    item.button.setAttribute("aria-expanded", "true");
+    placeDropdown(item);
+    activateOption(item, Math.max(item.select.selectedIndex, 0));
+  }
+  function buildDropdowns() {
+    for (const select of document.querySelectorAll("select")) {
+      const wrap = document.createElement("div");
+      wrap.className = "dropdown";
+      if (select.classList.contains("setting-control")) { wrap.classList.add("setting-control"); select.classList.remove("setting-control"); }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "dropdown-button";
+      button.setAttribute("aria-haspopup", "listbox");
+      button.setAttribute("aria-expanded", "false");
+      const label = document.createElement("span");
+      label.id = `${select.id}-value`;
+      button.append(label);
+      button.insertAdjacentHTML("beforeend", chevron);
+      const list = document.createElement("ul");
+      list.className = "dropdown-list";
+      list.id = `${select.id}-list`;
+      list.setAttribute("role", "listbox");
+      const caption = document.querySelector(`label[for="${select.id}"]`);
+      if (caption) { caption.id ||= `${select.id}-label`; button.setAttribute("aria-labelledby", `${caption.id} ${label.id}`); list.setAttribute("aria-labelledby", caption.id); }
+      button.setAttribute("aria-controls", list.id);
+      select.before(wrap);
+      wrap.append(select, button);
+      select.tabIndex = -1;
+      select.setAttribute("aria-hidden", "true");
+      const item = { select, button, label, list, active: 0, typed: "", typedAt: 0 };
+      dropdowns.push(item);
+      // A label click lands on the unseen select; pass it to the button.
+      select.addEventListener("focus", () => button.focus({ preventScroll: true }));
+      select.addEventListener("change", syncDropdowns);
+      list.addEventListener("pointerdown", event => event.preventDefault());
+      button.addEventListener("click", () => { if (openDropdown === item) closeDropdown(); else openDropdownFor(item); });
+      button.addEventListener("blur", () => { if (openDropdown === item) closeDropdown(); });
+      button.addEventListener("keydown", event => {
+        const open = openDropdown === item;
+        if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); closeDropdown(); return; }
+        if (event.key === "Tab") { closeDropdown(); return; }
+        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          if (!open) { openDropdownFor(item); return; }
+          if (event.key === "ArrowDown") moveOption(item, 1);
+          else if (event.key === "ArrowUp") moveOption(item, -1);
+          else if (event.key === "Home") moveOption(item, 1, -1);
+          else moveOption(item, -1, list.children.length);
+          return;
+        }
+        if ((event.key === "Enter" || event.key === " ") && open) { event.preventDefault(); chooseOption(item, item.active); return; }
+        if (event.key.length === 1 && event.key !== " " && !event.ctrlKey && !event.altKey && !event.metaKey) {
+          // Typing jumps to the first option that starts with the typed letters.
+          const now = Date.now();
+          item.typed = (now - item.typedAt < 700 ? item.typed : "") + event.key.toLowerCase();
+          item.typedAt = now;
+          if (!open) openDropdownFor(item);
+          const match = [...select.options].findIndex(option => !option.disabled && option.textContent.trim().toLowerCase().startsWith(item.typed));
+          if (match >= 0) activateOption(item, match);
+        }
+      });
+    }
+    document.addEventListener("pointerdown", event => { if (openDropdown && !openDropdown.button.contains(event.target) && !openDropdown.list.contains(event.target)) closeDropdown(); }, true);
+    $("main").addEventListener("scroll", () => closeDropdown(), { passive: true });
+    window.addEventListener("resize", () => closeDropdown());
+    window.addEventListener("blur", () => closeDropdown());
+    syncDropdowns();
+  }
+
   arrangeSettings();
+  buildDropdowns();
   bindSetup();
   {
     const reader = $("main");

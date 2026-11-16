@@ -209,7 +209,6 @@ ThemeGround theme_ground(const std::string& id) {
         {"mono", {0x0a, 0x0a, 0x0a, false}},
         {"light", {0xf2, 0xf4, 0xf7, true}},
         {"rose", {0x10, 0x0b, 0x0d, false}},
-        {"forest", {0x0a, 0x0e, 0x0b, false}},
         {"amethyst", {0x0d, 0x0c, 0x11, false}},
         {"ember", {0x0f, 0x0c, 0x0a, false}}};
     const auto found = grounds.find(id);

@@ -33,13 +33,13 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 
 - **Guided setup.** Three steps: install what is missing, choose what to record, start. Setup checks for OBS Studio and FFmpeg and installs both with one button.
 - **One-key save.** A global hotkey, `Alt+Z` by default, saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
-- **Three capture modes.** Game or display, fullscreen games only, or one whole display.
+- **Three capture modes.** Game or display (a hybrid of the two), fullscreen games only, or one whole display.
 - **Clips library.** One folder per game, thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
 - **Replay viewer.** Scrub a filmstrip and waveform timeline, step by frame, zoom with the wheel.
 - **Clip editor.** Split, remove and restore sections, undo and redo, per-track volume in preview, then export. Quality 10 keeps the original video and cuts on the exact frame. Lower levels re-encode to a smaller file.
 - **Hardware encoding.** NVIDIA, AMD and Intel encoders with H.264, HEVC or AV1, picked from what your GPU supports.
 - **Separate audio tracks.** Desktop and microphone record to their own tracks. The microphone is off until you turn it on, with optional RNNoise or Speex noise suppression.
-- **Seven themes.** Original, Mono, Light, Rose, Forest, Amethyst and Ember.
+- **Six themes.** Original, Mono, Light, Rose, Amethyst and Ember.
 - **Tray app.** Closing the window keeps the hotkeys alive. Start with Windows is optional.
 
 ![Clip editor: a clip with one section removed](docs/images/editor.png)

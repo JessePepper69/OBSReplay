@@ -147,7 +147,7 @@ These tokens are fixed dark values in every theme. Use them for anything drawn o
 
 ## Themes
 
-Seven themes exist. **Original** is the default and matches the token tables above. The other six change colour only. Layout, components and motion are identical in every theme.
+Six themes exist. **Original** is the default and matches the token tables above. The other five change colour only. Layout, components and motion are identical in every theme.
 
 | Theme | `data-theme` | Scheme | `--page` | `--ui-accent` | `--ui-accent-text` | Character |
 |---|---|---|---|---|---|---|
@@ -155,7 +155,6 @@ Seven themes exist. **Original** is the default and matches the token tables abo
 | **Mono** | `mono` | dark | `#0a0a0a` | `#ededed` | `#ffffff` | Zero-chroma greys. White primary with dark text (`--on-accent` `#0a0a0a`). The semantic colours are its only hue |
 | **Light** | `light` | light | `#f2f4f7` | `#0068c6` | `#0061ba` | White cards on a pale ground, blue accent, dark inverse tooltips and toast |
 | **Rose** | `rose` | dark | `#100b0d` | `#bf2d74` | `#f48eb6` | Neutrals tinted toward the hue |
-| **Forest** | `forest` | dark | `#0a0e0b` | `#437605` | `#7fc145` | Neutrals tinted toward the hue |
 | **Amethyst** | `amethyst` | dark | `#0d0c11` | `#7d49da` | `#b6a1f5` | Neutrals tinted toward the hue |
 | **Ember** | `ember` | dark | `#0f0c0a` | `#b14a07` | `#fb9363` | Neutrals tinted toward the hue |
 
@@ -169,7 +168,7 @@ Seven themes exist. **Original** is the default and matches the token tables abo
 - `theme.js` updates `<meta name="theme-color">` and calls the native `theme_changed` so the native window ground matches.
 - `Theme.timeline()` in `theme.js` supplies the timeline canvas colours, because a canvas cannot read CSS variables.
 - A theme change cross-fades the whole window over 240ms. The first paint and the Animations-off state do not cross-fade.
-- **Rose**, **Forest**, **Amethyst** and **Ember** keep the lightness steps of **Original**.
+- **Rose**, **Amethyst** and **Ember** keep the lightness steps of **Original**.
 - Light schemes use softer floating shadows (`:root[data-scheme="light"]` rules in `themes.css`).
 - Each theme overrides the select chevron image so its stroke matches that theme's `--dim`.
 - **Mono** steps the filled quality-slider segments down to `--dim` so they differ from the current step.
@@ -180,7 +179,6 @@ Semantic colours stay clear of the accent in every theme.
 
 | Theme | Adjustment |
 |---|---|
-| **Forest** | Accent leans lime. `--green` is an aqua mint (`#58e0cf`) |
 | **Rose** | `--red` is coral (`#ff916b`) |
 | **Ember** | `--red` is pink (`#f47fae`) |
 
@@ -410,8 +408,8 @@ Step 1, Install:
 Step 2, Capture:
 
 - Essentials only.
-- Three capture-choice cards (radio inputs) side by side: **Game or display**, **Fullscreen games only**, **Entire display**.
-- **Game or display** carries a Recommended tag in accent text.
+- Three capture-choice cards (radio inputs) side by side: **Game or display (Hybrid)**, **Fullscreen games only**, **Entire display**.
+- **Game or display (Hybrid)** carries a Recommended tag in accent text.
 - A rows card follows: Display, Replay length, Quality, Record microphone, Clips folder, Start with Windows.
 - The Display row is hidden for **Fullscreen games only**.
 - One dim line names the detected encoder and states that other defaults are editable in Settings.

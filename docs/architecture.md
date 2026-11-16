@@ -635,7 +635,7 @@ Conditions: source codec H.264 or HEVC, pixel format `yuv420p`, at least one cle
 | --- | --- |
 | `app.css` `:root` block | Tokens for the Original theme: surfaces (`--page`, `--well`, `--card`, `--canvas`, `--surface`, `--raise`), lines (`--line`, `--line-strong`, `--line-hover`), text (`--text`, `--muted`, `--dim`), accent (`--ui-accent`, `--accent-hover`, `--on-accent`, `--ui-accent-text`, `--accent-bright`), status (`--green`, `--red`), motion (`--fast`, `--ui`, `--ease`), shape (`--r-control`, `--r-card`). |
 | `app.css` `--ov-*` tokens | Fixed dark colors for controls drawn over video. Identical in every theme. |
-| `themes.css` | One `:root[data-theme="<id>"]` block per theme (`mono`, `light`, `rose`, `forest`, `amethyst`, `ember`) that overrides the color tokens, plus rules for `:root[data-scheme="light"]`. |
+| `themes.css` | One `:root[data-theme="<id>"]` block per theme (`mono`, `light`, `rose`, `amethyst`, `ember`) that overrides the color tokens, plus rules for `:root[data-scheme="light"]`. |
 | `theme.js` | Theme list (`id`, `name`, `scheme`, `swatch`) and `window.Theme`: `list`, `get`, `set`, `save`, `preview`, `known`, `token`, `timeline`, `onChange`. |
 | `theme_ground` in `platform.cpp` | Native window background color and light flag per theme id. Unknown ids give Original. |
 

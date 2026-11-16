@@ -10,7 +10,6 @@
     { id: "mono", name: "Mono", scheme: "dark", swatch: ["#0a0a0a","#1e1e1e","#ededed"] },
     { id: "light", name: "Light", scheme: "light", swatch: ["#f2f4f7","#ffffff","#0068c6"] },
     { id: "rose", name: "Rose", scheme: "dark", swatch: ["#100b0d","#281e22","#f48eb6"] },
-    { id: "forest", name: "Forest", scheme: "dark", swatch: ["#0a0e0b","#1c241d","#7fc145"] },
     { id: "amethyst", name: "Amethyst", scheme: "dark", swatch: ["#0d0c11","#21202b","#b6a1f5"] },
     { id: "ember", name: "Ember", scheme: "dark", swatch: ["#0f0c0a","#27201b","#fb9363"] }
   ];/*END*/
