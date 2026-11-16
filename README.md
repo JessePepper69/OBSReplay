@@ -123,6 +123,7 @@ To run a second copy with its own data folder, set `OBSREPLAY_DATA_DIR` to an ab
 - [saucer](https://github.com/saucer/saucer) hosts the WebView2 interface.
 - [Inter](https://rsms.me/inter/) is the typeface, under the SIL Open Font License.
 - [FFmpeg](https://ffmpeg.org) exports edited clips.
+- [ShadBuffer/ShadOBS](https://github.com/seandotnet/ShadBuffer) Original inspiration for this type of project.
 
 Third-party notices are compiled into the executable. Open them from **Help**, **Software notices**.
 
