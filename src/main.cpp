@@ -29,6 +29,7 @@ constexpr UINT tray_message = WM_APP + 17;
 constexpr UINT save_id = 201, show_id = 202;
 constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
+constexpr UINT suspend_timer_id = 303;
 constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404;
 constexpr wchar_t instance_property[] = L"OBSReplay.OwnedWindow.0.1";
 const UINT show_message = RegisterWindowMessageW(L"OBSReplay.ShowWindow.0.1");
@@ -134,6 +135,7 @@ struct Desktop {
     ~Desktop() {
         KillTimer(hwnd,timer_id);
         KillTimer(hwnd,reveal_timer_id);
+        KillTimer(hwnd,suspend_timer_id);
         UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);
         if (tray_ready) Shell_NotifyIconW(NIM_DELETE,&tray);
         RemovePropW(hwnd,instance_property);
@@ -143,6 +145,7 @@ struct Desktop {
     void show(bool replay_entry=true) {
         reveal_requested=true;
         if (!first_frame_ready) return;
+        KillTimer(hwnd,suspend_timer_id);
         auto native = view->native();
         ComPtr<ICoreWebView2_3> suspendable;
         if (SUCCEEDED(native.webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) suspendable->Resume();
@@ -160,8 +163,16 @@ struct Desktop {
         reveal_requested=false;
         record_hotkey(false);
         if (!tray_ready) { window->set_minimized(true); return; }
-        view->native().controller->put_IsVisible(FALSE);
+        // The page first holds its content ready for the opening animation; the WebView is hidden and suspended a moment
+        // later, so the frame it shows again on reopen is that held state and not the old page.
+        view->execute("window.dispatchEvent(new CustomEvent('obsreplay:hiding'))");
         window->hide();
+        SetTimer(hwnd,suspend_timer_id,180,nullptr);
+    }
+    void suspend() {
+        KillTimer(hwnd,suspend_timer_id);
+        if (reveal_requested) return;
+        view->native().controller->put_IsVisible(FALSE);
         ComPtr<ICoreWebView2_3> suspendable;
         if (SUCCEEDED(view->native().webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) {
             suspendable->TrySuspend(Microsoft::WRL::Callback<ICoreWebView2TrySuspendCompletedHandler>([](HRESULT,BOOL) { return S_OK; }).Get());
@@ -332,6 +343,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
         }
         if (message==WM_TIMER && w==timer_id) { desktop.reconcile();return 0; }
         if (message==WM_TIMER && w==reveal_timer_id) { desktop.ready();return 0; }
+        if (message==WM_TIMER && w==suspend_timer_id) { desktop.suspend();return 0; }
     } catch (...) {}
     return DefSubclassProc(hwnd,message,w,l);
 }

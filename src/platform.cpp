@@ -199,7 +199,7 @@ Json default_settings(const Paths&) {
         {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
         {"encoder","auto"},{"codec","h264"},{"quality",20},{"mic_enabled",false},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
-        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Ctrl+Shift+F10"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true}};
+        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true}};
 }
 
 void validate_settings(const Json& settings) {

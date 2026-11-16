@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Ctrl+Shift+F10", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -138,7 +138,14 @@
     for (const item of document.querySelectorAll("#capture-view>*,#clips-view>*,#settings-view>.view-heading,#settings-view>.settings-tabs,#setup-intro,#help-view>.view-heading,#help-view .help-content>.card,#setup-view>.view-heading,#setup-view>.setup-steps,[data-step-panel]>.setup-panel,[data-step-panel]>.setup-hint")) item.classList.add("entrance-item");
   }
 
+  // Holds the current view's blocks invisible, ready for the opening cascade.
+  function prepareEntrance() {
+    preparedElements = entranceTargets($(state.tab + "-view")).slice(0, 24);
+    for (const element of preparedElements) { element.style.opacity = "0"; element.style.transform = "translateY(10px)"; }
+  }
+  let heldForReopen = false;
   function cancelEntrance() {
+    heldForReopen = false;
     for (const animation of entranceAnimations) animation.cancel();
     entranceAnimations.clear();
     for (const element of preparedElements) { element.style.removeProperty("opacity"); element.style.removeProperty("transform"); }
@@ -150,12 +157,14 @@
     if (!motionEnabled()) cancelEntrance();
   }
   function entranceTargets(view) { return [...view.querySelectorAll(".entrance-item")].filter(element => element.getClientRects().length && !element.closest("[hidden]")); }
-  function playEntrance(view, from = 0) {
+  function playEntrance(view, opening = false) {
     cancelEntrance();
     if (!motionEnabled() || document.hidden) return;
-    // Blocks rise in order (260ms, 6px); the fifth and later arrive with the fourth step.
+    // Navigation: blocks rise in order (260ms, 6px, four 40ms steps). Opening the window: the same cascade, slower and softer
+    // (480ms, 10px, seven 60ms steps), from elements already held invisible so nothing shows before it starts.
+    const duration = opening ? 480 : 260, travel = opening ? 10 : 6, gap = opening ? 60 : 40, steps = opening ? 7 : 4;
     entranceTargets(view).slice(0, 24).forEach((element, index) => {
-      const animation = element.animate([{ opacity: from, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 260, delay: Math.min(index, 4) * 40, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+      const animation = element.animate([{ opacity: 0, transform: `translateY(${travel}px)` }, { opacity: 1, transform: "translateY(0)" }], { duration, delay: Math.min(index, steps) * gap, easing: opening ? "cubic-bezier(.16,1,.3,1)" : "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
       entranceAnimations.add(animation);
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     });
@@ -163,15 +172,12 @@
   async function presentUI() {
     await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 450))]);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const view = $(state.tab + "-view");
-    if (motionEnabled() && typeof api()?.ui_ready === "function") {
-      preparedElements = entranceTargets(view);
-      for (const element of preparedElements) { element.style.opacity = ".35"; element.style.transform = "translateY(6px)"; }
-    }
+    if (motionEnabled() && typeof api()?.ui_ready === "function") prepareEntrance();
     try { if (typeof api()?.ui_ready === "function") await nativeCall("ui_ready"); }
     catch (error) { showError(error); }
     presented = true;
-    playEntrance($(state.tab + "-view"), .35);
+    // Two frames after the window is revealed, so the cascade starts on a painted window and drops no frames.
+    requestAnimationFrame(() => requestAnimationFrame(() => playEntrance($(state.tab + "-view"), true)));
     syncTabIndicators();
   }
   function showCategory(name, animate = true) {
@@ -638,22 +644,19 @@
     image.clipKey = clipKey(clip);
     thumbnail.replayThumbnail = { clip, image };
     thumbnailObserver.observe(thumbnail);
-    const info = document.createElement("span");
-    info.className = "clip-info";
     const name = document.createElement("span");
-    name.className = "clip-name";
+    name.className = "clip-title";
     name.textContent = clip.name || clip.path?.split(/[\\/]/).pop() || "Saved replay";
     const meta = document.createElement("span");
     meta.className = "clip-meta";
     fillMeta(meta, clip, false);
-    info.append(name);
     const foot = document.createElement("div");
     foot.className = "clip-foot";
     const actions = document.createElement("div");
     actions.className = "clip-actions";
     actions.append(editButton(clip), iconAction("Open in your video player", icons.open, "open_clip", clip), iconAction("Show in folder", icons.folder, "reveal_clip", clip));
-    preview.append(thumbnail, info);
-    foot.append(meta);
+    preview.append(thumbnail);
+    foot.append(meta, name);
     row.append(preview, foot, actions);
     return row;
   }
@@ -1295,8 +1298,26 @@
     if (document.hidden) { cancelThumbnail?.(); ReplayViewer.pause(); }
     else drainThumbnails();
   });
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { schedulePoll(0); scheduleFade(); } else { cancelEntrance(); cancelAnimationFrame(fadeFrame); fadeFrame = 0; if (!state.pending) clearTimeout(pollTimer); } });
-  window.addEventListener("obsreplay:reopen", () => { schedulePoll(0); if (presented) playEntrance($(state.tab + "-view")); });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      // Work that can wait does, so the opening cascade has the first frames to itself.
+      schedulePoll(heldForReopen ? 420 : 0); scheduleFade();
+      // If the reopen signal never comes, do not leave the page blank.
+      if (heldForReopen) setTimeout(() => { if (heldForReopen) cancelEntrance(); }, 900);
+    } else { if (!heldForReopen) cancelEntrance(); cancelAnimationFrame(fadeFrame); fadeFrame = 0; if (!state.pending) clearTimeout(pollTimer); }
+  });
+  // Sent just before the window hides to the tray: the last frame painted is the cascade's starting state,
+  // so reopening never flashes the old page before animating.
+  window.addEventListener("obsreplay:hiding", () => {
+    cancelEntrance();
+    if (!presented || !motionEnabled()) return;
+    prepareEntrance();
+    heldForReopen = true;
+  });
+  window.addEventListener("obsreplay:reopen", () => {
+    if (!presented || !heldForReopen) { schedulePoll(0); cancelEntrance(); return; }
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (heldForReopen) playEntrance($(state.tab + "-view"), true); }));
+  });
   for (const type of ["pointerdown", "keydown"]) document.addEventListener(type, event => { if (event.isTrusted) cancelEntrance(); }, true);
   for (const details of document.querySelectorAll("details")) details.addEventListener("toggle", () => {
     if (!details.open || !motionEnabled() || !presented || document.hidden) return;
