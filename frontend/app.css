@@ -110,6 +110,7 @@ main:focus { outline:none; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--line-strong);border-radius:8px;border:2px solid transparent;background-clip:content-box; }
 ::-webkit-scrollbar-thumb:hover { background:var(--line-hover);border:2px solid transparent;background-clip:content-box; }
+html[data-routing] main>section { visibility:hidden; }
 .view-heading { display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:16px;min-height:40px;margin-bottom:18px; }
 .view-heading p { font-size:14px;margin-top:6px;color:var(--dim); }
 .app-footer { min-height:54px;padding:9px var(--gutter);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-shrink:0;background:var(--page);border-top:1px solid var(--line); }

@@ -12,6 +12,12 @@
   let recorderStarting = false;
   let recorderTimer;
   let presented = false;
+  // The first page (Capture, or guided setup on a new install) is known only after the app has checked OBS.
+  // Until then no page is drawn, so a new user never sees the main app flash before setup.
+  let markRouted;
+  const routed = new Promise(resolve => { markRouted = resolve; });
+  document.documentElement.dataset.routing = "";
+  routed.then(() => { delete document.documentElement.dataset.routing; });
   let dialogClosing = false;
   let category = "capture";
   const entranceAnimations = new Set();
@@ -186,6 +192,8 @@
     });
   }
   async function presentUI() {
+    // The window opens on the right page. A slow check still opens it, on an empty page, after 2.5 seconds.
+    await Promise.race([routed, new Promise(resolve => setTimeout(resolve, 2500))]);
     await Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 450))]);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (motionEnabled() && typeof api()?.ui_ready === "function") prepareEntrance();
@@ -931,6 +939,7 @@
           showTab("setup");
           if (setup.step === "obs") pollFfmpeg();
         }
+        markRouted();
       }
       // The saved theme is shared with every window; a choice still waiting for Apply stays a preview here.
       // The saved theme is always recorded for the other windows, even if this form still has unapplied edits.
@@ -942,6 +951,7 @@
       renderFeedback();
     } catch (error) {
       state.native = false;
+      markRouted();
       document.documentElement.dataset.loaded = "";
       if (state.loaded || state.pending) showError(error);
       state.pending = null;
