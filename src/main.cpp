@@ -32,6 +32,9 @@ constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
 constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404;
 constexpr wchar_t instance_property[] = L"OBSReplay.OwnedWindow.0.1";
+// Value of that property: 1 for the normal instance, a hash of OBSREPLAY_DATA_DIR for an isolated one,
+// so a second launch only raises the window of its own instance.
+std::uintptr_t instance_tag = 1;
 const UINT show_message = RegisterWindowMessageW(L"OBSReplay.ShowWindow.0.1");
 const UINT taskbar_message = RegisterWindowMessageW(L"TaskbarCreated");
 bool start_hidden = false;
@@ -351,7 +354,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
 }
 
 BOOL CALLBACK find_instance(HWND hwnd,LPARAM) {
-    if (GetPropW(hwnd,instance_property)) { PostMessageW(hwnd,show_message,0,0);return FALSE; }
+    if (reinterpret_cast<std::uintptr_t>(GetPropW(hwnd,instance_property))==instance_tag) { PostMessageW(hwnd,show_message,0,0);return FALSE; }
     return TRUE;
 }
 
@@ -401,7 +404,7 @@ coco::stray start(saucer::application* app) {
     replay::ClipMedia media(view.native().webview, controller);
     replay::EditorHost editors(app, controller, replay::paths());
     Desktop desktop{app,window,&view,&controller,&editors,window->native().hwnd};
-    SetPropW(desktop.hwnd,instance_property,reinterpret_cast<HANDLE>(1));
+    SetPropW(desktop.hwnd,instance_property,reinterpret_cast<HANDLE>(instance_tag));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     if (SetWindowSubclass(desktop.hwnd,desktop_proc,1,reinterpret_cast<DWORD_PTR>(&desktop))) desktop.add_tray();
@@ -418,6 +421,8 @@ coco::stray start(saucer::application* app) {
     view.expose("media_url",[&](std::string path) { return media.url(path); });
     view.expose("open_editor",[&](std::string path) { return editors.open(path); });
     view.expose("editors_pending",[&] { return editors.pending(); });
+    view.expose("ffmpeg_state",[&](bool refresh) { return editors.ffmpeg_state(refresh); });
+    view.expose("install_ffmpeg",[&] { return editors.install_ffmpeg(); });
     view.expose("clip_waveform",[&](std::string path,saucer::executor<std::string> executor) {
         editors.waveform(path,[executor=std::move(executor)](std::string result) { executor.resolve(std::move(result)); });
     });
@@ -449,7 +454,7 @@ int main(int argc,char** argv) {
     for (int i=1;i<argc;++i) if (std::string_view(argv[i])=="--tray") start_hidden=true;
     // An isolated data folder (OBSREPLAY_DATA_DIR) runs as its own instance so checks never touch the user's session.
     std::wstring instance_name=L"Local\\OBSReplay.Controller.0.1";
-    if (wchar_t isolated[32768]{}; GetEnvironmentVariableW(L"OBSREPLAY_DATA_DIR",isolated,32768)) instance_name+=L"."+std::to_wstring(std::hash<std::wstring>{}(isolated));
+    if (wchar_t isolated[32768]{}; GetEnvironmentVariableW(L"OBSREPLAY_DATA_DIR",isolated,32768)) { const auto hash=std::hash<std::wstring>{}(isolated); instance_name+=L"."+std::to_wstring(hash); instance_tag=static_cast<std::uintptr_t>(hash)|2; }
     HANDLE instance=CreateMutexW(nullptr,FALSE,instance_name.c_str());
     if (!instance) return 1;
     if (GetLastError()==ERROR_ALREADY_EXISTS) { EnumWindows(find_instance,0);CloseHandle(instance);return 0; }

@@ -72,7 +72,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 
 1. `main` reads `--tray`. With it, the window starts hidden.
 2. `main` creates the mutex `Local\OBSReplay.Controller.0.1`. When `OBSREPLAY_DATA_DIR` is set, the name gets a hash of that value as a suffix.
-3. If the mutex exists, `main` finds the window that carries the property `OBSReplay.OwnedWindow.0.1`, posts the registered message `OBSReplay.ShowWindow.0.1` to it, and exits.
+3. If the mutex exists, `main` finds the window whose property `OBSReplay.OwnedWindow.0.1` holds this instance tag, posts the registered message `OBSReplay.ShowWindow.0.1` to it, and exits. The tag is `1` for the normal instance and a hash of `OBSREPLAY_DATA_DIR` for an isolated one, so an isolated run never raises the normal window.
 4. `main` checks for the WebView2 Runtime. Without it, a message box offers the Microsoft download page.
 5. `main` creates `AudioSessionLabel`, then the saucer application with `quit_on_last_window_closed=false`.
 6. `start` creates the main window, the `smartview`, `Controller`, `ClipMedia` and `EditorHost`, exposes the bridge and serves `/index.html`.
@@ -154,6 +154,8 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `media_url` | `path` string | URL string or error | Playable URL for a clip in history. |
 | `open_editor` | `path` string | `true` or error | Open or focus the editor for a clip in history. |
 | `editors_pending` | none | string | Text that describes running exports or unexported cuts. Empty when none. |
+| `ffmpeg_state` | `refresh` (bool) | JSON string | FFmpeg as the editor host found it: `status` (`checking`, `ready`, `missing`, `invalid`), `version`, and `install` (`stage`, `error`, `available`). `refresh` looks again when FFmpeg is missing. Guided setup step 1 polls it. |
+| `install_ffmpeg` | none | `true` or an error | Start `winget install --id Gyan.FFmpeg` on a worker thread. Same call as the editor window's. |
 | `clip_waveform` | `path` string | JSON string | Viewer waveform. `{"status":"ready","rate":100,"peaks":"<base64>"}` or `{"status":"unavailable"}`. A new call cancels a running decode. |
 | `pick_folder` | `current` string | path or empty string | Native folder dialog for the clips folder. |
 | `pick_obs` | `current` string | path or empty string | Native file dialog for `obs64.exe`. |

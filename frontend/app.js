@@ -384,7 +384,7 @@
       if (button.dataset.tab === tab || (tab === "setup" && button.dataset.tab === "capture")) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     }
-    if (tab === "setup") renderSetup();
+    if (tab === "setup") { renderSetup(); if (setup.step === "obs") pollFfmpeg(true); }
     if (tab === "help") $("help-button").setAttribute("aria-current", "page");
     else $("help-button").removeAttribute("aria-current");
     $("main").scrollTop = 0;
@@ -874,14 +874,27 @@
           const action = state.pending.action;
           state.pending = null;
           if (action === "setup") setup.flow = snapshot.error ? "failed" : "done";
-          if (action === "install_obs" && !snapshot.error && snapshot.obs_supported && setup.step === "obs") goStep("capture");
+          if (action === "install_obs" && !snapshot.error && snapshot.obs_supported) {
+            // FFmpeg follows OBS and finishes in the background while setup moves on.
+            installFfmpegIfWanted();
+            if (setup.step === "obs") goStep("capture");
+          }
           if (!snapshot.error && ["setup", "apply", "install_obs", "locate_obs"].includes(action)) fillForm(snapshot.settings);
         } else if (Date.now() - state.pending.started > 120000) {
           state.pending = null;
           showError("OBSReplay hasn’t heard back from OBS. Check that OBS is open, then try again. A replay save is never retried on its own.");
         }
       }
-      if (!state.initialRoute && !snapshot.busy) { state.initialRoute = true; if (!configured()) { setup.step = snapshot.obs_supported ? "capture" : "obs"; showTab("setup"); } }
+      if (!state.initialRoute && !snapshot.busy) {
+        state.initialRoute = true;
+        if (!configured()) {
+          // Setup opens on step 1 unless OBS Studio and FFmpeg are both already there.
+          const tool = await settledFfmpeg();
+          setup.step = snapshot.obs_supported && (!tool || tool.status === "ready") ? "capture" : "obs";
+          showTab("setup");
+          if (setup.step === "obs") pollFfmpeg();
+        }
+      }
       // The saved theme is shared with every window; a choice still waiting for Apply stays a preview here.
       // The saved theme is always recorded for the other windows, even if this form still has unapplied edits.
       Theme.save(settings().theme);
@@ -936,10 +949,9 @@
     nativeCall("hotkey_recording", false).catch(showError);
   }
   // Guided setup: install OBS if needed, choose the essentials, then set up and start in one step.
-  const setup = { step: null, flow: null, closing: false };
+  const setup = { step: null, flow: null, closing: false, wantFfmpeg: false };
   const setupSteps = ["obs", "capture", "start"];
   const setupTasks = ["closing", "configuring", "launching", "starting"];
-  const installTasks = ["downloading", "installing", "verifying"];
   const checkIcon = '<svg viewBox="0 0 12 12"><path d="m2.5 6.2 2.3 2.3 4.7-5"/></svg>';
   const crossIcon = '<svg viewBox="0 0 12 12"><path d="m3 3 6 6m0-6-6 6"/></svg>';
   const setupBindings = [["setup-monitor", "monitor_id"], ["setup-length", "clip_seconds"], ["setup-quality", "quality"], ["setup-mic", "mic_enabled"], ["setup-folder", "clips_dir"], ["setup-start-login", "start_at_login"]];
@@ -965,6 +977,44 @@
     const encoder = auto.replace(/^Automatic · /, "");
     $("setup-defaults").textContent = `${encoder && !/CPU/.test(encoder) ? `Encoding uses ${encoder} automatically. ` : encoder ? "No supported GPU encoder was found, so encoding uses the CPU. " : ""}You can change frame rate, audio devices and shortcuts in Settings.`;
   }
+  // FFmpeg, as the native side found it. Step 1 of setup shows it beside OBS Studio and installs whichever is missing.
+  let ffmpegTimer = 0;
+  const ffmpegBusy = () => state.ffmpeg?.status === "checking" || Boolean(state.ffmpeg?.install?.stage);
+  async function readFfmpeg(refresh = false) {
+    if (typeof api()?.ffmpeg_state !== "function") return null;
+    try { return unpack(await api().ffmpeg_state(refresh)); } catch { return null; }
+  }
+  async function pollFfmpeg(refresh = false) {
+    clearTimeout(ffmpegTimer);
+    const next = await readFfmpeg(refresh);
+    if (next && JSON.stringify(next) !== JSON.stringify(state.ffmpeg)) { state.ffmpeg = next; renderSetup(); }
+    const watching = state.tab === "setup" && setup.step === "obs" && !document.hidden;
+    if (ffmpegBusy() || watching) ffmpegTimer = setTimeout(pollFfmpeg, ffmpegBusy() ? 500 : 3000);
+  }
+  // The first definite answer (found or missing), waited for briefly so setup can open on the right step.
+  async function settledFfmpeg() {
+    for (let attempt = 0; attempt < 20; ++attempt) {
+      const tool = await readFfmpeg(attempt === 0);
+      if (!tool) return null;
+      state.ffmpeg = tool;
+      if (tool.status !== "checking") return tool;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return state.ffmpeg;
+  }
+  // One button installs what is missing: OBS Studio first, then FFmpeg, so two winget runs never overlap.
+  function installMissing() {
+    setup.wantFfmpeg = true;
+    if (!state.snapshot?.obs_supported && state.snapshot?.winget) dispatch("install_obs");
+    else installFfmpegIfWanted();
+  }
+  function installFfmpegIfWanted() {
+    const tool = state.ffmpeg;
+    if (!setup.wantFfmpeg || !tool || tool.status !== "missing" && tool.status !== "invalid" || tool.install?.stage || !tool.install?.available) return;
+    setup.wantFfmpeg = false;
+    // Read the state at once and again shortly after, so progress shows without waiting for the slow idle poll.
+    api().install_ffmpeg().then(() => { pollFfmpeg(); setTimeout(pollFfmpeg, 350); }).catch(showError);
+  }
   function setTask(item, status) {
     if (item.dataset.state === status) return;
     item.dataset.state = status;
@@ -978,6 +1028,7 @@
     if (shown) { state.dismissedError = shown; state.localError = ""; }
     renderFeedback();
     $("main").scrollTop = 0;
+    if (step === "obs") pollFfmpeg(true);
     const panel = document.querySelector(`[data-step-panel="${step}"]`);
     if (presented && panel) playEntrance(panel);
     const focusTarget = step === "capture" ? document.querySelector('[name="setup-capture"]:checked') : step === "obs" && !$("install-obs").hidden ? $("install-obs") : null;
@@ -1008,7 +1059,7 @@
     const visible = state.tab === "setup";
     $("setup-actions").hidden = !visible;
     if (!visible || !snapshot) return;
-    if (!setup.step) setup.step = snapshot.obs_supported ? "capture" : "obs";
+    if (!setup.step) setup.step = snapshot.obs_supported && state.ffmpeg?.status !== "missing" ? "capture" : "obs";
     const pending = busy();
     const installing = operating("install_obs");
     const running = operating("setup");
@@ -1029,18 +1080,34 @@
       button.disabled = !state.native || pending || !reached[name] || (setup.flow === "done" && name !== "start");
     }
     for (const panel of document.querySelectorAll("[data-step-panel]")) panel.hidden = panel.dataset.stepPanel !== setup.step;
-    // Step 1: OBS Studio
+    // Step 1: OBS Studio and FFmpeg
     const version = snapshot.obs_version ? `OBS Studio ${snapshot.obs_version}` : "OBS Studio";
+    const tool = state.ffmpeg || { status: typeof api()?.ffmpeg_state === "function" ? "checking" : "ready", install: {} };
+    const ffmpegReady = tool.status === "ready";
+    const ffmpegInstalling = Boolean(tool.install?.stage);
+    const ffmpegMissing = tool.status === "missing" || tool.status === "invalid";
+    const canInstallFfmpeg = ffmpegMissing && Boolean(tool.install?.available);
+    const stageText = { preparing: "Getting ready…", downloading: "Downloading…", installing: "Installing…", verifying: "Checking…" };
+    const obsRow = $("requirements").querySelector('[data-requirement="obs"]'), ffmpegRow = $("requirements").querySelector('[data-requirement="ffmpeg"]');
+    setTask(obsRow, installing ? "active" : obsReady ? "done" : failedError ? "failed" : "pending");
+    $("requirement-obs").textContent = installing ? (snapshot.install_stage === "installing" ? "Installing. Windows asks for permission." : stageText[snapshot.install_stage] || stageText.preparing) : obsReady ? `Version ${snapshot.obs_version} is ready` : snapshot.obs_found ? `Version ${snapshot.obs_version} is too old` : "Not installed";
+    setTask(ffmpegRow, ffmpegInstalling ? "active" : ffmpegReady ? "done" : tool.install?.error ? "failed" : "pending");
+    $("requirement-ffmpeg").textContent = ffmpegInstalling ? stageText[tool.install.stage] || stageText.preparing : ffmpegReady ? "Ready" : tool.status === "checking" ? "Checking…" : tool.install?.error ? "Not installed. You can add it later from the editor." : "Not installed. Exporting edited clips needs it.";
     let obsTitle, obsText, mark = "";
     if (installing) {
-      const stage = snapshot.install_stage || "preparing";
       obsTitle = snapshot.obs_found ? "Updating OBS Studio…" : "Installing OBS Studio…";
-      obsText = stage === "installing" ? "Approve the Windows permission prompt if it appears. Setup continues on its own." : "This usually takes a minute or two. You can leave this window open.";
+      obsText = snapshot.install_stage === "installing" ? "Approve the Windows permission prompt if it appears. Setup continues on its own." : "This usually takes a minute or two. You can leave this window open.";
       mark = "working";
-      const index = installTasks.indexOf(stage);
-      [...$("install-tasks").children].forEach((item, i) => setTask(item, index < 0 ? "pending" : i < index ? "done" : i === index ? "active" : "pending"));
+    } else if (obsReady && ffmpegInstalling) {
+      obsTitle = "Installing FFmpeg…";
+      obsText = "You can continue. FFmpeg finishes in the background.";
+      mark = "working";
+    } else if (obsReady && ffmpegMissing) {
+      obsTitle = tool.install?.error ? "FFmpeg wasn’t installed" : "FFmpeg is missing";
+      obsText = tool.install?.error || "Capture works without it. You need it to export clips you trim in the editor.";
+      mark = "warning";
     } else if (obsReady) {
-      obsTitle = `${version} is ready`;
+      obsTitle = ffmpegReady ? "Everything is installed" : `${version} is ready`;
       obsText = snapshot.obs_running ? "OBS is open right now. It closes and reopens on its own when you start." : "OBSReplay opens it in the tray whenever capture runs.";
       mark = "active";
     } else if (snapshot.obs_found) {
@@ -1048,7 +1115,7 @@
       obsText = "OBSReplay needs OBS Studio 31 or newer. Updating keeps your existing OBS profiles and scenes.";
       mark = "warning";
     } else {
-      obsTitle = "Install OBS Studio";
+      obsTitle = canInstallFfmpeg && snapshot.winget ? "Install OBS Studio and FFmpeg" : "Install OBS Studio";
       obsText = snapshot.winget ? "OBSReplay uses OBS Studio to capture and encode your replays. Installing takes a minute or two, and Windows asks for permission once." :"Automatic install isn’t available on this PC. Download OBS Studio from obsproject.com and run its installer; setup continues as soon as it’s installed.";
     }
     if (!installing && !obsReady && failedError) mark = "failed";
@@ -1057,10 +1124,11 @@
     $("obs-mark").className = `capture-mark${mark ? ` ${mark}` : ""}`;
     $("obs-path").hidden = !obsReady || installing;
     $("obs-path").textContent = snapshot.settings?.obs_path || "";
-    $("install-tasks").hidden = !installing;
-    $("obs-actions").hidden = installing || obsReady;
-    $("install-obs").hidden = !snapshot.winget;
-    $("install-obs").textContent = snapshot.obs_found ? "Update OBS Studio" : "Install OBS Studio";
+    const needObs = !obsReady;
+    $("obs-actions").hidden = installing || ffmpegInstalling || (!needObs && !canInstallFfmpeg);
+    $("install-obs").hidden = needObs ? !snapshot.winget : !canInstallFfmpeg;
+    $("install-obs").textContent = !needObs ? "Install FFmpeg" : `${snapshot.obs_found ? "Update OBS Studio" : "Install OBS Studio"}${canInstallFfmpeg ? " and FFmpeg" : ""}`;
+    $("download-obs").hidden = $("locate-obs").hidden = !needObs;
     $("download-obs").className = snapshot.winget ? "" : "primary";
     $("download-obs").textContent = snapshot.winget ? "Download from obsproject.com" : "Download OBS Studio";
     for (const id of ["install-obs", "download-obs", "locate-obs"]) $(id).disabled = !state.native || pending;
@@ -1120,7 +1188,8 @@
     $("setup-next").addEventListener("click", setupNext);
     $("setup-back").addEventListener("click", setupBack);
     for (const button of document.querySelectorAll("[data-setup-step]")) button.addEventListener("click", () => goStep(button.dataset.setupStep));
-    $("install-obs").addEventListener("click", () => dispatch("install_obs"));
+    $("install-obs").addEventListener("click", installMissing);
+    window.addEventListener("focus", () => { if (state.tab === "setup" && setup.step === "obs") pollFfmpeg(true); });
     $("download-obs").addEventListener("click", () => dispatch("help", { topic: "obs" }));
     $("locate-obs").addEventListener("click", async () => {
       try {

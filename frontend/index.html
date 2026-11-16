@@ -40,22 +40,21 @@
       <section id="setup-view" aria-labelledby="setup-title" hidden>
         <div class="view-heading"><div><h1 id="setup-title">Set up replay capture</h1><p>OBS Studio records in the background. OBSReplay installs it, sets it up and keeps it running.</p></div><button type="button" class="text-button" id="setup-all-settings">All settings</button></div>
         <ol class="setup-steps" aria-label="Setup steps">
-          <li><button type="button" data-setup-step="obs"><span class="step-mark" aria-hidden="true">1</span><span>OBS Studio</span></button></li>
+          <li><button type="button" data-setup-step="obs"><span class="step-mark" aria-hidden="true">1</span><span>Install</span></button></li>
           <li><button type="button" data-setup-step="capture"><span class="step-mark" aria-hidden="true">2</span><span>Capture</span></button></li>
           <li><button type="button" data-setup-step="start"><span class="step-mark" aria-hidden="true">3</span><span>Start</span></button></li>
         </ol>
         <div class="notice setup-error" id="setup-error" role="alert" hidden><div><strong id="setup-error-title">Setup couldn’t finish</strong><p id="setup-error-text"></p></div></div>
         <div class="setup-stage" data-step-panel="obs">
           <div class="setup-panel">
-            <div class="setup-state"><span class="capture-mark" id="obs-mark"></span><div><h2 id="obs-title">Looking for OBS Studio…</h2><p id="obs-text"></p><p class="file-path" id="obs-path" hidden></p></div></div>
-            <ol class="task-list" id="install-tasks" aria-label="Install progress" hidden>
-              <li data-task="downloading"><span class="task-mark" aria-hidden="true"></span><span>Download OBS Studio</span></li>
-              <li data-task="installing"><span class="task-mark" aria-hidden="true"></span><span>Install it <small>Windows asks for permission</small></span></li>
-              <li data-task="verifying"><span class="task-mark" aria-hidden="true"></span><span>Check the installation</span></li>
+            <div class="setup-state"><span class="capture-mark" id="obs-mark"></span><div><h2 id="obs-title">Checking what’s installed…</h2><p id="obs-text"></p><p class="file-path" id="obs-path" hidden></p></div></div>
+            <ol class="task-list requirements" id="requirements" aria-label="What OBSReplay needs">
+              <li data-requirement="obs"><span class="task-mark" aria-hidden="true"></span><span><b>OBS Studio</b> <small id="requirement-obs">Checking…</small></span></li>
+              <li data-requirement="ffmpeg"><span class="task-mark" aria-hidden="true"></span><span><b>FFmpeg</b> <small id="requirement-ffmpeg">Checking…</small></span></li>
             </ol>
             <div class="setup-actions-row" id="obs-actions"><button type="button" class="primary" id="install-obs">Install OBS Studio</button><button type="button" id="download-obs">Download from obsproject.com</button><button type="button" id="locate-obs">Locate obs64.exe…</button></div>
           </div>
-          <p class="setup-hint" id="obs-hint">OBS Studio is free and open source. OBSReplay gives it a separate profile, so any OBS setup you already have stays as it is.</p>
+          <p class="setup-hint" id="obs-hint">OBS Studio records. FFmpeg exports the clips you trim. Both are free and open source. OBSReplay gives OBS a separate profile, so any OBS setup you already have stays as it is.</p>
         </div>
         <div class="setup-stage" data-step-panel="capture" hidden>
           <fieldset class="mode-choice entrance-item"><legend>What to record</legend>

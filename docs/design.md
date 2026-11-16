@@ -381,7 +381,7 @@ No rounded primary pills.
 ### Guided setup
 
 - Guided setup is the first-run view. The Capture rail item routes to it until setup succeeds.
-- Structure: a heading, then a three-step indicator: OBS Studio, Capture, Start.
+- Structure: a heading, then a three-step indicator: Install, Capture, Start.
 - Step marks are numbered 24px circles.
 - Current step: filled accent blue.
 - Finished steps: a green check.
@@ -389,14 +389,19 @@ No rounded primary pills.
 - The footer carries **Back** and the forward action: **Continue**, **Set up and start capture**, **Try again** or **Go to Capture**.
 - **All settings** leads to Settings, whose unconfigured action is **Set up and start**.
 
-Step 1, OBS Studio:
+Step 1, Install:
 
 - One restrained panel on the capture-panel surface.
-- A status dot: grey missing, warning outdated, blue working, green ready, red failed.
+- A status dot: grey missing, warning outdated or FFmpeg missing, blue working, green ready, red failed.
 - A title naming the state.
-- One primary action: **Install OBS Studio** or **Update OBS Studio** (through winget), or **Download OBS Studio** when winget is missing.
-- Secondary actions: **Download** and **Locate obs64.exe**.
-- Installing replaces the actions with a three-row task list: Download, Install (with the Windows-permission note), Check.
+- A two-row list in a well: **OBS Studio** and **FFmpeg**. Each row has a mark (ring pending, spinning accent ring working, green check ready, red cross failed) and one dim line of detail: version, stage, or the reason.
+- Setup checks both when the step opens. It opens on step 2 only when both are present.
+- One primary action installs what is missing through winget: **Install OBS Studio and FFmpeg**, **Install OBS Studio**, **Update OBS Studio**, or **Install FFmpeg**. OBS Studio installs first, then FFmpeg, so two winget runs never overlap.
+- When winget is missing the primary action is **Download OBS Studio**.
+- Secondary actions, only while OBS Studio is missing: **Download from obsproject.com** and **Locate obs64.exe**.
+- Installing hides the actions. The rows show the progress.
+- OBS Studio is required. FFmpeg is not: **Continue** is available as soon as OBS Studio is ready, and an FFmpeg install finishes in the background.
+- A failed FFmpeg install shows the reason in the panel and keeps **Install FFmpeg** and **Continue**.
 
 Step 2, Capture:
 

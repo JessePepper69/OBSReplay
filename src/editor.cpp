@@ -1299,6 +1299,16 @@ void EditorHost::Impl::remove(uint64_t id) {
     sessions.remove_if([&](const std::unique_ptr<Session>& session) { return session->id == id; });
 }
 
+std::string EditorHost::ffmpeg_state(bool refresh) {
+    bool never;
+    { std::lock_guard lock(impl_->ffmpeg_mutex); never = impl_->detection == 0; }
+    if (never || refresh) impl_->detect_if_needed();
+    const auto tool = impl_->ffmpeg_info();
+    return Json{{"status", tool.status}, {"version", tool.version}, {"install", impl_->install_state()}}.dump();
+}
+
+std::expected<bool, std::string> EditorHost::install_ffmpeg() { return impl_->install_ffmpeg(); }
+
 std::string EditorHost::pending() const {
     int exporting = 0, edited = 0;
     for (const auto& session : impl_->sessions) {

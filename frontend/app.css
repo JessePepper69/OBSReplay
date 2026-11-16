@@ -355,6 +355,8 @@ dialog p { margin-top:10px;font-size:14px;line-height:1.55;color:var(--muted); }
 .task-list li+li { border-top:1px solid var(--line); }
 .task-list li[hidden]+li { border-top:0; }
 .task-list li small { margin-left:6px;font-size:13px;color:var(--dim); }
+.task-list li b { font-weight:600; }
+.requirements li { color:var(--text); }
 .task-list li[data-state="active"],.task-list li[data-state="done"] { color:var(--text); }
 .task-list li[data-state="failed"] { color:var(--red); }
 .task-mark { position:relative;display:grid;place-items:center;width:18px;height:18px;flex:none;border:2px solid var(--line-strong);border-radius:50%;transition:border-color 180ms var(--ease),background-color 180ms var(--ease); }

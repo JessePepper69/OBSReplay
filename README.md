@@ -2,7 +2,7 @@
 
 Instant replay for Windows, built on OBS Studio. Press a key and the last few minutes of your game land in a folder. Then watch, trim and export the clip without leaving the app.
 
-![Capture page with the live replay buffer and the latest clips](docs/images/capture.png)
+![Capture page: the live replay buffer and the latest clips](docs/images/capture.png)
 
 > [!NOTE]
 > Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write code in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
@@ -32,7 +32,7 @@ The app is one executable of about 3 MB. The interface is plain HTML, CSS and Ja
 
 ## Features
 
-- **Guided setup.** Three steps: install or locate OBS, choose what to record, start. OBS closes and reopens on its own.
+- **Guided setup.** Three steps: install what is missing, choose what to record, start. Setup checks for OBS Studio and FFmpeg and installs both with one button.
 - **One-key save.** A global hotkey saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
 - **Three capture modes.** Game or display, fullscreen games only, or one whole display.
 - **Clips library.** Thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
@@ -43,7 +43,7 @@ The app is one executable of about 3 MB. The interface is plain HTML, CSS and Ja
 - **Seven themes.** Original, Mono, Light, Rose, Forest, Amethyst and Ember.
 - **Tray app.** Closing the window keeps the hotkeys alive. Start with Windows is optional.
 
-![Clip editor with a removed section](docs/images/editor.png)
+![Clip editor: a clip with one section removed](docs/images/editor.png)
 
 ![Theme picker in Settings](docs/images/themes.png)
 
@@ -54,13 +54,13 @@ Requirements:
 - Windows 10 or 11, 64-bit
 - [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (included with Windows 11)
 - OBS Studio 31 or newer. Setup installs it for you.
-- FFmpeg, only for exporting edited clips. The editor installs it for you.
+- FFmpeg, only for exporting edited clips. Setup installs it for you.
 
 Steps:
 
 1. Get `OBSReplay.exe` from [Releases](https://github.com/JessePepper69/OBSReplay/releases), or [build it](#build-from-source).
 2. Put it in a folder you plan to keep, then run it.
-3. Follow the three setup steps. If OBS is missing, select **Install OBS Studio**. Windows asks for permission once.
+3. Follow the three setup steps. If OBS Studio or FFmpeg is missing, select **Install OBS Studio and FFmpeg**. Windows asks for permission once.
 4. Select **Set up and start capture**.
 
 There is no installer. To remove the app, see [What it changes on your PC](#what-it-changes-on-your-pc).
@@ -94,7 +94,7 @@ Change the two global hotkeys in **Settings**, **App**. `Alt+Z` is also the defa
 ## What it changes on your PC
 
 - Installs or updates OBS Studio through `winget`, only when you ask it to.
-- Installs FFmpeg through `winget` when you select **Install FFmpeg** in the editor.
+- Installs FFmpeg through `winget` when you ask it to, in setup or in the editor.
 - Adds an `OBSReplay` profile and scene collection to OBS. It does not edit your other profiles.
 - Enables the OBS WebSocket server so the app can talk to OBS on this PC.
 - Marks the OBS first-run wizard as done, so the wizard does not open over a hidden session.
