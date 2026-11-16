@@ -726,7 +726,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 | Figure | Source |
 | --- | --- |
 | CPU | Process times between two calls, as a share of all cores. The first call reports `sampled: false`. |
-| Memory | Working set, summed. |
+| Memory | Private working set, summed. Same figure as Task Manager. The plain working set counts shared browser code once per process and reads more than twice as high. |
 | GPU, GPU video encoder | Performance counter `GPU Engine`. Per group: the busiest engine type, and `VideoEncode`. |
 | GPU memory | Performance counter `GPU Process Memory`, dedicated. |
 | OBS frame rate, render time, missed and skipped frames | `GetStats` from OBS. The controller asks only while a page polled `resources` in the last 5 seconds. |

@@ -84,9 +84,17 @@ Json resource_usage(const fs::path& clips_folder) {
         if (!handle) return;
         FILETIME created{}, exited{}, kernel{}, user{};
         if (GetProcessTimes(handle, &created, &exited, &kernel, &user)) { process.created = ticks(created); process.cpu = ticks(kernel) + ticks(user); }
-        PROCESS_MEMORY_COUNTERS counters{};
+        // Private working set: memory only this process holds, the figure Task Manager shows. The plain working set
+        // also counts shared pages (the browser engine's code) again in every process, which more than doubles a sum.
+        PROCESS_MEMORY_COUNTERS_EX2 counters{};
         counters.cb = sizeof(counters);
-        if (GetProcessMemoryInfo(handle, &counters, sizeof(counters))) process.memory = counters.WorkingSetSize;
+        if (GetProcessMemoryInfo(handle, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))) process.memory = counters.PrivateWorkingSetSize;
+        else {
+            // Windows before 11 22H2 has no private figure here; the working set is the closest it offers.
+            PROCESS_MEMORY_COUNTERS basic{};
+            basic.cb = sizeof(basic);
+            if (GetProcessMemoryInfo(handle, &basic, sizeof(basic))) process.memory = basic.WorkingSetSize;
+        }
         CloseHandle(handle);
     };
     // Groups: 1 = OBSReplay, 2 = OBS Studio. OBS is marked first: OBSReplay starts it, and it is still OBS.
