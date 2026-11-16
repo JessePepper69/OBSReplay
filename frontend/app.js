@@ -1488,7 +1488,8 @@
       if (usage.tray && (key === "memory" || key === "processes") && usage.tray[key] != null) {
         const note = document.createElement("small");
         note.className = "usage-note";
-        note.textContent = `(${format(usage.tray[key])} while in tray)`;
+        // In the tray only OBSReplay.exe works; the interface's processes stay open but idle.
+        note.textContent = key === "processes" ? `(1 active while in tray, ${Math.max(0, usage.tray[key] - 1)} idle)` : `(${format(usage.tray[key])} while in tray)`;
         cells[0].prepend(note);
       }
       cells[1].textContent = running ? format(obs[key]) : key === "cpu" ? "Not running" : "—";
