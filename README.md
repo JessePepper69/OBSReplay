@@ -7,6 +7,7 @@
 Alternative to Shadowplay & OBS Replay buffer to capture clips. Then watch, trim and export the clip without leaving the app.
 
 [![Latest release](https://img.shields.io/github/v/release/JessePepper69/OBSReplay?label=release&color=6d5ef5)](https://github.com/JessePepper69/OBSReplay/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/JessePepper69/OBSReplay/total?color=6d5ef5)](https://github.com/JessePepper69/OBSReplay/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6d5ef5)](LICENSE)
 ![Windows 10 and 11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
 
