@@ -731,7 +731,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 | GPU memory | Performance counter `GPU Process Memory`, dedicated. |
 | OBS frame rate, render time, missed and skipped frames | `GetStats` from OBS. The controller asks only while a page polled `resources` in the last 5 seconds. |
 | Clips drive | Free space on the drive of the clips folder. |
-| While in tray | Memory and process count of OBSReplay, read 20 seconds after the window hides and kept in `tray-usage.json`. Before the first reading: 15 MB and the current process count. |
+| While in tray | Memory and process count of OBSReplay, read 90 seconds after the window hides and kept in `tray-usage.json`. A suspended page releases its memory over 30 to 45 seconds, so an earlier reading is several times too high. Before the first reading: 20 MB and the current process count. |
 
 The **Debug** tab in Settings polls `resources` every second and `log_tail` every 2 seconds, only while the tab is open and the window is visible.
 

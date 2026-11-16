@@ -35,6 +35,7 @@ constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
 constexpr UINT tray_sample_timer_id = 304;
+constexpr int tray_sample_seconds = 90;
 constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404, menu_quit_all = 405;
 constexpr auto& instance_property = replay::app_window_property;
 // Value of that property: 1 for the normal instance, a hash of OBSREPLAY_DATA_DIR for an isolated one,
@@ -122,12 +123,13 @@ std::string pick_path(HWND owner, const std::string& current, bool folder) {
 // (this run or an earlier one, kept in tray-usage.json). Null until it has been measured once.
 Json tray_usage;
 void load_tray_usage() {
-    try { const auto saved=Json::parse(replay::read_text(replay::paths().data/L"tray-usage.json")); if (saved.is_object() && saved.contains("memory") && saved.contains("processes")) tray_usage=saved; } catch (...) {}
+    try { const auto saved=Json::parse(replay::read_text(replay::paths().data/L"tray-usage.json")); // Readings taken after a shorter wait were too high and are ignored.
+        if (saved.is_object() && saved.contains("memory") && saved.contains("processes") && saved.value("after",0)==tray_sample_seconds) tray_usage=saved; } catch (...) {}
 }
 void measure_tray_usage() {
     try {
         const auto app=replay::resource_usage({}).at("app");
-        tray_usage={{"memory",app.at("memory")},{"processes",app.at("processes")}};
+        tray_usage={{"memory",app.at("memory")},{"processes",app.at("processes")},{"after",tray_sample_seconds}};
         replay::log_info("In tray: memory_mb={} processes={}",app.at("memory").get<uint64_t>()/(1024*1024),app.at("processes").get<unsigned>());
         replay::atomic_write(replay::paths().data/L"tray-usage.json",tray_usage.dump());
     } catch (...) {}
@@ -139,8 +141,8 @@ Json usage(replay::Controller& controller) {
     try { clips=Json::parse(controller.snapshot()).at("settings").value("clips_dir",std::string{}); } catch (...) {}
     auto result=replay::resource_usage(replay::from_string(clips));
     result["obs_stats"]=controller.obs_stats();
-    // Before the first measurement: the hidden window keeps its processes and holds about 15 MB (measured on a typical PC).
-    result["tray"]=tray_usage.is_object() ? tray_usage : Json{{"memory",15*1024*1024},{"processes",result["app"]["processes"]},{"estimated",true}};
+    // Before the first measurement: the hidden window keeps its processes and holds about 20 MB (measured on a typical PC).
+    result["tray"]=tray_usage.is_object() ? tray_usage : Json{{"memory",20*1024*1024},{"processes",result["app"]["processes"]},{"estimated",true}};
     return result;
 }
 
@@ -254,10 +256,14 @@ struct Desktop {
         view->native().controller->put_IsVisible(FALSE);
         ComPtr<ICoreWebView2_3> suspendable;
         if (SUCCEEDED(view->native().webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) {
-            suspendable->TrySuspend(Microsoft::WRL::Callback<ICoreWebView2TrySuspendCompletedHandler>([](HRESULT,BOOL) { return S_OK; }).Get());
+            suspendable->TrySuspend(Microsoft::WRL::Callback<ICoreWebView2TrySuspendCompletedHandler>([](HRESULT result,BOOL suspended) {
+                replay::log_info("Interface suspended: ok={} result=0x{:08X}",suspended!=FALSE,static_cast<unsigned>(result));
+                return S_OK;
+            }).Get());
         }
-        // Once the suspended page has given its memory back, note what the app holds in the tray (shown on the Debug tab).
-        SetTimer(hwnd,tray_sample_timer_id,20000,nullptr);
+        // A suspended page gives its memory back over the next 30 to 45 seconds. Once it has, note what the app holds
+        // in the tray (shown on the Debug tab). A reading taken sooner is several times too high.
+        SetTimer(hwnd,tray_sample_timer_id,tray_sample_seconds*1000,nullptr);
     }
     void ready() {
         if (first_frame_ready) return;
