@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -33,7 +34,7 @@ constexpr const wchar_t* stages[] = {L"Getting ready…", L"Closing OBSReplay…
 // Where an install lives. A check (OBSREPLAY_INSTALL_TEST=<empty folder>) installs into that folder under its own
 // registry key, shows no window, opens nothing and leaves the user's real install, settings and running app alone.
 struct Target {
-    fs::path dir, exe, shortcut;
+    fs::path dir, exe, shortcut, icon;
     std::wstring key;
     bool test = false;
 };
@@ -65,6 +66,17 @@ Target target() {
         t.key = L"OBSReplay";
     }
     t.exe = t.dir / L"OBSReplay.exe";
+    // Windows caches icons by file path and can keep showing an old one after the executable is replaced.
+    // The icon is written as its own file, named by its content: a changed icon is a new path with no cached picture.
+    if (const HRSRC found = FindResourceW(nullptr, MAKEINTRESOURCEW(103), RT_RCDATA)) {
+        const auto* bytes = static_cast<const unsigned char*>(LockResource(LoadResource(nullptr, found)));
+        const DWORD size = SizeofResource(nullptr, found);
+        std::uint32_t hash = 2166136261u;
+        for (DWORD i = 0; bytes && i < size; ++i) hash = (hash ^ bytes[i]) * 16777619u;
+        wchar_t name[32]{};
+        swprintf(name, 32, L"OBSReplay-%08x.ico", hash);
+        t.icon = t.dir / name;
+    }
     return t;
 }
 fs::path self_path() {
@@ -113,7 +125,7 @@ void register_app(const Target& t) {
         set_value(key, L"DisplayName", t.test ? L"OBSReplay (install check)" : L"OBSReplay");
         set_value(key, L"DisplayVersion", std::to_wstring(version[0]) + L"." + std::to_wstring(version[1]) + L"." + std::to_wstring(version[2]));
         set_value(key, L"Publisher", L"OBSReplay");
-        set_value(key, L"DisplayIcon", t.exe.wstring() + L",0");
+        set_value(key, L"DisplayIcon", fs::exists(t.icon, error) ? t.icon.wstring() : t.exe.wstring() + L",0");
         set_value(key, L"InstallLocation", t.dir.wstring());
         set_value(key, L"UninstallString", quoted(t.exe) + L" --uninstall");
         set_value(key, L"QuietUninstallString", quoted(t.exe) + L" --uninstall --quiet");
@@ -123,13 +135,29 @@ void register_app(const Target& t) {
     } catch (...) { RegCloseKey(key); throw; }
     RegCloseKey(key);
 }
+// Writes the icon file and removes the ones older builds left. Returns false when the executable's own icon must be used.
+bool write_icon(const Target& t) {
+    if (t.icon.empty()) return false;
+    const HRSRC found = FindResourceW(nullptr, MAKEINTRESOURCEW(103), RT_RCDATA);
+    if (!found) return false;
+    const auto* bytes = static_cast<const char*>(LockResource(LoadResource(nullptr, found)));
+    if (!bytes) return false;
+    try { atomic_write(t.icon, std::string(bytes, SizeofResource(nullptr, found))); } catch (...) { return false; }
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(t.dir, error)) {
+        const auto name = entry.path().filename().wstring();
+        if (name.starts_with(L"OBSReplay-") && name.ends_with(L".ico") && entry.path() != t.icon) fs::remove(entry.path(), error);
+    }
+    return true;
+}
 void create_shortcut(const Target& t) {
     ComPtr<IShellLinkW> link;
     if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) throw std::runtime_error("Windows could not create the Start menu shortcut.");
     link->SetPath(t.exe.c_str());
     link->SetWorkingDirectory(t.dir.c_str());
     link->SetDescription(L"Instant replay for OBS Studio");
-    link->SetIconLocation(t.exe.c_str(), 0);
+    std::error_code missing;
+    link->SetIconLocation(fs::exists(t.icon, missing) ? t.icon.c_str() : t.exe.c_str(), 0);
     ComPtr<IPersistFile> file;
     if (FAILED(link.As(&file)) || FAILED(file->Save(t.shortcut.c_str(), TRUE))) throw std::runtime_error("Windows could not save the Start menu shortcut.");
 }
@@ -319,10 +347,15 @@ std::string run_install(const fs::path& source, const Target& t) {
             step(35, 2);
             copy_executable(source, t);
             step(60, 3);
+            write_icon(t);
             create_shortcut(t);
             step(80, 4);
             register_app(t);
             if (!t.test) repoint_login_startup(t);
+            // Tell the shell the shortcut and executable changed, so Start, search and the taskbar re-read their icons.
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, t.shortcut.c_str(), nullptr);
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, t.exe.c_str(), nullptr);
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
             step(100, 5);
             ok = true;
         } catch (const std::exception& e) { w.error = e.what(); }
@@ -405,7 +438,8 @@ std::optional<int> handle_install(int argc, char** argv) {
         if (remove) return installed ? uninstall(t, quiet) : 0;
         if (installed) return std::nullopt;
         // The same build is already installed: open it.
-        if (same_content(self, t.exe) && registered(t)) {
+        std::error_code icon_error;
+        if (same_content(self, t.exe) && registered(t) && (t.icon.empty() || fs::exists(t.icon, icon_error))) {
             if (!t.test) launch(t.exe, passed);
             return 0;
         }

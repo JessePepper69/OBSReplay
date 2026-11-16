@@ -3,6 +3,7 @@
 #include "editor.hpp"
 #include "audio_sessions.hpp"
 #include "installer.hpp"
+#include "tray_menu.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -304,24 +305,35 @@ struct Desktop {
             return controller->dispatch(std::move(action),std::move(payload));
         } catch (const std::exception& e) { return std::unexpected(e.what()); }
     }
+    // The tray menu's content for a controller state: the capture state in the header, then the actions.
+    static replay::TrayMenu tray_model(const Json& state) {
+        const bool active=state.value("replay_active",false),configured=state.value("integration",false);
+        const Json settings=state.value("settings",Json::object());
+        const int seconds=settings.value("clip_seconds",120);
+        const auto length=seconds<60 ? std::to_wstring(seconds)+L" seconds" : seconds==60 ? std::wstring(L"minute") : std::to_wstring(seconds/60)+L" minutes";
+        replay::TrayMenu model;
+        model.theme=settings.value("theme",std::string{"original"});
+        model.animate=settings.value("animations_enabled",true);
+        model.state=active ? replay::TrayMenu::State::capturing : !configured||!state.value("error",std::string{}).empty() ? replay::TrayMenu::State::attention : replay::TrayMenu::State::idle;
+        model.status=active ? L"Capturing the last "+length : !configured ? L"Not set up yet" : L"Capture is stopped";
+        model.items={
+            {static_cast<int>(menu_save),L"Save replay",replay::wide(settings.value("save_hotkey",std::string{})),active,false},
+            {static_cast<int>(menu_toggle),active ? L"Stop capture" : L"Start capture",active ? L"Clears the buffer" : L"",configured,false},
+            {static_cast<int>(menu_show),L"Open OBSReplay",L"",true,false},
+            {static_cast<int>(menu_quit),L"Close OBSReplay",L"OBS keeps running",true,true},
+            {static_cast<int>(menu_quit_all),L"Close OBSReplay and OBS",L"",true,false}};
+        return model;
+    }
     void menu() {
         // One menu at a time: a second open while the first is tracking would nest menus and swallow the choice.
         if (menu_open) return;
         menu_open=true;
         struct Reset { bool& flag; ~Reset() { flag=false; } } reset{menu_open};
-        HMENU popup=CreatePopupMenu();
-        if (!popup) return;
-        AppendMenuW(popup,MF_STRING,menu_show,L"Show OBSReplay");
-        AppendMenuW(popup,MF_STRING,menu_save,L"Save replay");
-        bool active=false;
-        try { active=Json::parse(controller->snapshot()).value("replay_active",false); } catch (...) {}
-        AppendMenuW(popup,MF_STRING,menu_toggle,active ? L"Stop capture (discards buffer)" : L"Start capture");
-        AppendMenuW(popup,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(popup,MF_STRING,menu_quit,L"Close (OBS keeps running)");
-        AppendMenuW(popup,MF_STRING,menu_quit_all,L"Close OBSReplay and OBS");
-        POINT cursor{};GetCursorPos(&cursor);SetForegroundWindow(hwnd);
-        const UINT selected=TrackPopupMenu(popup,TPM_RETURNCMD|TPM_RIGHTBUTTON,cursor.x,cursor.y,0,hwnd,nullptr);
-        DestroyMenu(popup);PostMessageW(hwnd,WM_NULL,0,0);
+        Json state=Json::object();
+        try { state=Json::parse(controller->snapshot()); } catch (...) {}
+        const bool active=state.value("replay_active",false);
+        const auto model=tray_model(state);
+        const int selected=replay::show_tray_menu(hwnd,model);
         if (selected==menu_show) show();
         else if (selected==menu_save) command("save");
         else if (selected==menu_toggle) command(active ? "stop" : "start");
@@ -465,6 +477,16 @@ coco::stray start(saucer::application* app) {
 }
 
 int main(int argc,char** argv) {
+    // Check only: writes the tray menu in every theme to PNG files, then exits. Opens no window.
+    if (wchar_t folder[32768]{}; GetEnvironmentVariableW(L"OBSREPLAY_TRAY_PREVIEW",folder,32768)) {
+        for (const auto theme : {"original","mono","light","rose","amethyst","ember"}) {
+            const Json on{{"replay_active",true},{"integration",true},{"settings",{{"theme",theme},{"clip_seconds",120},{"save_hotkey","Alt+Z"}}}};
+            const Json off{{"replay_active",false},{"integration",true},{"settings",{{"theme",theme},{"clip_seconds",120},{"save_hotkey","Alt+Z"}}}};
+            replay::write_tray_menu_image(Desktop::tray_model(on),0,std::wstring(folder)+L"\\"+replay::wide(theme)+L"-capturing.png");
+            replay::write_tray_menu_image(Desktop::tray_model(off),-1,std::wstring(folder)+L"\\"+replay::wide(theme)+L"-stopped.png");
+        }
+        return 0;
+    }
     // Started outside its install folder, the executable installs itself and opens the installed copy.
     if (const auto handled=replay::handle_install(argc,argv)) return *handled;
     for (int i=1;i<argc;++i) if (std::string_view(argv[i])=="--tray") start_hidden=true;

@@ -65,6 +65,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | --- | --- |
 | `CMakeLists.txt` | Build definition, dependency fetch, notices file, frontend embedding. |
 | `src/installer.cpp` | Self-install, update and uninstall. Runs before the app starts. |
+| `src/tray_menu.cpp` | The tray menu window. `OBSREPLAY_TRAY_PREVIEW=<folder>` writes it to PNG in every theme and exits. |
 | `build.ps1` | Configure, build, copy the exe to `dist/`. |
 | `resources/logo/` | The logo: `logo.svg` (source of truth), `logo-small.svg` (larger arrow, for 24 px and below), PNG exports at 16 to 512 px. |
 | `resources/app.ico` | Icon for the exe, taskbar, tray, install window and shortcut: 16, 20, 24, 32, 40, 48, 64, 128, 256 px. |
@@ -94,7 +95,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 
 - `Desktop::add_tray` adds the icon. `TaskbarCreated` re-adds it after Explorer restarts.
 - Left click, keyboard select or double click shows the window.
-- Right click opens a menu: **Show OBSReplay**, **Save replay**, **Start capture** or **Stop capture (discards buffer)**, **Close (OBS keeps running)**, **Close OBSReplay and OBS**.
+- Right click opens the tray menu (`src/tray_menu.cpp`): a borderless popup drawn with GDI+ in the colours of the saved theme. Header: app icon, name, a state dot and one status line. Rows: **Save replay** (with the save shortcut), **Start capture** or **Stop capture**, **Open OBSReplay**, **Close OBSReplay** (OBS keeps running), **Close OBSReplay and OBS**. Rows that cannot run are dim. It closes on Escape, a click elsewhere or lost focus. Arrow keys and Enter work.
 - **Close OBSReplay and OBS** dispatches the `shutdown` action. The controller stops the replay buffer, closes the OBSReplay session of OBS through its main window, then sets `quit` in its state. `Desktop::reconcile` ends the app when it reads `quit`. OBS is left open, with a notification, when it runs a different session or is streaming or recording. The saved capture choice is kept, so capture resumes at the next launch.
 - Quit asks for confirmation when `EditorHost::pending()` reports a running export or unexported cuts.
 - A 500 ms timer runs `Desktop::reconcile`. While the window is hidden or minimized, it shows a tray balloon for a new error or a new saved clip.
@@ -161,7 +162,7 @@ Install steps, on a worker thread:
 
 1. Ask a running OBSReplay to quit. The installer finds the main window by the `OBSReplay.OwnedWindow.0.1` property with value 1 and posts the registered message `OBSReplay.QuitWindow.0.1`. It waits 6 seconds, then ends a copy that did not answer. OBS keeps running.
 2. Copy the executable to `OBSReplay.exe.new` in the install folder, then move it over `OBSReplay.exe`. The move retries for 6 seconds.
-3. Write `OBSReplay.lnk` to the user's Start menu Programs folder.
+3. Write the icon to `OBSReplay-<hash>.ico` in the install folder, then `OBSReplay.lnk` to the user's Start menu Programs folder with that icon. Windows caches icons by path and can keep an old picture after an exe is replaced. A name made from the icon's content gives a changed icon a new path. The installer then sends `SHChangeNotify` for the shortcut and the exe.
 4. Write `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OBSReplay`: name, version, icon, location, size, and `"<exe>" --uninstall`.
 5. If a `Run\OBSReplay` value exists, point it at the installed copy. If none exists but kept settings have `start_at_login` on, write it.
 

@@ -31,16 +31,20 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 
 ## Features
 
-- **Guided setup.** Three steps: install what is missing, choose what to record, start. Setup checks for OBS Studio and FFmpeg and installs both with one button.
-- **One-key save.** A global hotkey, `Alt+Z` by default, saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
-- **Three capture modes.** Game or display (a hybrid of the two), fullscreen games only, or one whole display.
-- **Clips library.** One folder per game, thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
-- **Replay viewer.** Scrub a filmstrip and waveform timeline, step by frame, zoom with the wheel.
-- **Clip editor.** Split, remove and restore sections, undo and redo, per-track volume in preview, then export. Quality 10 keeps the original video and cuts on the exact frame. Lower levels re-encode to a smaller file.
-- **Hardware encoding.** NVIDIA, AMD and Intel encoders with H.264, HEVC or AV1, picked from what your GPU supports.
-- **Separate audio tracks.** Desktop and microphone record to their own tracks. The microphone is off until you turn it on, with optional RNNoise or Speex noise suppression.
-- **Six themes.** Original, Mono, Light, Rose, Amethyst and Ember.
-- **Tray app.** Closing the window keeps the hotkeys alive. Start with Windows is optional.
+- **Guided setup:** Installs OBS Studio and FFmpeg if they are missing, then starts capture. Two clicks.
+- **Self-install:** Run the exe once. It installs itself, adds a Start menu shortcut and can be uninstalled from Windows or from Settings.
+- **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
+- **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
+- **Clips library:** Browse every clip with a thumbnail, its length and its size. Filter by game.
+- **Replay viewer:** Watch a clip in the app with a timeline, a waveform and frame-by-frame steps.
+- **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name.
+- **Quality presets:** Choose from Very low to Very high. No bitrate numbers to learn.
+- **Hardware encoding:** Uses your NVIDIA, AMD or Intel GPU with H.264, HEVC or AV1.
+- **Separate audio tracks:** Game audio and your microphone are saved as two tracks, so you can mute either one later.
+- **Microphone noise suppression:** Optional RNNoise or Speex filter on your microphone.
+- **Start with Windows:** Capture is running after you sign in. Nothing to open.
+- **Tray menu:** Save a replay, start or stop capture, or close the app from the tray.
+- **Themes:** Six colour themes: Original, Mono, Light, Rose, Amethyst and Ember.
 
 ![Clip editor: a clip with one section removed](docs/images/editor.png)
 
