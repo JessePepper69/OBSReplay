@@ -14,7 +14,7 @@ body.editor { background:var(--page); }
 .state-dot.busy { background:var(--ui-accent-text); }
 
 /* Reset app.css <main> gutters and scrolling: the editor fills the window and never scrolls. */
-.editor-main { display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden; }
+.editor-main { display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden;scrollbar-gutter:auto; }
 .stage { position:relative;flex:1 1 0;min-height:160px;overflow:hidden;background:#05080d; }
 /* Absolutely filled so the stage never grows to the video's natural height; contain letterboxes instead of cropping. */
 .stage video { position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;transition:opacity 160ms var(--ease),filter 160ms var(--ease); }

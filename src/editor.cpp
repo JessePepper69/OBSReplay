@@ -1382,7 +1382,10 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
         MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
         // Size the window so a 16:9 preview fits completely above the fixed editor chrome
         // (titlebar, transport, toolbar, timeline and export bar), within the monitor's work area.
-        constexpr int chrome_height = 38 + 52 + 52 + 166 + 76;
+        // Chrome: title bar 38, transport 55, toolbar 55, timeline 166, export bar 95 (borders included). The titlebar
+        // Scale menu zooms the page, so the chrome grows with it while the video area is counted in window pixels.
+        const double zoom = [&] { const auto saved = host.preferences().value("scale", 1.0); return saved == 0.75 || saved == 1.25 || saved == 1.5 ? saved : 1.0; }();
+        const int chrome_height = static_cast<int>(409 * zoom + 0.5);
         constexpr int preferred_width = 1200;
         saucer::size size{preferred_width, chrome_height + preferred_width * 9 / 16};
         POINT cursor{};

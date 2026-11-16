@@ -17,6 +17,8 @@ public:
     // OBS's own figures (frame rate, render time, skipped frames) from its last answer, or null when OBS is not connected.
     // Asking keeps them fresh for a few seconds; nobody asking, OBS is not polled for them.
     Json obs_stats() const;
+    // Saves a colour theme at once, outside the action queue. Refused while an action is running.
+    std::expected<bool, std::string> set_theme(const std::string& id);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

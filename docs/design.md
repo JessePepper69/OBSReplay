@@ -346,7 +346,7 @@ No rounded primary pills.
 
 - No separate page title.
 - Opens with the hero card.
-- Under the hero: underline tabs **Latest replays** and **Edited exports**, with **View all** at the right end.
+- Under the hero: underline tabs **Latest replays** and **Latest edits**, with **View all** at the right end. Each shows 8 clips, so the tabs carry no totals. The Clips page tabs do.
 - Under the tabs: a grid of up to eight clip cards.
 
 ### Clips page
@@ -500,6 +500,7 @@ Step 3, Start:
 - Cancelling the confirmation resumes video that was playing.
 - **Show in folder** pauses playback.
 - **Open file** closes the viewer.
+- The header moves the window when dragged, and maximizes on a double click, like the title bar the viewer covers.
 - Escape or **Close** stops playback and restores focus.
 - Missing files leave history without user action. A deleted video's open viewer closes.
 - The frame-step and Play buttons have no tooltips. Their accessible names remain.

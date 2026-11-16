@@ -197,6 +197,7 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `clip_waveform` | `path` string | JSON string | Viewer waveform. `{"status":"ready","rate":100,"peaks":"<base64>"}` or `{"status":"unavailable"}`. A new call cancels a running decode. |
 | `pick_folder` | `current` string | path or empty string | Native folder dialog for the clips folder. |
 | `pick_obs` | `current` string | path or empty string | Native file dialog for `obs64.exe`. |
+| `set_theme` | theme id | `true` or an error | Save a colour theme at once, outside the action queue. Picking a theme in Settings calls it, so no Apply is needed. Refused while an action runs. |
 | `installed` | none | bool | True when this process is the installed copy. Settings shows **Uninstall OBSReplay** only then. |
 | `uninstall` | none | `true` or an error | Start the installed copy with `--uninstall`. The uninstaller confirms, then closes this app. |
 | `app_info` | none | JSON | `{version, commit, commit_short, dirty, built, full, logs}`. |
@@ -690,7 +691,7 @@ Flow:
 
 - `theme.js` reads `localStorage["obsreplay.theme"]` before first paint and sets `data-theme` (absent for Original) and `data-scheme` on `<html>`.
 - The saved theme is the `theme` setting. On each poll, `app.js` calls `Theme.save` with it, and `Theme.set` when the form has no unapplied edits.
-- The Settings picker calls `Theme.preview`, which changes the current window until Apply.
+- The Settings picker calls `Theme.preview` for this window and `set_theme` to save the choice at once. No Apply. If an action is running the save is refused and the choice waits for Apply.
 - Other windows follow through the `storage` event.
 - Every paint calls the bridge function `theme_changed`, which updates the native window and view background and `set_force_dark`.
 - At window creation, native code reads `saved_theme()` so the window ground matches before the page loads.

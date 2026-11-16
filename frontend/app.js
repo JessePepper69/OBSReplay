@@ -358,6 +358,13 @@
     Theme.preview(id);
     if (focus) $("theme-picker").querySelector('[aria-checked="true"]')?.focus();
     markDirty();
+    // A theme needs no Apply: it is saved at once, so editors and the next launch use it too.
+    // While another action runs the choice waits for Apply, as before.
+    if (state.snapshot?.settings && typeof api()?.set_theme === "function") Promise.resolve(api().set_theme(id)).then(() => {
+      state.snapshot.settings.theme = id;
+      Theme.save(id);
+      markDirty();
+    }).catch(() => {});
   }
   function formValue() {
     const value = { ...settings() };
@@ -857,7 +864,8 @@
       button.setAttribute("aria-selected", String(selected));
       button.tabIndex = selected ? 0 : -1;
       const count = groups[button.dataset.clipTab].length;
-      button.querySelector(".tab-count").textContent = count ? String(count) : "";
+      const total = button.querySelector(".tab-count");
+      if (total) total.textContent = count ? String(count) : "";
     }
     for (let [list, container, limit, compact] of [["clips", $("clips-list"), pageSize, false], ["latest", $("latest-content"), 8, true]]) {
       const tab = clipTabs[list];

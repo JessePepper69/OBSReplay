@@ -936,6 +936,20 @@ bool Controller::knows_clip(const std::string& path) const {
     return std::any_of(clips.begin(), clips.end(), [&](const Json& clip) { return clip.value("path", "") == path; });
 }
 
+std::expected<bool, std::string> Controller::set_theme(const std::string& id) {
+    Json value;
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (impl_->state.value("busy", false)) return std::unexpected("Wait for the current action to finish.");
+        value = impl_->state.at("settings");
+    }
+    value["theme"] = id;
+    try { validate_settings(value); save_settings(impl_->paths, value); }
+    catch (const std::exception& e) { return std::unexpected(e.what()); }
+    impl_->update([&](Json& s) { s["settings"]["theme"] = id; });
+    return true;
+}
+
 std::expected<bool, std::string> Controller::add_clip(const std::string& path, const std::string& app) {
     const auto file = from_string(path);
     std::error_code error;

@@ -545,6 +545,7 @@ coco::stray start(saucer::application* app) {
         view.set_background({next.r,next.g,next.b,255});
         view.set_force_dark(!next.light);
     });
+    view.expose("set_theme",[&](std::string id) { return controller.set_theme(id); });
     view.expose("installed",[] { return replay::installed(); });
     view.expose("uninstall",[]() -> std::expected<bool,std::string> {
         if (!replay::start_uninstall()) return std::unexpected("The uninstaller could not start. Use Installed apps in Windows Settings instead.");

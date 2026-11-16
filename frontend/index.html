@@ -95,7 +95,7 @@
           <div class="hero-cells" id="capture-summary"><div><span>Replay length</span><strong id="summary-length">—</strong></div><div><span>Capture</span><strong id="summary-mode">—</strong></div><div><span>Video</span><strong id="summary-video">—</strong></div><div><span>Microphone</span><strong id="summary-mic">—</strong></div></div>
           <div class="hero-foot"><div class="hero-folder"><span>Clips folder</span><strong id="capture-folder" class="file-path">Choose a destination in Settings.</strong></div><button type="button" data-action="open_folder">Open folder</button></div>
         </div>
-        <section class="latest" aria-labelledby="latest-title"><div class="section-heading"><h2 class="sr-only" id="latest-title">Latest clips</h2><div class="settings-tabs clip-tabs" role="tablist" aria-label="Latest clips"><button type="button" role="tab" data-clip-list="latest" data-clip-tab="replays" id="latest-tab-replays" aria-controls="latest-content" aria-selected="true">Latest replays<span class="tab-count" data-count="replays"></span></button><button type="button" role="tab" data-clip-list="latest" data-clip-tab="edits" id="latest-tab-edits" aria-controls="latest-content" aria-selected="false" tabindex="-1">Edited exports<span class="tab-count" data-count="edits"></span></button></div><button type="button" class="text-button tabs-end" id="all-clips">View all</button></div><div id="latest-content" class="empty-line" role="tabpanel" aria-labelledby="latest-tab-replays">No replays saved yet. Start capture, then press your save shortcut.</div></section>
+        <section class="latest" aria-labelledby="latest-title"><div class="section-heading"><h2 class="sr-only" id="latest-title">Latest clips</h2><div class="settings-tabs clip-tabs" role="tablist" aria-label="Latest clips"><button type="button" role="tab" data-clip-list="latest" data-clip-tab="replays" id="latest-tab-replays" aria-controls="latest-content" aria-selected="true">Latest replays</button><button type="button" role="tab" data-clip-list="latest" data-clip-tab="edits" id="latest-tab-edits" aria-controls="latest-content" aria-selected="false" tabindex="-1">Latest edits</button></div><button type="button" class="text-button tabs-end" id="all-clips">View all</button></div><div id="latest-content" class="empty-line" role="tabpanel" aria-labelledby="latest-tab-replays">No replays saved yet. Start capture, then press your save shortcut.</div></section>
       </section>
       <section id="clips-view" aria-labelledby="clips-title" hidden>
         <div class="view-heading"><h1 id="clips-title">Clips</h1><button type="button" data-action="open_folder">Open folder</button></div>
@@ -136,9 +136,9 @@
   </div>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button value="confirm" class="primary" id="confirm-action">Continue</button></div></form></dialog>
   <dialog id="replay-player" aria-labelledby="player-title">
-    <header class="viewer-header">
+    <header class="viewer-header" data-webview-drag data-webview-maximize="double">
       <div class="viewer-heading"><h2 id="player-title">Replay</h2><p class="viewer-details" id="player-detail"></p></div>
-      <button type="button" class="icon-only" id="player-close" aria-label="Close replay viewer" title="Close  Esc"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
+      <button type="button" class="icon-only" id="player-close" data-webview-ignore aria-label="Close replay viewer" title="Close  Esc"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
     </header>
     <div class="viewer-stage" id="viewer-stage">
       <video id="player-video" playsinline preload="metadata" crossorigin="anonymous"></video>
