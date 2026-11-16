@@ -46,12 +46,12 @@ file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" NOTICES
 configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 
 add_executable(OBSReplay WIN32
-  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp
+  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp src/installer.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 target_compile_definitions(OBSReplay PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(OBSReplay PRIVATE /W4 /utf-8 /permissive- /EHsc)
 target_link_libraries(OBSReplay PRIVATE saucer::saucer saucer::private saucer::embedded nlohmann_json::nlohmann_json
-  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi)
+  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi dwmapi)
 saucer_embed("frontend" TARGET OBSReplay DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/embedded")
 set_target_properties(OBSReplay PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 target_link_options(OBSReplay PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO /OPT:REF /OPT:ICF)

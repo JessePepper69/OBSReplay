@@ -320,7 +320,7 @@ No rounded primary pills.
 
 - Height: 38px, custom drawn.
 - Native saucer drag, double-click maximize and window controls.
-- Carries the brand tile (the site's blue `.mark`, 20px, 6px radius) with the replay glyph.
+- Carries the logo at 22px: a faceted hexagon gem with a replay arrow. It is inline SVG. The gem takes the theme accent (`--ui-accent`, lightened at the top, darkened at the bottom and under-edge) and the arrow takes `--on-accent`, so it matches every theme. The exe, taskbar and tray icon stay blue.
 - Shows the connection status at the right, before the window controls.
 
 ### Rail

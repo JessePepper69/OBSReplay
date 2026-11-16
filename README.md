@@ -1,4 +1,4 @@
-# OBSReplay
+<h1><img src="resources/logo/logo.svg" width="40" height="40" align="top" alt=""> OBSReplay</h1>
 
 Instant replay for Windows, built on OBS Studio. Press a key and the last few minutes of your game land in a folder. Then watch, trim and export the clip without leaving the app.
 
@@ -58,11 +58,13 @@ Requirements:
 Steps:
 
 1. Get `OBSReplay.exe` from [Releases](https://github.com/JessePepper69/OBSReplay/releases), or [build it](#build-from-source).
-2. Put it in a folder you plan to keep, then run it.
+2. Run it. It installs itself in about a second, adds a Start menu shortcut and opens. You can delete the download afterwards.
 3. Follow the three setup steps. If OBS Studio or FFmpeg is missing, select **Install OBS Studio and FFmpeg**. Windows asks for permission once.
 4. Select **Set up and start capture**.
 
-There is no installer. To remove the app, see [What it changes on your PC](#what-it-changes-on-your-pc).
+To update, download the new `OBSReplay.exe` and run it. To remove the app, open **Settings**, **App** in OBSReplay and select **Uninstall**, or use Windows **Installed apps**.
+
+To run it without installing, start it with `OBSReplay.exe --portable`.
 
 ## Where your files go
 
@@ -70,11 +72,13 @@ There is no installer. To remove the app, see [What it changes on your PC](#what
 | --- | --- |
 | Saved replays | `Videos\OBSReplay`, in one folder per game. Change it in **Settings**, **Capture**. |
 | Edited exports | An `Edited Exports` folder next to the original clip |
+| The app | `%LOCALAPPDATA%\Programs\OBSReplay` |
 | Settings, clip history, editor preferences | `%LOCALAPPDATA%\OBSReplay` |
 | OBS profile and scene collection | `%APPDATA%\obs-studio`, both named `OBSReplay` |
 
 ## What it changes on your PC
 
+- Copies itself to `%LOCALAPPDATA%\Programs\OBSReplay`, adds a Start menu shortcut and an entry in **Installed apps**. None of this needs administrator rights.
 - Installs or updates OBS Studio through `winget`, only when you ask it to.
 - Installs FFmpeg through `winget` when you ask it to, in setup or in the editor.
 - Adds an `OBSReplay` profile and scene collection to OBS. It does not edit your other profiles.
@@ -82,7 +86,7 @@ There is no installer. To remove the app, see [What it changes on your PC](#what
 - Marks the OBS first-run wizard as done, so the wizard does not open over a hidden session.
 - Adds an `OBSReplay` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` while **Start with Windows** is on.
 
-To undo it: open **Help**, select **Reset integration**, turn off **Start with Windows**, then delete the executable and `%LOCALAPPDATA%\OBSReplay`. Your clips stay where they are.
+Uninstalling removes the app, the shortcut, the startup entry and the OBS profile. It asks whether to delete your settings. Your clips, OBS Studio and FFmpeg stay.
 
 ## Build from source
 

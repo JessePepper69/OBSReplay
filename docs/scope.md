@@ -19,7 +19,7 @@ This file lists what OBSReplay includes and excludes, feature by feature, with t
 ## Deliverable
 
 - One release `OBSReplay.exe` with compiled-in HTML, CSS and JavaScript and static C++ dependencies.
-- Running the exe needs no Node, no frontend runtime, no sidecar UI, no admin task and no installer.
+- Running the exe needs no Node, no frontend runtime, no sidecar UI, no admin task and no separate installer. The exe installs itself for the current user.
 - Installed OBS Studio captures. Installed WebView2 renders the UI. Installed FFmpeg exports edits.
 
 ## Status legend

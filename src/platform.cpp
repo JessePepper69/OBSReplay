@@ -378,21 +378,59 @@ unsigned close_all_obs(unsigned timeout_ms) {
     return static_cast<unsigned>(waits.size());
 }
 
+// The name a monitor reports about itself (its EDID name, such as "LG ULTRAGEAR"), keyed by GDI device ("\\.\DISPLAY1").
+// The older EnumDisplayDevices name is the driver's, which is "Generic PnP Monitor" for almost every screen.
+std::map<std::wstring,std::wstring> monitor_names() {
+    std::map<std::wstring,std::wstring> names;
+    UINT32 path_count=0,mode_count=0;
+    if(GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,&path_count,&mode_count)!=ERROR_SUCCESS) return names;
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+    if(QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,&path_count,paths.data(),&mode_count,modes.data(),nullptr)!=ERROR_SUCCESS) return names;
+    paths.resize(path_count);
+    for(const auto& path:paths) {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+        source.header.type=DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME; source.header.size=sizeof(source);
+        source.header.adapterId=path.sourceInfo.adapterId; source.header.id=path.sourceInfo.id;
+        DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+        target.header.type=DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME; target.header.size=sizeof(target);
+        target.header.adapterId=path.targetInfo.adapterId; target.header.id=path.targetInfo.id;
+        if(DisplayConfigGetDeviceInfo(&source.header)!=ERROR_SUCCESS||DisplayConfigGetDeviceInfo(&target.header)!=ERROR_SUCCESS) continue;
+        if(target.monitorFriendlyDeviceName[0]) names[source.viewGdiDeviceName]=target.monitorFriendlyDeviceName;
+    }
+    return names;
+}
+
+// Labels read "<name> · Primary · <width> × <height>": the name and the primary mark come first, so a narrow control
+// cuts the resolution, not what tells two screens apart. The id is unchanged, so a saved choice stays valid.
 Json monitors() {
-    Json result=Json::array();
+    struct Listing { Json rows=Json::array(); std::map<std::wstring,std::wstring> names; std::map<std::string,int> seen; } listing;
+    try { listing.names=monitor_names(); } catch(...) {}
     EnumDisplayMonitors(nullptr,nullptr,[](HMONITOR monitor,HDC,LPRECT,LPARAM param)->BOOL {
-        auto& output=*reinterpret_cast<Json*>(param);
+        auto& output=*reinterpret_cast<Listing*>(param);
         MONITORINFOEXW info{}; info.cbSize=sizeof(info);
         if (!GetMonitorInfoW(monitor,&info)) return TRUE;
         DISPLAY_DEVICEW device{}; device.cb=sizeof(device);
         EnumDisplayDevicesW(info.szDevice,0,&device,EDD_GET_DEVICE_INTERFACE_NAME);
         const int width=info.rcMonitor.right-info.rcMonitor.left,height=info.rcMonitor.bottom-info.rcMonitor.top;
-        const auto label=utf8(device.DeviceString[0]?device.DeviceString:info.szDevice)+" ("+std::to_string(width)+" × "+std::to_string(height)+")"+((info.dwFlags&MONITORINFOF_PRIMARY)?" · Primary":"");
-        Json row{{"id",utf8(device.DeviceID[0]?device.DeviceID:info.szDevice)},{"label",label},{"width",width},{"height",height},{"primary",(info.dwFlags&MONITORINFOF_PRIMARY)!=0}};
-        if(info.dwFlags&MONITORINFOF_PRIMARY) output.insert(output.begin(),row); else output.push_back(row);
+        const bool primary=(info.dwFlags&MONITORINFOF_PRIMARY)!=0;
+        std::string name;
+        if(const auto found=output.names.find(info.szDevice);found!=output.names.end()) name=utf8(found->second);
+        if(name.empty()) {
+            // A screen with no name of its own (some laptop panels): "Display 1", from "\\.\DISPLAY1".
+            std::wstring number(info.szDevice);
+            number.erase(0,number.find_last_not_of(L"0123456789")+1);
+            name="Display"+(number.empty()?std::string{}:" "+utf8(number));
+        }
+        // Two screens of the same model get a number.
+        const int count=++output.seen[name];
+        if(count>1) name+=" ("+std::to_string(count)+")";
+        const auto label=name+(primary?" · Primary":"")+" · "+std::to_string(width)+" × "+std::to_string(height);
+        Json row{{"id",utf8(device.DeviceID[0]?device.DeviceID:info.szDevice)},{"label",label},{"name",name},{"width",width},{"height",height},{"primary",primary}};
+        if(primary) output.rows.insert(output.rows.begin(),row); else output.rows.push_back(row);
         return TRUE;
-    },reinterpret_cast<LPARAM>(&result));
-    return result;
+    },reinterpret_cast<LPARAM>(&listing));
+    return listing.rows;
 }
 
 Json audio_devices(bool input) {

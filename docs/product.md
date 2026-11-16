@@ -17,7 +17,7 @@ This file covers what OBSReplay is, who uses it, the product rules every change 
 
 - OBSReplay is a Windows instant-replay controller for an installed OBS Studio.
 - OBS Studio captures and encodes. OBSReplay sets OBS up, starts the replay buffer, saves replays, lists clips, plays them and edits them.
-- The distributable is one `OBSReplay.exe` that contains the UI and all app dependencies.
+- The distributable is one `OBSReplay.exe` that contains the UI and all app dependencies. It installs itself per user on first run and removes itself through Windows **Installed apps**.
 - OBS Studio 31 or newer and the Microsoft Edge WebView2 Runtime are installed prerequisites. Guided setup installs OBS when it is missing.
 - The clip editor exports through an installed FFmpeg. FFmpeg is not bundled.
 
@@ -84,6 +84,6 @@ This file covers what OBSReplay is, who uses it, the product rules every change 
 - Capturing or encoding video inside OBSReplay.
 - Replacing OBS for streaming or full-length recording.
 - Bundling OBS, WebView2 or FFmpeg in the exe.
-- An installer, an admin task or a background service.
+- A separate installer package, an admin task or a background service.
 - Cloud upload, accounts or remote control.
 - Platforms other than Windows x64.

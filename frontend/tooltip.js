@@ -10,7 +10,8 @@
   tip.className = "app-tooltip";
   tip.setAttribute("role", "tooltip");
   tip.hidden = true;
-  let target = null, showTimer = 0, hideTimer = 0, lastHidden = 0;
+  // `target` is the element whose tooltip is showing; `pending` is one waiting out the delay.
+  let target = null, pending = null, showTimer = 0, hideTimer = 0, lastHidden = 0;
 
   function adopt(element) {
     const title = element.getAttribute("title");
@@ -78,8 +79,9 @@
     element.setAttribute("aria-describedby", tip.id);
     requestAnimationFrame(() => tip.classList.add("visible"));
   }
+  function cancel() { clearTimeout(showTimer); pending = null; }
   function hide(immediate = false) {
-    clearTimeout(showTimer);
+    cancel();
     if (!target) return;
     target.removeAttribute("aria-describedby");
     target = null;
@@ -89,23 +91,30 @@
     else hideTimer = setTimeout(() => { tip.hidden = true; }, 120);
   }
   function schedule(element, keyboard) {
-    if (!element || element === target) return;
-    clearTimeout(showTimer);
+    if (!element || element === target || element === pending) return;
     // Moving between controls keeps tooltips flowing without the initial delay.
     const quick = keyboard || performance.now() - lastHidden < 400 || target;
     hide(true);
-    showTimer = setTimeout(() => show(element), quick ? 60 : 450);
+    pending = element;
+    showTimer = setTimeout(() => {
+      pending = null;
+      // The pointer can leave, or the element can go away, before the delay ends.
+      if (element.isConnected && (keyboard ? element.matches(":focus-visible") || element.contains(document.activeElement) : element.matches(":hover"))) show(element);
+    }, quick ? 60 : 450);
   }
 
   document.addEventListener("pointerover", event => {
     if (event.pointerType === "touch") return;
     const element = source(event.target);
     if (element) schedule(element, false);
-    else if (target && !target.contains(event.target)) hide();
+    else { cancel(); if (target && !target.contains(event.target)) hide(); }
   });
   document.addEventListener("pointerout", event => {
+    if (pending && !pending.contains(event.relatedTarget)) cancel();
     if (target && !target.contains(event.relatedTarget)) hide();
   });
+  // Leaving the window fires no pointerout for the element under the pointer.
+  document.documentElement.addEventListener("pointerleave", () => hide(true));
   document.addEventListener("focusin", event => {
     if (!event.target.matches?.(":focus-visible")) return;
     const element = source(event.target);

@@ -862,6 +862,7 @@
         schedulePoll(snapshot.busy ? 500 : 1000);
         return;
       }
+      if (!state.native && typeof api().installed === "function") api().installed().then(value => { $("uninstall-row").hidden = !value; }).catch(() => {});
       state.native = true;
       const previousObs = state.snapshot?.settings?.obs_path;
       const lackedObs = state.snapshot ? !state.snapshot.obs_supported : false;
@@ -1265,7 +1266,10 @@
     const up = below < Math.min(wanted, 160) && above > below;
     const height = Math.max(64, Math.min(wanted, up ? above : below));
     item.list.classList.toggle("above", up);
-    Object.assign(item.list.style, { left: `${box.left}px`, width: `${box.width}px`, maxHeight: `${height}px`, top: up ? "" : `${box.bottom + gap}px`, bottom: up ? `${innerHeight - box.top + gap}px` : "" });
+    // At least as wide as the button, wider when an option needs it, and kept inside the window from the button's right edge.
+    Object.assign(item.list.style, { left: "0px", minWidth: `${box.width}px`, maxWidth: `${Math.min(460, innerWidth - edge * 2)}px`, maxHeight: `${height}px`, top: up ? "" : `${box.bottom + gap}px`, bottom: up ? `${innerHeight - box.top + gap}px` : "" });
+    const width = item.list.offsetWidth;
+    item.list.style.left = `${Math.max(edge, width > box.width ? Math.min(box.left, box.right - width) : box.left)}px`;
   }
   function activateOption(item, index, scroll = true) {
     const rows = [...item.list.children];
@@ -1378,6 +1382,16 @@
   }
 
   arrangeSettings();
+  {
+    // Shown only for the installed copy; a portable run has nothing to uninstall.
+    const row = document.createElement("div");
+    row.className = "setting-row entrance-item";
+    row.id = "uninstall-row";
+    row.hidden = true;
+    row.innerHTML = '<div class="setting-copy"><strong>Uninstall OBSReplay</strong><small>Removes the app, its shortcut, its startup entry and its OBS profile. Your clips stay.</small></div><button type="button" class="danger" id="uninstall-app">Uninstall…</button>';
+    $("settings-app").append(row);
+    $("uninstall-app").addEventListener("click", async () => { try { await nativeCall("uninstall"); } catch (error) { showError(error); } });
+  }
   buildDropdowns();
   bindSetup();
   {

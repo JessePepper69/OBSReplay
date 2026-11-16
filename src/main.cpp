@@ -2,6 +2,7 @@
 #include "media.hpp"
 #include "editor.hpp"
 #include "audio_sessions.hpp"
+#include "installer.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -30,12 +31,14 @@ constexpr UINT save_id = 201, show_id = 202;
 constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
-constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404;
-constexpr wchar_t instance_property[] = L"OBSReplay.OwnedWindow.0.1";
+constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404, menu_quit_all = 405;
+constexpr auto& instance_property = replay::app_window_property;
 // Value of that property: 1 for the normal instance, a hash of OBSREPLAY_DATA_DIR for an isolated one,
 // so a second launch only raises the window of its own instance.
 std::uintptr_t instance_tag = 1;
 const UINT show_message = RegisterWindowMessageW(L"OBSReplay.ShowWindow.0.1");
+// Sent by the installer before it replaces or removes the executable.
+const UINT quit_message = RegisterWindowMessageW(replay::quit_message_name);
 const UINT taskbar_message = RegisterWindowMessageW(L"TaskbarCreated");
 bool start_hidden = false;
 LRESULT CALLBACK desktop_proc(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
@@ -238,6 +241,7 @@ struct Desktop {
     void reconcile() {
         try {
             const auto state = Json::parse(controller->snapshot());
+            if (state.value("quit",false)) { app->post([app=app] { app->quit(); });return; }
             const auto error=state.value("error",std::string{});
             std::string clip;
             if (state.contains("clips") && state["clips"].is_array() && !state["clips"].empty()) clip=state["clips"][0].value("path",std::string{});
@@ -313,16 +317,19 @@ struct Desktop {
         try { active=Json::parse(controller->snapshot()).value("replay_active",false); } catch (...) {}
         AppendMenuW(popup,MF_STRING,menu_toggle,active ? L"Stop capture (discards buffer)" : L"Start capture");
         AppendMenuW(popup,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(popup,MF_STRING,menu_quit,L"Quit controller (OBS stays running)");
+        AppendMenuW(popup,MF_STRING,menu_quit,L"Close (OBS keeps running)");
+        AppendMenuW(popup,MF_STRING,menu_quit_all,L"Close OBSReplay and OBS");
         POINT cursor{};GetCursorPos(&cursor);SetForegroundWindow(hwnd);
         const UINT selected=TrackPopupMenu(popup,TPM_RETURNCMD|TPM_RIGHTBUTTON,cursor.x,cursor.y,0,hwnd,nullptr);
         DestroyMenu(popup);PostMessageW(hwnd,WM_NULL,0,0);
         if (selected==menu_show) show();
         else if (selected==menu_save) command("save");
         else if (selected==menu_toggle) command(active ? "stop" : "start");
-        else if (selected==menu_quit) {
+        else if (selected==menu_quit || selected==menu_quit_all) {
             const auto pending=editors ? editors->pending() : std::string{};
             if (!pending.empty() && MessageBoxW(hwnd,replay::wide(pending+"\n\nQuit OBSReplay anyway?").c_str(),L"OBSReplay",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+            // The controller closes OBS first, then sets "quit" in its state; reconcile() ends the app when it sees it.
+            if (selected==menu_quit_all) { command("shutdown");return; }
             // Quit after the menu has fully closed, so its message loop can't swallow the request.
             app->post([app=app] { app->quit(); });
         }
@@ -333,6 +340,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
     auto& desktop=*reinterpret_cast<Desktop*>(ref);
     try {
         if (message==show_message) { desktop.show();return 0; }
+        if (message==quit_message) { desktop.app->post([app=desktop.app] { app->quit(); });return 0; }
         if (message==taskbar_message) { desktop.add_tray();return 0; }
         if (message==tray_message) {
             const UINT event=LOWORD(l);
@@ -439,6 +447,11 @@ coco::stray start(saucer::application* app) {
         view.set_background({next.r,next.g,next.b,255});
         view.set_force_dark(!next.light);
     });
+    view.expose("installed",[] { return replay::installed(); });
+    view.expose("uninstall",[]() -> std::expected<bool,std::string> {
+        if (!replay::start_uninstall()) return std::unexpected("The uninstaller could not start. Use Installed apps in Windows Settings instead.");
+        return true;
+    });
     view.expose("quit",[&] { app->post([app] { app->quit(); }); });
     view.embed(saucer::embedded::all());
     view.serve("/index.html");
@@ -452,6 +465,8 @@ coco::stray start(saucer::application* app) {
 }
 
 int main(int argc,char** argv) {
+    // Started outside its install folder, the executable installs itself and opens the installed copy.
+    if (const auto handled=replay::handle_install(argc,argv)) return *handled;
     for (int i=1;i<argc;++i) if (std::string_view(argv[i])=="--tray") start_hidden=true;
     // An isolated data folder (OBSREPLAY_DATA_DIR) runs as its own instance so checks never touch the user's session.
     std::wstring instance_name=L"Local\\OBSReplay.Controller.0.1";

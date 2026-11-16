@@ -7,6 +7,7 @@ This file covers how the OBSReplay code is organized and how each part works: pr
 - [Overview](#overview)
 - [Source map](#source-map)
 - [Process and window model](#process-and-window-model)
+- [Self-install](#self-install)
 - [Native bridge](#native-bridge)
 - [Controller](#controller)
 - [OBS integration](#obs-integration)
@@ -63,13 +64,17 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | Path | Responsibility |
 | --- | --- |
 | `CMakeLists.txt` | Build definition, dependency fetch, notices file, frontend embedding. |
+| `src/installer.cpp` | Self-install, update and uninstall. Runs before the app starts. |
 | `build.ps1` | Configure, build, copy the exe to `dist/`. |
+| `resources/logo/` | The logo: `logo.svg` (source of truth), `logo-small.svg` (larger arrow, for 24 px and below), PNG exports at 16 to 512 px. |
+| `resources/app.ico` | Icon for the exe, taskbar, tray, install window and shortcut: 16, 20, 24, 32, 40, 48, 64, 128, 256 px. |
 | `resources/app.rc.in` | Resource script: manifest, icon (ID 1), notices (`RCDATA` 101), save sound (`WAVE` 102), version info. |
 
 ## Process and window model
 
 ### Startup
 
+1. `main` calls `handle_install` (`src/installer.cpp`). See [Self-install](#self-install). The steps below run only when it returns nothing.
 1. `main` reads `--tray`. With it, the window starts hidden.
 2. `main` creates the mutex `Local\OBSReplay.Controller.0.1`. When `OBSREPLAY_DATA_DIR` is set, the name gets a hash of that value as a suffix.
 3. If the mutex exists, `main` finds the window whose property `OBSReplay.OwnedWindow.0.1` holds this instance tag, posts the registered message `OBSReplay.ShowWindow.0.1` to it, and exits. The tag is `1` for the normal instance and a hash of `OBSREPLAY_DATA_DIR` for an isolated one, so an isolated run never raises the normal window.
@@ -89,7 +94,8 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 
 - `Desktop::add_tray` adds the icon. `TaskbarCreated` re-adds it after Explorer restarts.
 - Left click, keyboard select or double click shows the window.
-- Right click opens a menu: **Show OBSReplay**, **Save replay**, **Start capture** or **Stop capture (discards buffer)**, **Quit controller (OBS stays running)**.
+- Right click opens a menu: **Show OBSReplay**, **Save replay**, **Start capture** or **Stop capture (discards buffer)**, **Close (OBS keeps running)**, **Close OBSReplay and OBS**.
+- **Close OBSReplay and OBS** dispatches the `shutdown` action. The controller stops the replay buffer, closes the OBSReplay session of OBS through its main window, then sets `quit` in its state. `Desktop::reconcile` ends the app when it reads `quit`. OBS is left open, with a notification, when it runs a different session or is streaming or recording. The saved capture choice is kept, so capture resumes at the next launch.
 - Quit asks for confirmation when `EditorHost::pending()` reports a running export or unexported cuts.
 - A 500 ms timer runs `Desktop::reconcile`. While the window is hidden or minimized, it shows a tray balloon for a new error or a new saved clip.
 
@@ -139,6 +145,32 @@ First reveal:
 
 OBS configuration paths do not change in an isolated run: they still point at `%APPDATA%\obs-studio`.
 
+## Self-install
+
+`OBSReplay.exe` is its own installer. `handle_install` in `src/installer.cpp` runs first in `main`, before the single-instance check.
+
+| Launch | Result |
+| --- | --- |
+| From `%LOCALAPPDATA%\Programs\OBSReplay\OBSReplay.exe` | The app runs. |
+| From any other path | Install or update, then the installed copy opens. This process exits. |
+| From any other path, same bytes already installed and registered | The installed copy opens. No window. |
+| With `--uninstall`, from the install folder | Uninstall. |
+| With `--portable`, or with `OBSREPLAY_DATA_DIR` or `OBSREPLAY_HEADLESS` set | The app runs in place. Nothing is installed. |
+
+Install steps, on a worker thread:
+
+1. Ask a running OBSReplay to quit. The installer finds the main window by the `OBSReplay.OwnedWindow.0.1` property with value 1 and posts the registered message `OBSReplay.QuitWindow.0.1`. It waits 6 seconds, then ends a copy that did not answer. OBS keeps running.
+2. Copy the executable to `OBSReplay.exe.new` in the install folder, then move it over `OBSReplay.exe`. The move retries for 6 seconds.
+3. Write `OBSReplay.lnk` to the user's Start menu Programs folder.
+4. Write `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OBSReplay`: name, version, icon, location, size, and `"<exe>" --uninstall`.
+5. If a `Run\OBSReplay` value exists, point it at the installed copy. If none exists but kept settings have `start_at_login` on, write it.
+
+The window is plain Win32 with GDI drawing: app icon, one state line, one progress bar. It uses no WebView2. It stays open at least 1.1 seconds. A failed install shows the reason, then the app runs from the downloaded file.
+
+Uninstall asks for confirmation, then whether to delete settings. With `--quiet` it asks nothing and keeps settings; Windows uses that as `QuietUninstallString`. It closes the app, resets the OBS integration when OBS is closed, deletes the Run value, the shortcut and the registry key, and optionally `%LOCALAPPDATA%\OBSReplay`. A hidden `cmd` deletes the install folder after the process exits. Clips are never touched.
+
+`OBSREPLAY_INSTALL_TEST=<absolute folder>` is for checks. The install goes to `<folder>\app`, the shortcut to `<folder>`, the registry key is `OBSReplay.Test`. No window shows, nothing launches, and the running app, Run value, settings and OBS integration are left alone.
+
 ## Native bridge
 
 The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise. A function that returns `std::expected` rejects the promise with the error string.
@@ -160,6 +192,8 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `clip_waveform` | `path` string | JSON string | Viewer waveform. `{"status":"ready","rate":100,"peaks":"<base64>"}` or `{"status":"unavailable"}`. A new call cancels a running decode. |
 | `pick_folder` | `current` string | path or empty string | Native folder dialog for the clips folder. |
 | `pick_obs` | `current` string | path or empty string | Native file dialog for `obs64.exe`. |
+| `installed` | none | bool | True when this process is the installed copy. Settings shows **Uninstall OBSReplay** only then. |
+| `uninstall` | none | `true` or an error | Start the installed copy with `--uninstall`. The uninstaller confirms, then closes this app. |
 | `hide` | none | nothing | Hide to tray. |
 | `hotkey_recording` | `enabled` bool | nothing | Suspend or restore global hotkeys while the page records a shortcut. |
 | `ui_ready` | none | nothing | First frame is ready; reveal the window. |

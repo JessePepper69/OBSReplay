@@ -664,12 +664,35 @@ struct Controller::Impl {
         message("OBSReplay integration reset. Your saved clips are unchanged.");
     }
 
+    // Tray "Close OBSReplay and OBS": stop the buffer, close the OBSReplay session of OBS, then mark the state so the
+    // window quits. The saved "capture on" choice is kept, so capture resumes at the next launch.
+    void shutdown() {
+        if (obs_running()) {
+            try { ensure_connection(false); } catch (...) {}
+            if (flag("connected")) {
+                if (!flag("owned")) throw std::runtime_error("OBS is running a different session, so it was left open. Close it from OBS.");
+                if (socket.request("GetStreamStatus").value("outputActive", false) || socket.request("GetRecordStatus").value("outputActive", false))
+                    throw std::runtime_error("OBS is streaming or recording, so it was left open.");
+                if (flag("replay_active")) {
+                    socket.request("StopReplayBuffer");
+                    const auto deadline = Clock::now() + std::chrono::seconds(10);
+                    while (socket.request("GetReplayBufferStatus").value("outputActive", false))
+                        if (Clock::now() >= deadline || !pause(100)) throw std::runtime_error("OBS did not confirm a capture stop, so it was left open.");
+                }
+                socket.close();
+            }
+            close_obs(from_string(settings().at("obs_path").get<std::string>()));
+        }
+        update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["obs_running"] = false; s["quit"] = true; });
+    }
+
     void perform(const Action& action) {
         if (action.name == "setup" || action.name == "apply") apply(action.payload, action.name == "setup");
         else if (action.name == "install_obs") install_obs();
         else if (action.name == "locate_obs") { use_obs(from_string(action.payload.value("path", ""))); message("Using OBS Studio " + std::string(state_value("obs_version")) + "."); }
         else if (action.name == "start") start();
         else if (action.name == "stop") stop();
+        else if (action.name == "shutdown") shutdown();
         else if (action.name == "save") save(action.app);
         else if (action.name == "reset") reset();
         else if (action.name == "reconnect") {
@@ -821,7 +844,7 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
 }
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
     if (!allowed.contains(action)) return std::unexpected("Unknown controller action.");
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;
