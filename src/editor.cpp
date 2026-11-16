@@ -1,4 +1,5 @@
 #include "editor.hpp"
+#include "log.hpp"
 #include "media.hpp"
 
 #include <saucer/smartview.hpp>
@@ -409,6 +410,7 @@ struct EditorHost::Impl {
     std::list<std::unique_ptr<Session>> sessions;
     uint64_t next_id = 1;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+    std::function<void(const std::string&)> play;
     // Replay viewer waveform: one decode at a time on a worker; asking for another clip makes the running one stale.
     std::atomic<uint64_t> wave_run{0};
     std::map<uint64_t, std::thread> wave_workers;
@@ -430,6 +432,7 @@ struct EditorHost::Impl {
         if (winget.empty()) return std::unexpected("Automatic install isn't available because Windows Package Manager (winget) is missing on this PC. Select Get FFmpeg instead.");
         if (installer.joinable()) installer.join();
         set_install("preparing");
+        log_info("FFmpeg install started: winget={}", quoted_value(path_string(winget)));
         installer = std::thread([this, winget] {
             std::string tail;
             int reached = 0;
@@ -454,12 +457,14 @@ struct EditorHost::Impl {
                 { std::lock_guard lock(ffmpeg_mutex); ++detection; ffmpeg = found; }
                 store_preference("ffmpeg_path", path_string(found.exe));
                 set_install("");
+                log_info("FFmpeg installed: path={} version={}", quoted_value(path_string(found.exe)), quoted_value(found.version));
                 return;
             }
             std::string problem;
             if (code == -1) problem = "The FFmpeg download didn't finish. Check your internet connection and select Install FFmpeg again.";
             else if (tail.find("already installed") != std::string::npos) problem = "winget reports FFmpeg as installed, but OBSReplay can't find ffmpeg.exe. Select Locate ffmpeg.exe.";
             else { std::ostringstream text; text << "FFmpeg wasn't installed (winget code 0x" << std::hex << static_cast<unsigned>(code) << "). Select Install FFmpeg again, or Get FFmpeg to install it yourself."; problem = text.str(); }
+            log_error("FFmpeg install failed: code={} error={}", code, quoted_value(problem));
             set_install("", problem);
         });
         return true;
@@ -524,6 +529,7 @@ struct EditorHost::Impl {
                 if (generation != detection) return;  // a newer detection (e.g. a located file) wins
                 ffmpeg = found;
             }
+            log_info("FFmpeg checked: status={} path={} version={} nvenc={} x264={}{}", found.status, quoted_value(path_string(found.exe)), quoted_value(found.version), found.nvenc, found.x264, found.message.empty() ? "" : " message=" + quoted_value(found.message));
             if (found.status == "ready") store_preference("ffmpeg_path", path_string(found.exe));
         });
     }
@@ -598,6 +604,7 @@ struct EditorHost::Impl::Session {
     std::atomic<bool> stopping{}, cancel_export{}, analyzing{}, dirty{};
     std::atomic<int64_t> last_seen{0};
     bool animations = true;
+    std::string theme = saved_theme();
     Clock::time_point animations_checked{};
     std::thread analysis, exporter;
     uint64_t revision = 1;
@@ -633,13 +640,13 @@ struct EditorHost::Impl::Session {
         const auto plans = quality_plans(tool, info);
         if (Clock::now() - animations_checked > std::chrono::seconds(3)) {
             animations_checked = Clock::now();
-            try { animations = Json::parse(host.controller.snapshot()).at("settings").value("animations_enabled", true); } catch (...) {}
+            try { const auto settings = Json::parse(host.controller.snapshot()).at("settings"); animations = settings.value("animations_enabled", true); theme = settings.value("theme", theme); } catch (...) {}
         }
         std::error_code error;
         const bool missing = !fs::is_regular_file(source, error);
         std::lock_guard lock(mutex);
         return Json{
-            {"clip", clip}, {"animations", animations}, {"quality", quality}, {"source_missing", missing},
+            {"clip", clip}, {"animations", animations}, {"theme", theme}, {"quality", quality}, {"source_missing", missing},
             {"ffmpeg", {{"status", tool.status}, {"path", path_string(tool.exe)}, {"version", tool.version}, {"message", tool.message}, {"install", host.install_state()},
                         {"encoder", tool.nvenc ? "NVIDIA NVENC" : tool.x264 ? "x264 (CPU)" : ""}}},
             {"probe", probe}, {"waveform", {{"status", wave_status}, {"rate", 100}}}, {"export", export_state}, {"preview", preview},
@@ -1022,6 +1029,7 @@ struct EditorHost::Impl::Session {
             cancel_export = false;
             const bool original = quality == 10 && smart_cut_possible(tool, info);
             change([&] { export_state = {{"status", "running"}, {"progress", 0.0}, {"speed", 0.0}, {"quality", quality}, {"total", total}, {"encoder", original ? "Original video" : encoder_label(tool, info, quality, tool.nvenc)}}; });
+            log_info("Export started: source={} sections={} seconds={:.2f} quality={} original_video={}", quoted_value(path_string(source)), segments.size(), total, quality, original);
             exporter = std::thread([this, tool, info, segments, total, quality, original] { run_export(tool, info, segments, total, quality, original); });
             return true;
         } catch (const std::exception& e) { return std::unexpected(std::string("The export request could not be read. ") + e.what()); }
@@ -1246,6 +1254,7 @@ struct EditorHost::Impl::Session {
             if (!finished) result = encode_export(tool, info, segments, total, quality, work, temporary);
             if (result.canceled) {
                 std::error_code ignored; fs::remove(temporary, ignored);
+                log_info("Export canceled: source={}", quoted_value(path_string(source)));
                 change([&] { export_state = {{"status", "canceled"}}; });
             } else if (!result.started) {
                 throw std::runtime_error(result.errors.empty() ? "FFmpeg could not be started. Locate ffmpeg.exe again." : result.errors);
@@ -1267,8 +1276,9 @@ struct EditorHost::Impl::Session {
                 const auto added = host.controller.add_clip(path_string(final), clip.value("app", ""));
                 if (!added) history_note = added.error();
                 { std::lock_guard lock(mutex); if (export_state.contains("note")) history_note = export_state["note"].get<std::string>() + (history_note.empty() ? "" : " " + history_note); }
-                bool revealed = true;
-                try { if (headless_mode()) revealed = false; else open_path(final, true); } catch (...) { revealed = false; }
+                // The finished video is offered in the editor (Play video, Show in folder); File Explorer is not opened unasked.
+                const bool revealed = false;
+                log_info("Export finished: file={} bytes={} seconds={:.2f}{}", quoted_value(path_string(final)), error ? 0 : bytes, total, history_note.empty() ? "" : " note=" + quoted_value(history_note));
                 change([&] {
                     export_state = {{"status", "done"}, {"output", path_string(final)}, {"name", path_string(final.filename())}, {"bytes", error ? 0 : bytes},
                                     {"duration", total}, {"revealed", revealed}, {"note", history_note}, {"quality", quality}};
@@ -1276,6 +1286,7 @@ struct EditorHost::Impl::Session {
             }
         } catch (const std::exception& e) {
             if (!temporary.empty()) { std::error_code ignored; fs::remove(temporary, ignored); }
+            log_error("Export failed: source={} error={}", quoted_value(path_string(source)), quoted_value(e.what()));
             change([&] { export_state = {{"status", "failed"}, {"error", e.what()}}; });
         }
         if (!work.empty()) { std::error_code ignored; fs::remove_all(work, ignored); }
@@ -1333,6 +1344,7 @@ std::string EditorHost::pending() const {
 EditorHost::EditorHost(saucer::application* app, Controller& controller, Paths paths) : impl_(std::make_unique<Impl>(app, controller, std::move(paths))) {}
 EditorHost::~EditorHost() = default;
 
+void EditorHost::on_play(std::function<void(const std::string&)> handler) { impl_->play = std::move(handler); }
 void EditorHost::waveform(const std::string& path, std::function<void(std::string)> done) {
     try { impl_->waveform(path, done); } catch (...) { done(R"({"status":"unavailable"})"); }
 }
@@ -1340,6 +1352,7 @@ void EditorHost::waveform(const std::string& path, std::function<void(std::strin
 std::expected<bool, std::string> EditorHost::open(const std::string& path) {
     auto& host = *impl_;
     try {
+        log_info("Editor requested: file={}", quoted_value(path));
         if (!host.controller.knows_clip(path)) return std::unexpected("This replay is no longer in your recent clips.");
         for (auto& session : host.sessions) {
             if (session->clip.value("path", "") == path && !session->allow_close) {
@@ -1407,6 +1420,9 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
         web.set_force_dark(!ground.light);
         web.set_background({ground.r, ground.g, ground.b, 255});
         web.set_context_menu(false);
+        // The page reads its theme from localStorage before its first paint. Write the saved theme there first,
+        // so an editor always opens in the app's theme whatever the page last stored.
+        web.inject({.code = "try{localStorage.setItem('obsreplay.theme'," + Json(saved_theme()).dump() + ")}catch(e){}", .run_at = saucer::script::time::creation});
         // Ctrl+wheel / pinch must not zoom the editor by accident; the titlebar Scale menu sets the zoom instead.
         {
             ComPtr<ICoreWebView2Settings> settings;
@@ -1458,6 +1474,13 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             const auto output = self->exported_path();
             if (output.empty()) return std::unexpected("Export a video first.");
             try { open_path(from_string(output), reveal); return true; } catch (const std::exception& e) { return std::unexpected(e.what()); }
+        });
+        web.expose("play_output", [self, impl, token = std::weak_ptr<bool>(impl->alive)]() -> std::expected<bool, std::string> {
+            const auto output = self->exported_path();
+            if (output.empty()) return std::unexpected("Export a video first.");
+            log_info("Play exported video: file={}", quoted_value(output));
+            impl->app->post([impl, output, token] { if (token.lock() && impl->play) impl->play(output); });
+            return true;
         });
         web.expose("close_editor", [self, impl, id, token = std::weak_ptr<bool>(impl->alive)] {
             self->cancel_export = true;

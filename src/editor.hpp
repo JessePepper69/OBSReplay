@@ -29,6 +29,8 @@ public:
     // or {"status":"unavailable"}. Decoded on a worker thread; `done` is called once, on the UI thread.
     // Asking for another clip stops a decode that is still running. Only clips in the recent history are read.
     void waveform(const std::string& path, std::function<void(std::string)> done);
+    // Called on the UI thread when an editor asks to play a video (its export) in the main window's viewer.
+    void on_play(std::function<void(const std::string& path)> handler);
     struct Impl;
 private:
     std::unique_ptr<Impl> impl_;

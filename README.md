@@ -35,7 +35,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Self-install:** Run the exe once. It installs itself, adds a Start menu shortcut and can be uninstalled from Windows or from Settings.
 - **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
 - **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
-- **Clips library:** Browse every clip with a thumbnail, its length and its size. Filter by game.
+- **Clips library:** Browse every clip with a thumbnail, its length and its size. Filter by game. Delete a clip from its card.
 - **Replay viewer:** Watch a clip in the app with a timeline, a waveform and frame-by-frame steps.
 - **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name.
 - **Quality presets:** Choose from Very low to Very high. No bitrate numbers to learn.
@@ -44,6 +44,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Microphone noise suppression:** Optional RNNoise or Speex filter on your microphone.
 - **Start with Windows:** Capture is running after you sign in. Nothing to open.
 - **Tray menu:** Save a replay, start or stop capture, or close the app from the tray.
+- **Debug tab:** See how much CPU, memory and GPU OBSReplay and OBS use. Export a log of the session for a bug report.
 - **Themes:** Navy, Mono, Light, Rose, Amethyst and Ember.
 
 ![Clip editor: a clip with one section removed](docs/images/editor.png)
@@ -78,6 +79,7 @@ To run it without installing, start it with `OBSReplay.exe --portable`.
 | Edited exports | An `Edited Exports` folder next to the original clip |
 | The app | `%LOCALAPPDATA%\Programs\OBSReplay` |
 | Settings, clip history, editor preferences | `%LOCALAPPDATA%\OBSReplay` |
+| Session logs (the last 10 runs) | `%LOCALAPPDATA%\OBSReplay\logs` |
 | OBS profile and scene collection | `%APPDATA%\obs-studio`, both named `OBSReplay` |
 
 ## What it changes on your PC

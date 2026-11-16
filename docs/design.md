@@ -528,7 +528,7 @@ Layout from top to bottom:
 - Buttons in order: previous cut, frame back, Play, frame forward, next cut.
 - Frame buttons repeat while held.
 - Play is filled accent, 44px, without an outline.
-- Double-clicking Play restarts from the first kept section.
+- Shift+click on Play restarts from the first kept section. A double click does nothing extra, so quick play and pause taps never jump back.
 - A Preview cuts switch follows the buttons.
 - One master volume slider, 50% by default.
 - A Track volumes button opens a popover with a slider and mute per recorded track.
@@ -567,7 +567,7 @@ Layout from top to bottom:
 - **Export video**, 40px.
 - Export-bar regions have fixed widths, so changing quality or edits never shifts controls.
 - Export progress, success and failure replace the quality controls inline.
-- Success offers **Show in folder** and **Open file**.
+- Success offers **Show in folder** and **Play video**. Play video opens the export in the main window's viewer. File Explorer does not open on its own.
 - A missing FFmpeg shows a warning-coloured notice with **Install FFmpeg** (primary, shown when winget exists), **Get FFmpeg** and **Locate ffmpeg.exe**. Editing still works.
 - **Install FFmpeg** installs through winget. The notice then reads "Installing FFmpeg…" with a spinner and one line per stage, and hides its buttons. A failure replaces the text with the reason and brings the buttons back. On success the notice gives way to the export controls.
 
@@ -692,6 +692,7 @@ Motion follows the PlayerCard site. Shared values: `--fast` 130ms, `--ui` 180ms,
 | Tab underline slide | 240ms | `--ease` | Tab change |
 | Navigation cascade | 260ms, 6px rise, 40ms apart, at most four steps | `--ease` | Explicit navigation, tab change |
 | Window-open cascade | 480ms, 10px rise, 60ms apart, up to seven steps | `cubic-bezier(.16,1,.3,1)` | Launch, tray reopen. Starts two frames after the window is revealed |
+| Clip card cascade | 200ms, 4px rise, 24ms apart, first 12 cards. On window open: 340ms, 8px, 34ms apart | `--ease` | Opening Clips or Capture, tray reopen, list tab, filter or page change |
 | Dialog entry | 240ms, 8px rise from 0.97 scale | `--ease` | Open |
 | Dialog backdrop | 260ms in, 160ms out | `--ease` in, ease-in out | Open, close |
 | Dialog exit | 150ms | ease-in | Close |

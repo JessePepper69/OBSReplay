@@ -16,6 +16,7 @@ This file covers how the OBSReplay code is organized and how each part works: pr
 - [Replay viewer](#replay-viewer)
 - [Clip editor](#clip-editor)
 - [Themes](#themes)
+- [Session log and Debug tab](#session-log-and-debug-tab)
 - [Build and embedding](#build-and-embedding)
 
 ## Overview
@@ -65,6 +66,9 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | --- | --- |
 | `CMakeLists.txt` | Build definition, dependency fetch, notices file, frontend embedding. |
 | `src/installer.cpp` | Self-install, update and uninstall. Runs before the app starts. |
+| `src/log.cpp` | Session log, build version and commit. |
+| `src/resources.cpp` | CPU, memory and GPU use of OBSReplay and OBS Studio. |
+| `cmake/build_info.cmake` | Writes `build_info.hpp` (version, Git commit) on every build. |
 | `src/tray_menu.cpp` | The tray menu window. `OBSREPLAY_TRAY_PREVIEW=<folder>` writes it to PNG in every theme and exits. |
 | `build.ps1` | Configure, build, copy the exe to `dist/`. |
 | `resources/logo/` | The logo: `logo.svg` (source of truth), `logo-small.svg` (larger arrow, for 24 px and below), PNG exports at 16 to 512 px. |
@@ -195,6 +199,12 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `pick_obs` | `current` string | path or empty string | Native file dialog for `obs64.exe`. |
 | `installed` | none | bool | True when this process is the installed copy. Settings shows **Uninstall OBSReplay** only then. |
 | `uninstall` | none | `true` or an error | Start the installed copy with `--uninstall`. The uninstaller confirms, then closes this app. |
+| `app_info` | none | JSON | `{version, commit, commit_short, dirty, built, full, logs}`. |
+| `resources` | none | JSON | Resource use. See [Session log and Debug tab](#session-log-and-debug-tab). |
+| `log_tail` | `lines` int | text | The last lines of the session log (600 at most). |
+| `export_log` | none | path, `""` or an error | Save dialog, then write the session log with the current state and resource use. Empty when cancelled. |
+| `open_logs` | none | `true` or an error | Open the logs folder. |
+| `ui_log` | `level`, `text` | nothing | Add a line from the page: page changes and script errors. |
 | `hide` | none | nothing | Hide to tray. |
 | `hotkey_recording` | `enabled` bool | nothing | Suspend or restore global hotkeys while the page records a shortcut. |
 | `ui_ready` | none | nothing | First frame is ready; reveal the window. |
@@ -223,6 +233,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `ffmpeg_help` | none | nothing | Open the FFmpeg download page. |
 | `install_ffmpeg` | none | `true` or an error | Start `winget install --id Gyan.FFmpeg` on a worker thread. `editor_state` reports progress in `ffmpeg.install` (`stage`: `preparing`, `downloading`, `installing`, `verifying` or empty; `error`; `available`: winget found). On success the host adopts the new `ffmpeg.exe` and every open editor continues its analysis. |
 | `reveal_output` | `reveal` bool | `true` or error | Show the last export in Explorer (`true`) or open it (`false`). |
+| `play_output` | none | `true` or error | **Play video**: show the main window and send it `obsreplay:play` with the export's path. The page opens **Clips**, **Edited exports** and plays the file in the viewer. |
 | `close_editor` | none | nothing | Cancel any export and close the window. |
 | `editor_dirty` | `value` bool | nothing | Tell native whether unexported cuts exist. |
 | `save_pref` | `key` string, `value` JSON string | `true` or error | Validate and store an editor preference. See [editor preferences](#editor-preferences). |
@@ -529,6 +540,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 - The waveform comes from `EditorHost::waveform`: FFmpeg decodes the first audio track to 8 kHz mono, and the code keeps one peak (0..255) per 80 samples. One decode runs at a time. The last result is cached by path, size and write time.
 - Without FFmpeg the waveform lane stays flat.
 - `app.js` owns the clip actions: **Delete**, **Show in folder**, **Open file**, **Edit clip**.
+- Each clip card has the same actions on hover. **Delete** is last and red. A click asks first. Shift+click deletes at once.
 - Clip list thumbnails come from `takeThumbnail` in `app.js`: a muted `<video>` draws one frame to a 320 × 180 canvas.
 
 ## Clip editor
@@ -614,7 +626,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 3. At quality 10 when `smart_cut_possible`: run `smart_export`. If it fails, record a note and continue with step 4.
 4. Otherwise run `encode_export`.
 5. Rename `<name>.mp4.part` to `<name>.mp4` without overwriting.
-6. Add the file to history with `Controller::add_clip` and select it in Explorer (not in headless mode).
+6. Add the file to history with `Controller::add_clip`. Explorer is not opened. The editor offers **Play video** and **Show in folder**.
 
 Cancel or window close terminates FFmpeg and deletes the partial file. FFmpeg children run hidden inside a kill-on-close job object.
 
@@ -686,6 +698,41 @@ Flow:
 - `Theme.timeline()` resolves tokens to concrete colors for the canvas timelines in the viewer and editor.
 
 A new theme needs three edits: the list in `theme.js`, a block in `themes.css`, and an entry in `theme_ground`.
+
+An editor window gets the saved theme from the native side twice. A script injected before the page loads writes it to `localStorage`, so the first paint is right. `editor_state` carries `theme`, so an open editor follows a change within 3 seconds.
+
+## Session log and Debug tab
+
+### Version and commit
+
+- `project(OBSReplay VERSION x.y.z)` in `CMakeLists.txt` is the one place the version is set. The version resource and the notices file read it.
+- `cmake/build_info.cmake` runs on every build. It writes `build/generated/build_info.hpp` with the version, the full Git commit and a flag for uncommitted changes to tracked files. It rewrites the file only when the content changes.
+- `app_version()` returns `0.1.0+abc1234`. A build from changed files ends in `.dirty`. Release builds come from a clean commit.
+
+### Log file
+
+- `log_start` opens `<data>\logs\session-<date>-<time>-<pid>.log` after the single-instance check. The 10 newest files stay.
+- Each line: local time, level (`DEBUG`, `INFO`, `WARN`, `ERROR`), message, then `key=value` pairs. Text values are quoted.
+- The app writes each line to disk at once. A crash leaves its exception code as the last line.
+- Header: version, commit, build time, executable, data folder, Windows build, CPU, memory, graphics adapters, displays, WebView2 runtime.
+- `Controller::Impl::update` is the one place state changes. `log_changes` compares before and after and logs changed flags, each changed setting (old and new value), messages, errors and the clip count.
+- Each action logs its request, start, end, duration and error. Also logged: OBS WebSocket events and connection attempts, OBS launch and close, shortcuts, tray menu choices, window show and hide, FFmpeg checks and installs, editor opens, exports.
+- The log holds file paths and device names. It holds no passwords. The WebSocket password is never logged.
+
+### Resource use
+
+`resource_usage` (`src/resources.cpp`) reads two process groups: OBSReplay with every process it started (WebView2, FFmpeg), and each `obs64.exe` with its children. OBS started by OBSReplay counts as OBS.
+
+| Figure | Source |
+| --- | --- |
+| CPU | Process times between two calls, as a share of all cores. The first call reports `sampled: false`. |
+| Memory | Working set, summed. |
+| GPU, GPU video encoder | Performance counter `GPU Engine`. Per group: the busiest engine type, and `VideoEncode`. |
+| GPU memory | Performance counter `GPU Process Memory`, dedicated. |
+| OBS frame rate, render time, missed and skipped frames | `GetStats` from OBS. The controller asks only while a page polled `resources` in the last 5 seconds. |
+| Clips drive | Free space on the drive of the clips folder. |
+
+The **Debug** tab in Settings polls `resources` every second and `log_tail` every 2 seconds, only while the tab is open and the window is visible.
 
 ## Build and embedding
 

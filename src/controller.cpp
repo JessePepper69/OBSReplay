@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include "controller.hpp"
+#include "log.hpp"
 #include "integration.hpp"
 #include "obs_socket.hpp"
 #include <algorithm>
@@ -64,6 +65,40 @@ struct Controller::Impl {
     Clock::time_point next_connect{}, next_refresh{}, next_detect{};
     unsigned failures{};
     bool refresh_needed{};
+    Json stats;                                 // guarded by mutex
+    mutable std::atomic<int64_t> stats_wanted{}; // steady-clock ms of the last request for stats
+
+    // Every change of the app's state goes through update(), so the session log follows it from here.
+    static void log_changes(const Json& before, const Json& after) {
+        static constexpr const char* watched[] = {"integration", "obs_found", "obs_version", "obs_supported", "winget", "obs_running", "connected", "owned",
+            "replay_active", "capture_ready", "capture_issue", "status", "setup_stage", "install_stage", "compression_update", "quit"};
+        const auto text = [](const Json& value) { return value.is_string() ? quoted_value(value.get<std::string>()) : value.dump(); };
+        std::string changes;
+        for (const auto key : watched) {
+            const auto was = before.value(key, Json()), now = after.value(key, Json());
+            if (was != now) changes += std::string(" ") + key + "=" + text(now);
+        }
+        if (!changes.empty()) log_info("State:{}", changes);
+        if (before.value("settings", Json()) != after.value("settings", Json())) {
+            std::string settings;
+            const auto& old = before.at("settings");
+            for (const auto& [key, value] : after.at("settings").items())
+                if (!old.contains(key)) settings += " " + key + "=" + text(value);
+                else if (old[key] != value) settings += " " + key + "=" + text(old[key]) + "->" + text(value);
+            if (!settings.empty()) log_info("Settings:{}", settings);
+        }
+        if (before.value("options", Json()) != after.value("options", Json())) {
+            const auto& options = after.at("options");
+            const auto count = [&](const char* key) { return options.contains(key) && options[key].is_array() ? options[key].size() : 0; };
+            log_debug("Options: monitors={} audio_inputs={} audio_outputs={} encoders={}", count("monitors"), count("audio_inputs"), count("audio_outputs"), count("encoders"));
+        }
+        const auto clips_before = before.value("clips", Json::array()).size(), clips_after = after.value("clips", Json::array()).size();
+        if (clips_before != clips_after) log_info("Clips: listed={} was={}", clips_after, clips_before);
+        const auto message = after.value("message", std::string{});
+        if (!message.empty() && message != before.value("message", std::string{})) log_info("Message: {}", quoted_value(message));
+        const auto error = after.value("error", std::string{});
+        if (!error.empty() && error != before.value("error", std::string{})) log_error("Error shown: {}", quoted_value(error));
+    }
 
     explicit Impl(Paths value) : paths(std::move(value)), integration(paths) {
         state = {{"settings", Json::object()}, {"options", {{"monitors", Json::array()}, {"audio_inputs", Json::array()}, {"audio_outputs", Json::array()}, {"encoders", Json::array()}}},
@@ -83,7 +118,7 @@ struct Controller::Impl {
         std::lock_guard lock(mutex);
         auto before = state;
         action(state);
-        if (before != state) state["revision"] = state.at("revision").get<uint64_t>() + 1;
+        if (before != state) { state["revision"] = state.at("revision").get<uint64_t>() + 1; log_changes(before, state); }
     }
     Json settings() const { std::lock_guard lock(mutex); return state.at("settings"); }
     bool flag(const char* name) const { std::lock_guard lock(mutex); return state.value(name, false); }
@@ -281,6 +316,7 @@ struct Controller::Impl {
         detect_obs();
         const bool configured = integration.configured();
         const bool winget = !winget_path().empty();
+        log_info("Controller starting: configured={} winget={} obs_running={} obs_config={}", configured, winget, obs_running(), quoted_value(path_string(paths.obs_config)));
         update([&](Json& s) { s["integration"] = configured; s["compression_update"] = integration.needs_update(); s["winget"] = winget; });
         try {
             const auto history_path = paths.data / L"clips.json";
@@ -317,6 +353,7 @@ struct Controller::Impl {
             s["revision"] = s.at("revision").get<uint64_t>() + 1;
         });
         settle();
+        log_info("Controller ready: status={}", quoted_value(state_value("status")));
     }
 
     struct DeviceIssue { std::string message; bool monitor{}; };
@@ -424,8 +461,10 @@ struct Controller::Impl {
 
     void connect_once() {
         if (!integration.configured()) throw std::runtime_error("Configure the OBSReplay integration in Settings first.");
+        log_debug("Connecting to OBS WebSocket");
         socket.connect(integration.credentials());
         refresh();
+        log_info("Connected to OBS: owned={} replay_active={}", flag("owned"), flag("replay_active"));
         failures = 0;
         next_connect = Clock::now() + std::chrono::seconds(2);
     }
@@ -438,6 +477,7 @@ struct Controller::Impl {
             if (!allow_launch) throw std::runtime_error("OBS is closed. Start capture to launch your dedicated OBS session.");
             const auto value = settings();
             message("Launching the dedicated OBS session…");
+            log_info("Launching OBS: path={}", quoted_value(value.value("obs_path", "")));
             launch_obs(from_string(value.at("obs_path").get<std::string>()));
             const auto deadline = Clock::now() + std::chrono::seconds(25);
             std::string last_error;
@@ -546,12 +586,14 @@ struct Controller::Impl {
         try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
         catch (...) { warning += " The recent-clips list could not be persisted; the video is saved."; }
         if (sound) save_feedback();
+        log_info("Replay saved: file={} bytes={} app={} sorted={}", quoted_value(text), bytes, quoted_value(app), sort);
         message(warning.empty() ? "Saved " + path_string(final.filename()) : warning);
     }
 
     void events() {
         for (const auto& event : socket.events()) {
             const auto type = event.value("eventType", "");
+            log_debug("OBS event: type={} data={}", type, event.value("eventData", Json::object()).dump());
             const auto data = event.value("eventData", Json::object());
             if (type == "CurrentProfileChanging" || type == "CurrentProfileChanged" || type == "CurrentSceneCollectionChanging" || type == "CurrentSceneCollectionChanged") {
                 refresh_needed = true;
@@ -786,6 +828,7 @@ struct Controller::Impl {
                 if (!fs::remove(file, error) || error)
                     throw std::runtime_error("Windows could not delete this replay. Close it in other apps and check your folder permissions.");
                 reconcile_clips();
+                log_info("Clip deleted: file={}", quoted_value(path));
                 message("Replay deleted.");
             } else open_path(file, action.name == "reveal_clip");
         } else if (action.name == "help") open_help(action.payload.value("topic", "obs"));
@@ -805,12 +848,20 @@ struct Controller::Impl {
         if (socket.connected()) {
             events();
             if (refresh_needed || Clock::now() >= next_refresh) refresh();
+            const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+            if (now_ms - stats_wanted.load() < 5000) {
+                Json latest;
+                try { latest = socket.request("GetStats", Json::object(), 2000); } catch (...) {}
+                std::lock_guard lock(mutex);
+                stats = std::move(latest);
+            }
         } else if (Clock::now() >= next_connect) {
             update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; });
             try { connect_once(); }
             catch (const std::exception& e) {
                 socket.close();
                 next_connect = Clock::now() + std::chrono::seconds(std::min(15u, 2u + ++failures * 2u));
+                log_warn("OBS connection failed: attempt={} error={}", failures, quoted_value(e.what()));
                 update([&](Json& s) { s["message"] = std::string("OBS is running; waiting for its controller. ") + e.what(); });
             }
         }
@@ -832,9 +883,15 @@ struct Controller::Impl {
             }
             if (action) {
                 update([](Json& s) { s["error"] = ""; });
+                const auto began = Clock::now();
+                std::string failure;
+                log_info("Action started: action={}", action->name);
                 try { perform(*action); }
-                catch (const std::exception& e) { fail(e.what()); }
-                catch (...) { fail("The action could not be completed. Reconnect and try again."); }
+                catch (const std::exception& e) { failure = e.what(); fail(e.what()); }
+                catch (...) { failure = "unknown exception"; fail("The action could not be completed. Reconnect and try again."); }
+                const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - began).count();
+                if (failure.empty()) log_info("Action finished: action={} ms={}", action->name, took);
+                else log_error("Action failed: action={} ms={} error={}", action->name, took, quoted_value(failure));
                 update([&](Json& s) {
                     s["busy"] = !queue.empty(); s["operation"] = queue.empty() ? "" : queue.front().name;
                     s["revision"] = s.at("revision").get<uint64_t>() + 1;
@@ -851,6 +908,7 @@ struct Controller::Impl {
                     next_poll = Clock::now() + std::chrono::seconds(1);
                 }
             } catch (const std::exception& e) {
+                log_error("Background check failed: error={}", quoted_value(e.what()));
                 socket.close();
                 update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; });
                 fail(e.what());
@@ -859,6 +917,7 @@ struct Controller::Impl {
             }
         }
         socket.close();
+        log_info("Controller stopped");
         if (SUCCEEDED(com)) CoUninitialize();
     }
 };
@@ -866,6 +925,11 @@ struct Controller::Impl {
 Controller::Controller(Paths paths) : impl_(std::make_unique<Impl>(std::move(paths))) {}
 Controller::~Controller() = default;
 std::string Controller::snapshot() const { std::lock_guard lock(impl_->mutex); return impl_->state.dump(); }
+Json Controller::obs_stats() const {
+    impl_->stats_wanted.store(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+    std::lock_guard lock(impl_->mutex);
+    return impl_->state.value("connected", false) ? impl_->stats : Json();
+}
 bool Controller::knows_clip(const std::string& path) const {
     std::lock_guard lock(impl_->mutex);
     const auto& clips = impl_->state.at("clips");
@@ -893,7 +957,7 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
     static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
-    if (!allowed.contains(action)) return std::unexpected("Unknown controller action.");
+    if (!allowed.contains(action)) { log_warn("Action refused: action={} reason=unknown", quoted_value(action)); return std::unexpected("Unknown controller action."); }
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;
     try { data = Json::parse(payload.empty() ? "{}" : payload); }
@@ -905,8 +969,10 @@ std::expected<bool, std::string> Controller::dispatch(std::string action, std::s
     {
         std::lock_guard lock(s.mutex);
         if (s.stopping.load()) return std::unexpected("OBSReplay is closing.");
-        if (s.state.value("busy", false)) return std::unexpected("Wait for the current action to finish.");
+        if (s.state.value("busy", false)) { log_warn("Action refused: action={} reason=busy operation={}", action, s.state.value("operation", std::string{})); return std::unexpected("Wait for the current action to finish."); }
         if (s.queue.size() >= 4) return std::unexpected("The controller is busy. Try again shortly.");
+        // Settings are logged as a list of changes when they are stored, so their payload is left out here.
+        log_info("Action requested: action={}{}{}", action, app.empty() ? "" : " app=" + quoted_value(app), action == "setup" || action == "apply" || data.empty() ? "" : " payload=" + data.dump());
         s.queue.push_back({action, std::move(data), std::move(app)});
         s.state["busy"] = true; s.state["operation"] = action;
         s.state["error"] = ""; s.state["message"] = action == "save" ? "Waiting for OBS to save your replay…" : "Working…";

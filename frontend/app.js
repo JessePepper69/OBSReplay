@@ -20,6 +20,11 @@
   routed.then(() => { delete document.documentElement.dataset.routing; });
   let dialogClosing = false;
   let category = "capture";
+  let debugTimer = 0, debugTicks = 0, debugInfo = null;
+  // Lines for the session log from this page: navigation and script errors.
+  const uiLog = (level, text) => { try { Promise.resolve(window.saucer?.exposed?.ui_log?.(level, String(text))).catch(() => {}); } catch {} };
+  window.addEventListener("error", event => uiLog("error", `Script error: ${event.message} at ${String(event.filename || "").split("/").pop()}:${event.lineno}`));
+  window.addEventListener("unhandledrejection", event => uiLog("error", `Unhandled rejection: ${event.reason?.message || event.reason}`));
   const entranceAnimations = new Set();
   let preparedElements = [];
   let fadeFrame = 0;
@@ -43,7 +48,7 @@
   function arrangeSettings() {
     const form = $("settings-form");
     const groups = {};
-    for (const name of ["capture", "audio", "app"]) {
+    for (const name of ["capture", "audio", "app", "debug"]) {
       const panel = document.createElement("div");
       panel.id = `settings-${name}`;
       panel.className = "settings-category";
@@ -122,7 +127,8 @@
     groups.capture.append(startup);
     const explanation = $("apply-explanation");
     explanation.textContent = "Capture and audio changes restart OBS. The replay buffer starts again from empty.";
-    form.replaceChildren(groups.capture, groups.audio, groups.app, explanation);
+    groups.debug.innerHTML = "<div class=\"debug-usage entrance-item\" id=\"debug-usage\"><div class=\"debug-usage-head\"><strong>Resource use</strong><span id=\"debug-system\">Measuring…</span></div><table class=\"usage-table\"><thead><tr><th scope=\"col\"><span class=\"sr-only\">Measure</span></th><th scope=\"col\">OBSReplay</th><th scope=\"col\">OBS Studio</th><th scope=\"col\">Both</th></tr></thead><tbody><tr data-usage=\"cpu\"><th scope=\"row\">CPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"memory\"><th scope=\"row\">Memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu\"><th scope=\"row\">GPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_encode\"><th scope=\"row\">GPU video encoder</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_memory\"><th scope=\"row\">GPU memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"processes\"><th scope=\"row\">Processes</th><td>—</td><td>—</td><td>—</td></tr></tbody></table><div class=\"hero-cells usage-cells\"><div><span>OBS frame rate</span><strong id=\"debug-fps\">—</strong></div><div><span>Frame render time</span><strong id=\"debug-render\">—</strong></div><div><span>Render missed</span><strong id=\"debug-missed\">—</strong></div><div><span>Encoder skipped</span><strong id=\"debug-skipped\">—</strong></div><div><span id=\"debug-disk-label\">Clips drive</span><strong id=\"debug-disk\">—</strong></div></div></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Version</strong><small id=\"debug-version\">—</small></div><button type=\"button\" id=\"debug-copy\">Copy</button></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Session log</strong><small id=\"debug-export-status\">Everything OBSReplay did since it opened. Export it and attach the file when you report a problem.</small></div><div class=\"inline-actions\"><button type=\"button\" id=\"debug-open-logs\">Open logs folder</button><button type=\"button\" id=\"debug-export\">Export log…</button></div></div><div class=\"debug-log-row entrance-item\"><strong id=\"debug-log-title\">Latest log lines</strong><pre class=\"debug-log\" id=\"debug-log\" tabindex=\"0\" aria-labelledby=\"debug-log-title\"></pre></div>";
+    form.replaceChildren(groups.capture, groups.audio, groups.app, groups.debug, explanation);
     for (const row of form.querySelectorAll(".check-row")) {
       const input = row.querySelector("input");
       const copy = row.querySelector("span");
@@ -190,6 +196,9 @@
       entranceAnimations.add(animation);
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     });
+    // The clip cards on the page come in one after another, behind the blocks that hold them.
+    const list = view.id === "clips-view" ? $("clips-list") : view.id === "capture-view" ? $("latest-content") : null;
+    if (list) cascade(list, opening ? 200 : 90, opening);
   }
   async function presentUI() {
     // The window opens on the right page. A slow check still opens it, on an empty page, after 2.5 seconds.
@@ -216,6 +225,10 @@
     }
     $("setup-intro").hidden = configured() || name !== "capture";
     $("refresh-devices").hidden = name !== "audio";
+    $("apply-explanation").hidden = name === "debug";
+    $("settings-actions").hidden = state.tab !== "settings" || name === "debug";
+    if (changed) uiLog("debug", `Settings tab: ${name}`);
+    scheduleDebug();
     $("main").scrollTop = 0;
     if (changed && presented && animate) playEntrance($("settings-" + name));
     syncTabIndicators();
@@ -242,6 +255,7 @@
   }
   function showError(error) {
     state.localError = errorText(error);
+    if (state.localError) uiLog("warn", `Error shown: ${state.localError}`);
     state.dismissedError = "";
     renderFeedback();
   }
@@ -387,6 +401,8 @@
     if (tab === "capture" && state.snapshot && (!configured() || setup.flow === "running")) tab = "setup";
     const changed = state.tab !== tab;
     state.tab = tab;
+    if (changed) uiLog("debug", `Page: ${tab}`);
+    scheduleDebug();
     for (const name of ["setup", "capture", "clips", "settings", "help"]) $(name + "-view").hidden = name !== tab;
     for (const button of document.querySelectorAll("[data-tab]")) {
       if (button.dataset.tab === tab || (tab === "setup" && button.dataset.tab === "capture")) button.setAttribute("aria-current", "page");
@@ -436,7 +452,7 @@
     $("error-fix").textContent = noticeFix?.label || "";
     $("error-fix").dataset.error = noticeFix ? error : "";
     $("error-fix").disabled = !state.native || busy();
-    $("settings-actions").hidden = state.tab !== "settings";
+    $("settings-actions").hidden = state.tab !== "settings" || category === "debug";
     $("footer-hide").hidden = state.tab === "settings" || state.tab === "setup";
     const pending = busy();
     for (const button of document.querySelectorAll("#replay-player .viewer-actions button")) button.disabled = !state.native || pending;
@@ -502,8 +518,28 @@
   const icons = {
     edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5.5" cy="6" r="2"/><circle cx="5.5" cy="14" r="2"/><path d="M7.3 7.2 16 14M7.3 12.8 16 6"/></svg>',
     open: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 4H16v4.5M16 4l-6.5 6.5M14 11.5v3a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 4 14.5v-7A1.5 1.5 0 0 1 5.5 6h3"/></svg>',
-    folder: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3l1.6 2h6.4A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>'
+    folder: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3l1.6 2h6.4A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>',
+    trash: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 6V4.5h4V6M6 6l.6 9a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4L14 6M8.5 9v4.5M11.5 9v4.5"/></svg>'
   };
+  // Quick delete on a clip card. A click asks first; Shift+click deletes at once.
+  function deleteButton(clip) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "icon-only delete-clip";
+    button.setAttribute("aria-label", `Delete ${clip.name || "replay"}`);
+    button.dataset.tipTitle = "Delete";
+    button.dataset.tip = "Shift+click deletes without asking";
+    button.innerHTML = icons.trash;
+    button.addEventListener("click", async event => {
+      if (busy()) return;
+      const name = clip.name || (clip.edited ? "this video" : "this replay");
+      if (!event.shiftKey && !await confirmAction(clip.edited ? "Delete edited video?" : "Delete replay?", `Permanently delete “${name}” from your computer? This cannot be undone.`, "Delete", true)) return;
+      // Nothing may still be reading the file when Windows deletes it.
+      if (playerClip?.path === clip.path) { ReplayViewer.release(); playerClip = null; closePlayer(); }
+      dispatch("delete_clip", { path: clip.path });
+    });
+    return button;
+  }
   function iconAction(label, icon, action, clip) {
     const button = document.createElement("button");
     button.type = "button";
@@ -723,7 +759,7 @@
     foot.className = "clip-foot";
     const actions = document.createElement("div");
     actions.className = "clip-actions";
-    actions.append(editButton(clip), iconAction("Open in your video player", icons.open, "open_clip", clip), iconAction("Show in folder", icons.folder, "reveal_clip", clip));
+    actions.append(editButton(clip), iconAction("Open in your video player", icons.open, "open_clip", clip), iconAction("Show in folder", icons.folder, "reveal_clip", clip), deleteButton(clip));
     preview.append(thumbnail);
     foot.append(meta, name);
     row.append(preview, foot, actions);
@@ -800,10 +836,10 @@
     $("main").scrollTop = 0;
     cascade($("clips-list"));
   }
-  function cascade(container) {
+  function cascade(container, wait = 0, opening = false) {
     if (!presented || !motionEnabled()) return;
     [...container.children].slice(0, 12).forEach((row, index) => {
-      const animation = row.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 200, delay: index * 24, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+      const animation = row.animate([{ opacity: 0, transform: `translateY(${opening ? 8 : 4}px)` }, { opacity: 1, transform: "translateY(0)" }], { duration: opening ? 340 : 200, delay: wait + index * (opening ? 34 : 24), easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
       entranceAnimations.add(animation);
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     });
@@ -1436,7 +1472,64 @@
     syncDropdowns();
   }
 
+  // Debug tab: what OBSReplay and OBS are using, refreshed every second while the tab is open, and the session log.
+  const debugActive = () => state.tab === "settings" && category === "debug" && !document.hidden && typeof api()?.resources === "function";
+  const megabytes = bytes => bytes == null ? "—" : bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
+  const percent = value => value == null ? "—" : `${Math.min(100, value).toFixed(1)}%`;
+  function renderUsage(usage) {
+    const app = usage.app, obs = usage.obs, running = Boolean(obs.running);
+    const formats = { cpu: percent, memory: megabytes, gpu: percent, gpu_encode: percent, gpu_memory: megabytes, processes: value => value == null ? "—" : String(value) };
+    for (const [key, format] of Object.entries(formats)) {
+      const cells = $("debug-usage").querySelectorAll(`[data-usage="${key}"] td`);
+      const both = app[key] == null && (!running || obs[key] == null) ? null : (app[key] || 0) + (running ? obs[key] || 0 : 0);
+      cells[0].textContent = format(app[key]);
+      cells[1].textContent = running ? format(obs[key]) : key === "cpu" ? "Not running" : "—";
+      cells[2].textContent = format(both);
+    }
+    const system = usage.system || {};
+    $("debug-system").textContent = `Whole PC: CPU ${percent(system.cpu)} · memory ${megabytes(system.memory_used)} of ${megabytes(system.memory_total)}`;
+    const stats = usage.obs_stats, number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+    const share = (part, total) => `${number(part)}${number(total) ? ` (${(100 * number(part) / number(total)).toFixed(2)}%)` : ""}`;
+    $("debug-fps").textContent = stats ? `${number(stats.activeFps).toFixed(1)} fps` : "—";
+    $("debug-render").textContent = stats ? `${number(stats.averageFrameRenderTime).toFixed(2)} ms` : "—";
+    $("debug-missed").textContent = stats ? share(stats.renderSkippedFrames, stats.renderTotalFrames) : "—";
+    $("debug-skipped").textContent = stats ? share(stats.outputSkippedFrames, stats.outputTotalFrames) : "—";
+    $("debug-disk-label").textContent = usage.disk?.drive ? `Clips drive (${usage.disk.drive.replace(/\\$/, "")})` : "Clips drive";
+    $("debug-disk").textContent = usage.disk ? `${megabytes(usage.disk.free)} free` : "—";
+  }
+  async function debugTick() {
+    clearTimeout(debugTimer);
+    if (!debugActive()) return;
+    let wait = 2000;
+    try {
+      if (!debugInfo && typeof api().app_info === "function") {
+        debugInfo = unpack(await api().app_info());
+        $("debug-version").textContent = `${debugInfo.version} · commit ${debugInfo.commit_short}${debugInfo.dirty ? " with local changes" : ""} · built ${debugInfo.built}`;
+      }
+      const usage = unpack(await api().resources());
+      // CPU and GPU are measured between two readings, so the first one only starts the clock.
+      if (usage.sampled && debugActive()) renderUsage(usage);
+      if (debugTicks++ % 2 === 0 && typeof api().log_tail === "function") {
+        const box = $("debug-log"), atEnd = box.scrollHeight - box.clientHeight - box.scrollTop < 8, text = String(await api().log_tail(200)).trimEnd();
+        if (box.textContent !== text) { box.textContent = text; if (atEnd) box.scrollTop = box.scrollHeight; }
+      }
+      wait = usage.sampled ? 1000 : 350;
+    } catch {}
+    debugTimer = setTimeout(debugTick, wait);
+  }
+  function scheduleDebug() { clearTimeout(debugTimer); debugTimer = setTimeout(debugTick, 0); }
+
   arrangeSettings();
+  $("debug-copy").addEventListener("click", async () => {
+    if (!debugInfo) return;
+    try { await navigator.clipboard.writeText(`OBSReplay ${debugInfo.full} (commit ${debugInfo.commit}, built ${debugInfo.built})`); $("debug-copy").textContent = "Copied"; setTimeout(() => { $("debug-copy").textContent = "Copy"; }, 1600); }
+    catch (error) { showError("Windows didn’t allow copying. Select the version text instead."); }
+  });
+  $("debug-export").addEventListener("click", async () => {
+    try { const saved = await nativeCall("export_log"); if (saved) $("debug-export-status").textContent = `Saved to ${saved}`; }
+    catch (error) { showError(error); }
+  });
+  $("debug-open-logs").addEventListener("click", async () => { try { await nativeCall("open_logs"); } catch (error) { showError(error); } });
   {
     // Shown only for the installed copy; a portable run has nothing to uninstall.
     const row = document.createElement("div");
@@ -1464,7 +1557,7 @@
       frame = requestAnimationFrame(step);
     };
     reader.addEventListener("wheel", event => {
-      if (event.defaultPrevented || event.ctrlKey || event.shiftKey || event.deltaX || event.deltaMode !== 0 || Math.abs(event.deltaY) < 50 || !motionEnabled()) { target = null; return; }
+      if (event.target.closest?.(".debug-log") || event.defaultPrevented || event.ctrlKey || event.shiftKey || event.deltaX || event.deltaMode !== 0 || Math.abs(event.deltaY) < 50 || !motionEnabled()) { target = null; return; }
       event.preventDefault();
       const limit = reader.scrollHeight - reader.clientHeight;
       target = Math.max(0, Math.min(limit, (target ?? reader.scrollTop) + event.deltaY));
@@ -1483,7 +1576,7 @@
   for (const button of document.querySelectorAll("[data-category]")) {
     button.addEventListener("click", () => showCategory(button.dataset.category));
     button.addEventListener("keydown", event => {
-      const names = ["capture", "audio", "app"];
+      const names = ["capture", "audio", "app", "debug"];
       let index = names.indexOf(category);
       if (event.key === "ArrowRight") index = (index + 1) % names.length;
       else if (event.key === "ArrowLeft") index = (index + names.length - 1) % names.length;
@@ -1651,6 +1744,7 @@
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
+      scheduleDebug();
       // Work that can wait does, so the opening cascade has the first frames to itself.
       schedulePoll(heldForReopen ? 420 : 0); scheduleFade();
       // If the reopen signal never comes, do not leave the page blank.
@@ -1664,6 +1758,24 @@
     if (!presented || !motionEnabled()) return;
     prepareEntrance();
     heldForReopen = true;
+  });
+  // "Play video" in an editor: open the Clips page on the right list and play that file in the viewer.
+  window.addEventListener("obsreplay:play", async event => {
+    const path = String(event.detail || "");
+    const find = () => (state.snapshot?.clips || []).find(clip => clip.path === path);
+    // The export joined the list a moment ago; wait until this window has read it.
+    for (let attempt = 0; attempt < 16 && !find(); attempt++) { schedulePoll(0); await new Promise(resolve => setTimeout(resolve, 200)); }
+    const clip = find();
+    if (!clip) { showError("That video isn’t in your clips any more."); return; }
+    if ($("confirm-dialog").open) closeDialog("cancel");
+    const tab = clip.edited ? "edits" : "replays";
+    showTab("clips");
+    clipTabs.clips = tab;
+    clipView.app = null;
+    clipView.page = Math.max(0, Math.floor((state.snapshot.clips.filter(item => Boolean(item.edited) === Boolean(clip.edited)).findIndex(item => item.path === path)) / pageSize));
+    try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
+    renderClipLists();
+    watchReplay(clip);
   });
   window.addEventListener("obsreplay:reopen", () => {
     if (!presented || !heldForReopen) { schedulePoll(0); cancelEntrance(); return; }

@@ -1,4 +1,5 @@
 #include "platform.hpp"
+#include "log.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -309,6 +310,7 @@ void launch_obs(const fs::path& exe) {
 }
 
 void close_obs(const fs::path& exe) {
+    log_info("Closing OBS: path={}", quoted_value(path_string(exe)));
     auto expected=exe.lexically_normal(); expected.make_preferred();
     Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
     if(snapshot.value==INVALID_HANDLE_VALUE) throw failure("Cannot locate OBS");
@@ -342,6 +344,7 @@ void close_obs(const fs::path& exe) {
 }
 
 unsigned close_all_obs(unsigned timeout_ms) {
+    log_info("Closing every OBS session: timeout_ms={}", timeout_ms);
     std::vector<DWORD> ids;
     {
         Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
@@ -530,6 +533,7 @@ std::string foreground_app() {
 }
 
 void open_path(const fs::path& path,bool reveal) {
+    log_info("Opening in Windows: path={} reveal={} headless={}", quoted_value(path_string(path)), reveal, headless_mode());
     if(!fs::exists(path)) throw std::runtime_error("This file or folder is no longer available: "+path_string(path));
     if(reveal) {
         auto shell_path=path;
@@ -559,6 +563,7 @@ void open_help(const std::string& topic) {
     if(reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",url,nullptr,nullptr,SW_SHOWNORMAL))<=32) throw failure("Could not open the help page");
 }
 void set_login_startup(const Paths& p,bool enabled) {
+    log_info("Start at Windows login: enabled={}", enabled);
     HKEY key=nullptr;
     auto result=RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr);
     if(result!=ERROR_SUCCESS) throw std::runtime_error("Windows could not update login startup.");

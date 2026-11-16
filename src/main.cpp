@@ -4,6 +4,8 @@
 #include "audio_sessions.hpp"
 #include "installer.hpp"
 #include "tray_menu.hpp"
+#include "log.hpp"
+#include "resources.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -115,6 +117,55 @@ std::string pick_path(HWND owner, const std::string& current, bool folder) {
     return result;
 }
 
+// What the app and OBS are using, with OBS's own figures and the clips drive, for the Debug tab and exported logs.
+Json usage(replay::Controller& controller) {
+    std::string clips;
+    try { clips=Json::parse(controller.snapshot()).at("settings").value("clips_dir",std::string{}); } catch (...) {}
+    auto result=replay::resource_usage(replay::from_string(clips));
+    result["obs_stats"]=controller.obs_stats();
+    return result;
+}
+
+// Saves this session's log as a text file the user picks, with a closing summary of the app's state. Empty when cancelled.
+std::string export_log(HWND owner,replay::Controller& controller) {
+    std::string text=replay::log_text();
+    text+="\r\n======== State when exported ========\r\n";
+    try {
+        auto state=Json::parse(controller.snapshot());
+        if (state.contains("clips")) state["clips"]=std::to_string(state["clips"].size())+" listed";
+        text+=state.dump(2)+"\r\n";
+    } catch (...) {}
+    text+="\r\n======== Resource use when exported ========\r\n";
+    try { usage(controller);Sleep(300);text+=usage(controller).dump(2)+"\r\n"; } catch (...) {}
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t name[64]{};
+    swprintf_s(name,L"OBSReplay-log-%04d%02d%02d-%02d%02d%02d.txt",now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond);
+    replay::fs::path target;
+    if (replay::headless_mode()) target=replay::log_folder()/name;  // checks never open a dialog
+    else {
+        ComPtr<IFileSaveDialog> dialog;
+        if (FAILED(CoCreateInstance(CLSID_FileSaveDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog)))) throw std::runtime_error("Windows could not open the save dialog.");
+        const COMDLG_FILTERSPEC filters[]={{L"Text file",L"*.txt"}};
+        dialog->SetFileTypes(1,filters);
+        dialog->SetDefaultExtension(L"txt");
+        dialog->SetFileName(name);
+        dialog->SetTitle(L"Export OBSReplay log");
+        dialog->SetOptions(FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_OVERWRITEPROMPT|FOS_NOCHANGEDIR);
+        const HRESULT shown=dialog->Show(owner);
+        if (shown==HRESULT_FROM_WIN32(ERROR_CANCELLED)) return {};
+        if (FAILED(shown)) throw std::runtime_error("Windows could not complete the save dialog.");
+        ComPtr<IShellItem> item;
+        PWSTR selected=nullptr;
+        if (FAILED(dialog->GetResult(&item)) || FAILED(item->GetDisplayName(SIGDN_FILESYSPATH,&selected))) throw std::runtime_error("Choose a folder on this PC for the log.");
+        target=selected;
+        CoTaskMemFree(selected);
+    }
+    replay::atomic_write(target,text);
+    replay::log_info("Log exported: file={} bytes={}",replay::quoted_value(replay::path_string(target)),text.size());
+    return replay::path_string(target);
+}
+
 struct Desktop {
     saucer::application* app;
     std::shared_ptr<saucer::window> window;
@@ -164,11 +215,12 @@ struct Desktop {
             window->focus();
             SetForegroundWindow(hwnd);
         }
-        if (replay_entry) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:reopen'))");
+        if (replay_entry) { replay::log_info("Window shown");view->execute("window.dispatchEvent(new CustomEvent('obsreplay:reopen'))"); }
     }
     void hide() {
         reveal_requested=false;
         record_hotkey(false);
+        replay::log_info("Window hidden: to={}",tray_ready ? "tray" : "taskbar");
         if (!tray_ready) { window->set_minimized(true); return; }
         // The page first holds its content ready for the opening animation; the WebView is hidden and suspended a moment
         // later, so the frame it shows again on reopen is that held state and not the old page.
@@ -188,6 +240,7 @@ struct Desktop {
     void ready() {
         if (first_frame_ready) return;
         first_frame_ready=true;
+        replay::log_info("Interface ready: shown={}",reveal_requested);
         KillTimer(hwnd,reveal_timer_id);
         if (reveal_requested) show(false);
         else hide();
@@ -202,14 +255,16 @@ struct Desktop {
         tray.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
         wcscpy_s(tray.szTip, L"OBSReplay — capture controls");
         tray_ready = Shell_NotifyIconW(NIM_ADD, &tray) != FALSE;
+        replay::log_info("Tray icon: added={}",tray_ready);
         if (tray_ready) { tray.uVersion = NOTIFYICON_VERSION_4; tray_v4 = Shell_NotifyIconW(NIM_SETVERSION, &tray) != FALSE; }
     }
     void command(const std::string& action) {
         const auto result = controller->dispatch(action);
-        if (!result) notify(result.error());
+        if (!result) { replay::log_warn("Command refused: action={} error={}",action,replay::quoted_value(result.error()));notify(result.error()); }
     }
     void notify(const std::string& message) {
         if (!tray_ready) return;
+        replay::log_info("Tray notification: {}",replay::quoted_value(message));
         const auto text = replay::wide(message);
         tray.uFlags = NIF_INFO;
         wcsncpy_s(tray.szInfoTitle, L"OBSReplay", _TRUNCATE);
@@ -226,7 +281,7 @@ struct Desktop {
             if (had) { UnregisterHotKey(hwnd,save_id); UnregisterHotKey(hwnd,show_id); }
             const bool first = RegisterHotKey(hwnd,save_id,next_save.modifiers | MOD_NOREPEAT,next_save.key) != FALSE;
             const bool second = first && RegisterHotKey(hwnd,show_id,next_show.modifiers | MOD_NOREPEAT,next_show.key) != FALSE;
-            if (first && second) { save_binding=next_save;show_binding=next_show;registered=true;hotkey_error.clear();return true; }
+            if (first && second) { save_binding=next_save;show_binding=next_show;registered=true;hotkey_error.clear();replay::log_info("Shortcuts registered: save={} show={}",save,show_key);return true; }
             UnregisterHotKey(hwnd,save_id); UnregisterHotKey(hwnd,show_id);
             registered=false;
             if (had) {
@@ -236,6 +291,7 @@ struct Desktop {
                 if (!registered) { UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id); }
             }
             const auto shortcut=first ? "Show shortcut ("+show_key+")" : "Save shortcut ("+save+")";
+            replay::log_warn("Shortcut not registered: {} is in use; previous_restored={}",shortcut,registered);
             return std::unexpected(shortcut+" is already used by Windows or another app. Choose another combination.");
         } catch (const std::exception& e) { return std::unexpected(e.what()); }
     }
@@ -334,6 +390,7 @@ struct Desktop {
         const bool active=state.value("replay_active",false);
         const auto model=tray_model(state);
         const int selected=replay::show_tray_menu(hwnd,model);
+        replay::log_info("Tray menu: choice={}",selected==menu_show ? "open" : selected==menu_save ? "save" : selected==menu_toggle ? (active ? "stop" : "start") : selected==menu_quit ? "close" : selected==menu_quit_all ? "close_with_obs" : "none");
         if (selected==menu_show) show();
         else if (selected==menu_save) command("save");
         else if (selected==menu_toggle) command(active ? "stop" : "start");
@@ -352,7 +409,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
     auto& desktop=*reinterpret_cast<Desktop*>(ref);
     try {
         if (message==show_message) { desktop.show();return 0; }
-        if (message==quit_message) { desktop.app->post([app=desktop.app] { app->quit(); });return 0; }
+        if (message==quit_message) { replay::log_info("Quit requested by the installer");desktop.app->post([app=desktop.app] { app->quit(); });return 0; }
         if (message==taskbar_message) { desktop.add_tray();return 0; }
         if (message==tray_message) {
             const UINT event=LOWORD(l);
@@ -362,7 +419,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
             return 0;
         }
         if (message==WM_HOTKEY) {
-            if (w==save_id) desktop.command("save");
+            if (w==save_id) { replay::log_info("Shortcut pressed: save");desktop.command("save"); }
             else if (w==show_id) { if (desktop.window->visible() && !desktop.window->minimized()) desktop.hide();else desktop.show(); }
             return 0;
         }
@@ -464,12 +521,35 @@ coco::stray start(saucer::application* app) {
         if (!replay::start_uninstall()) return std::unexpected("The uninstaller could not start. Use Installed apps in Windows Settings instead.");
         return true;
     });
-    view.expose("quit",[&] { app->post([app] { app->quit(); }); });
+    view.expose("quit",[&] { replay::log_info("Quit requested from the window");app->post([app] { app->quit(); }); });
+    view.expose("app_info",[] { auto info=replay::build_info();info["logs"]=replay::path_string(replay::log_folder());return info.dump(); });
+    view.expose("resources",[&] { return usage(controller).dump(); });
+    view.expose("log_tail",[](int lines) { return replay::log_tail(static_cast<std::size_t>(std::clamp(lines,1,600))); });
+    view.expose("export_log",[&]() -> std::expected<std::string,std::string> {
+        try { return export_log(desktop.hwnd,controller); } catch (const std::exception& e) { replay::log_error("Log export failed: error={}",replay::quoted_value(e.what()));return std::unexpected(e.what()); }
+    });
+    view.expose("open_logs",[]() -> std::expected<bool,std::string> {
+        try { replay::open_path(replay::log_folder());return true; } catch (const std::exception& e) { return std::unexpected(e.what()); }
+    });
+    // Lines from the page: navigation and script errors.
+    view.expose("ui_log",[](std::string level,std::string text) {
+        if (text.size()>2000) text.resize(2000);
+        replay::log_write(level=="error" ? replay::LogLevel::error : level=="warn" ? replay::LogLevel::warn : level=="debug" ? replay::LogLevel::debug : replay::LogLevel::info,"UI: "+text);
+    });
+    // "Play video" in an editor: bring this window forward and let the page open the clip in its viewer.
+    editors.on_play([&](const std::string& path) {
+        desktop.show();
+        // Through the plain webview call: the smartview one treats braces in the script as format fields.
+        const std::string script="window.dispatchEvent(new CustomEvent('obsreplay:play',{detail:"+Json(path).dump()+"}))";
+        static_cast<saucer::webview&>(view).execute(script);
+    });
     view.embed(saucer::embedded::all());
     view.serve("/index.html");
     SetTimer(desktop.hwnd,reveal_timer_id,2000,nullptr);
     co_await app->finish();
+    replay::log_info("Window loop ended");
     } catch (const std::exception& e) {
+        replay::log_error("Startup failed: error={}",replay::quoted_value(e.what()));
         MessageBoxW(nullptr,replay::wide(e.what()).c_str(),L"OBSReplay",MB_OK|MB_ICONERROR);
         app->quit();
     }
@@ -497,8 +577,16 @@ int main(int argc,char** argv) {
     if (!instance) return 1;
     if (GetLastError()==ERROR_ALREADY_EXISTS) { EnumWindows(find_instance,0);CloseHandle(instance);return 0; }
     const HRESULT apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+    try { replay::log_start(replay::paths()); } catch (...) {}
+    // A crash still leaves its reason as the last line of the session log.
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* info) -> LONG {
+        replay::log_error("Crash: code=0x{:08X} address={}",static_cast<unsigned>(info->ExceptionRecord->ExceptionCode),info->ExceptionRecord->ExceptionAddress);
+        return EXCEPTION_CONTINUE_SEARCH;
+    });
+    std::set_terminate([] { replay::log_error("Crash: an unhandled C++ exception ended the app");std::abort(); });
     LPWSTR runtime=nullptr;
     const HRESULT available=GetAvailableCoreWebView2BrowserVersionString(nullptr,&runtime);
+    replay::log_info("WebView2 runtime: {} start_hidden={}",runtime ? replay::quoted_value(replay::utf8(runtime)) : std::string("missing"),start_hidden);
     if (runtime) CoTaskMemFree(runtime);
     int result=1;
     if (FAILED(available)) {
@@ -512,6 +600,7 @@ int main(int argc,char** argv) {
             else MessageBoxW(nullptr,L"The OBSReplay application could not start.",L"OBSReplay",MB_OK|MB_ICONERROR);
         } catch (const std::exception& e) { MessageBoxW(nullptr,replay::wide(e.what()).c_str(),L"OBSReplay",MB_OK|MB_ICONERROR); }
     }
+    replay::log_info("OBSReplay closed: exit_code={}",result);
     if (SUCCEEDED(apartment)) CoUninitialize();
     CloseHandle(instance);
     return result;

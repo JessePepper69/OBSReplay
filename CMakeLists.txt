@@ -18,7 +18,7 @@ FetchContent_Declare(saucer GIT_REPOSITORY https://github.com/saucer/saucer GIT_
 FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
 FetchContent_MakeAvailable(saucer nlohmann_json)
 
-set(notices "OBSReplay 0.1.0\n\nThird-party software notices\n\n")
+set(notices "OBSReplay ${PROJECT_VERSION}\n\nThird-party software notices\n\n")
 file(GLOB dependency_dirs LIST_DIRECTORIES true "${FETCHCONTENT_BASE_DIR}/*-src")
 foreach(dependency_dir IN LISTS dependency_dirs)
   get_filename_component(dependency_name "${dependency_dir}" NAME)
@@ -45,13 +45,21 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "${notices}")
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" NOTICES_PATH)
 configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 
+# The version (above, in project()) and the Git commit go into every build: build_info.hpp, refreshed on each build.
+set(BUILD_INFO "${CMAKE_CURRENT_BINARY_DIR}/generated/build_info.hpp")
+set(build_info_args "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${BUILD_INFO}" "-DVERSION=${PROJECT_VERSION}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_info.cmake")
+execute_process(COMMAND "${CMAKE_COMMAND}" ${build_info_args})
+add_custom_target(build_info ALL COMMAND "${CMAKE_COMMAND}" ${build_info_args} BYPRODUCTS "${BUILD_INFO}" VERBATIM)
+
 add_executable(OBSReplay WIN32
-  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp src/installer.cpp src/tray_menu.cpp
+  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp src/installer.cpp src/tray_menu.cpp src/log.cpp src/resources.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
+add_dependencies(OBSReplay build_info)
+target_include_directories(OBSReplay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(OBSReplay PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(OBSReplay PRIVATE /W4 /utf-8 /permissive- /EHsc)
 target_link_libraries(OBSReplay PRIVATE saucer::saucer saucer::private saucer::embedded nlohmann_json::nlohmann_json
-  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi dwmapi gdiplus)
+  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi dwmapi gdiplus pdh psapi)
 saucer_embed("frontend" TARGET OBSReplay DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/embedded")
 set_target_properties(OBSReplay PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 target_link_options(OBSReplay PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO /OPT:REF /OPT:ICF)

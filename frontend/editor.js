@@ -998,7 +998,7 @@
     if (state.exportStatus === "running" && job.status && job.status !== "running") {
       if (job.status === "done") {
         state.exportStatus = "done"; state.lastExport = job; state.exportedSignature = state.exportSignature;
-        announce(`Exported ${job.name}. File Explorer opened with the video selected.`);
+        announce(`Exported ${job.name}. Saved in Edited Exports.`);
       } else if (job.status === "failed") { state.exportStatus = "failed"; state.lastExport = job; announce("Export failed"); }
       else { state.exportStatus = "idle"; flash("Export canceled. No file was saved."); }
     }
@@ -1008,6 +1008,8 @@
     clearTimeout(pollTimer);
     try {
       const native = JSON.parse(await nativeCall("editor_state"));
+      // The app's saved theme, also when it changes while this editor is open.
+      if (native.theme && Theme.known(native.theme) && Theme.get() !== native.theme) Theme.set(native.theme);
       if (native.revision !== state.revision || !state.clip) { state.revision = native.revision; applyNative(native); }
       else if (state.native) { state.native.ffmpeg = native.ffmpeg; renderExport(); }
     } catch (error) {
@@ -1104,8 +1106,8 @@
   }
 
   // ---------- Commands ----------
-  $("play").addEventListener("click", togglePlay);
-  $("play").addEventListener("dblclick", playFromStart);
+  // Shift+click plays from the start. A double click is left alone: quick play/pause taps must not jump back.
+  $("play").addEventListener("click", event => { if (event.shiftKey) playFromStart(); else togglePlay(); });
   for (const [id, direction] of [["frame-back", -1], ["frame-forward", 1]]) {
     const button = $(id);
     let delayTimer = 0, repeatTimer = 0;
@@ -1162,7 +1164,7 @@
   $("export").addEventListener("click", startExport);
   $("cancel-export").addEventListener("click", () => nativeCall("cancel_export").catch(() => {}));
   $("result-reveal").addEventListener("click", () => nativeCall("reveal_output", true).catch(error => flash(errorText(error))));
-  $("result-open").addEventListener("click", () => nativeCall("reveal_output", false).catch(error => flash(errorText(error))));
+  $("result-open").addEventListener("click", () => nativeCall("play_output").catch(error => flash(errorText(error))));
   $("result-dismiss").addEventListener("click", () => { state.exportStatus = "idle"; renderControls(); });
   $("ffmpeg-locate").addEventListener("click", async () => {
     try { if (await nativeCall("pick_ffmpeg")) schedulePoll(100); } catch (error) { flash(errorText(error)); }
