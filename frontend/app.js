@@ -21,6 +21,21 @@
   let dialogClosing = false;
   let category = "capture";
   let debugTimer = 0, debugTicks = 0, debugInfo = null;
+  // Low space on the clips drive. Dismissing the warning hides it until a new replay has been saved and the window is
+  // opened again: "the newest replay when the window last opened" is compared with the one at the time of dismissal.
+  const diskKey = "obsreplay.diskDismissed";
+  let diskSeenClip = null, diskResample = true;
+  const newestReplay = () => (state.snapshot?.clips || []).find(clip => !clip.edited)?.path || "";
+  function renderDiskNotice() {
+    const disk = state.snapshot?.disk;
+    const low = Boolean(disk && disk.total > 0 && disk.percent <= 5);
+    let dismissed = null;
+    try { dismissed = localStorage.getItem(diskKey); } catch {}
+    $("disk-notice").hidden = !low || (dismissed !== null && dismissed === diskSeenClip);
+    if (!low) return;
+    const percent = disk.percent < 1 ? disk.percent.toFixed(1) : String(Math.floor(disk.percent));
+    $("disk-text").textContent = `Drive ${disk.drive} has ${percent}% free (${(disk.free / 1024 ** 3).toFixed(1)} GB). Free up space so new replays can save.`;
+  }
   // Lines for the session log from this page: navigation and script errors.
   const uiLog = (level, text) => { try { Promise.resolve(window.saucer?.exposed?.ui_log?.(level, String(text))).catch(() => {}); } catch {} };
   window.addEventListener("error", event => uiLog("error", `Script error: ${event.message} at ${String(event.filename || "").split("/").pop()}:${event.lineno}`));
@@ -485,6 +500,7 @@
     scheduleFade();
   }
   function renderCapture() {
+    renderDiskNotice();
     const snapshot = state.snapshot || {};
     const value = settings();
     const active = Boolean(snapshot.replay_active && snapshot.connected && snapshot.owned);
@@ -945,6 +961,7 @@
       const previousObs = state.snapshot?.settings?.obs_path;
       const lackedObs = state.snapshot ? !state.snapshot.obs_supported : false;
       state.snapshot = snapshot;
+      if (diskResample) { diskResample = false; diskSeenClip = newestReplay(); }
       if (state.loaded && previousObs !== snapshot.settings.obs_path) $("obs_path").value = snapshot.settings.obs_path || "";
       syncMotion();
       renderOptions();
@@ -1535,6 +1552,12 @@
   function scheduleDebug() { clearTimeout(debugTimer); debugTimer = setTimeout(debugTick, 0); }
 
   arrangeSettings();
+  $("disk-storage").addEventListener("click", () => dispatch("help", { topic: "storage" }));
+  $("disk-dismiss").addEventListener("click", () => {
+    diskSeenClip = newestReplay();
+    try { localStorage.setItem(diskKey, diskSeenClip); } catch {}
+    renderDiskNotice();
+  });
   $("debug-copy").addEventListener("click", async () => {
     if (!debugInfo) return;
     try { await navigator.clipboard.writeText(`OBSReplay ${debugInfo.full} (commit ${debugInfo.commit}, built ${debugInfo.built})`); $("debug-copy").textContent = "Copied"; setTimeout(() => { $("debug-copy").textContent = "Copy"; }, 1600); }
@@ -1759,6 +1782,7 @@
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
+      diskResample = true;
       scheduleDebug();
       // Work that can wait does, so the opening cascade has the first frames to itself.
       schedulePoll(heldForReopen ? 420 : 0); scheduleFade();
@@ -1792,6 +1816,7 @@
     renderClipLists();
     watchReplay(clip);
   });
+  window.addEventListener("obsreplay:reopen", () => { diskResample = true; });
   window.addEventListener("obsreplay:reopen", () => {
     if (!presented || !heldForReopen) { schedulePoll(0); cancelEntrance(); return; }
     requestAnimationFrame(() => requestAnimationFrame(() => { if (heldForReopen) playEntrance($(state.tab + "-view"), true); }));

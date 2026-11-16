@@ -346,6 +346,7 @@ No rounded primary pills.
 
 - No separate page title.
 - Opens with the hero card.
+- Above the hero, only when the clips drive has 5% or less free: an amber notice. Title **Clips drive is almost full**. Text: "Drive C: has 4% free (20.9 GB). Free up space so new replays can save." Buttons **Open storage settings** (Windows Settings, System, Storage) and **Dismiss**. Dismiss hides it until a new replay is saved and the window opens again. It leaves on its own once space is freed.
 - Under the hero: underline tabs **Latest replays** and **Latest edits**, with **View all** at the right end. Each shows 8 clips, so the tabs carry no totals. The Clips page tabs do.
 - Under the tabs: a grid of up to eight clip cards.
 

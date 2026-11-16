@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cwctype>
 #include <deque>
@@ -62,7 +63,7 @@ struct Controller::Impl {
     std::thread worker;
     std::atomic<bool> stopping{};
     std::optional<Save> pending_save;
-    Clock::time_point next_connect{}, next_refresh{}, next_detect{};
+    Clock::time_point next_connect{}, next_refresh{}, next_detect{}, next_disk{};
     unsigned failures{};
     bool refresh_needed{};
     Json stats;                                 // guarded by mutex
@@ -104,7 +105,7 @@ struct Controller::Impl {
         state = {{"settings", Json::object()}, {"options", {{"monitors", Json::array()}, {"audio_inputs", Json::array()}, {"audio_outputs", Json::array()}, {"encoders", Json::array()}}},
             {"integration", false}, {"obs_found", false}, {"obs_version", ""}, {"obs_supported", false}, {"winget", false},
             {"install_stage", ""}, {"setup_stage", ""}, {"obs_running", false}, {"connected", false}, {"owned", false}, {"replay_active", false}, {"capture_ready", false}, {"capture_issue", ""},
-            {"busy", true}, {"operation", "initializing"}, {"status", "initializing"}, {"message", "Checking your OBS setup…"}, {"error", ""}, {"revision", 0}, {"clips", Json::array()}};
+            {"busy", true}, {"operation", "initializing"}, {"status", "initializing"}, {"message", "Checking your OBS setup…"}, {"error", ""}, {"revision", 0}, {"clips", Json::array()}, {"disk", nullptr}};
         worker = std::thread([this] { run(); });
     }
     ~Impl() {
@@ -235,6 +236,27 @@ struct Controller::Impl {
         } catch (...) { probe.close(); return false; }
     }
 
+    // Free space on the drive that holds the clips folder, for the low-space warning on the Capture page.
+    // Free bytes are rounded down to 100 MB, so ordinary disk activity does not count as a change of state.
+    void update_disk() {
+        next_disk = Clock::now() + std::chrono::seconds(30);
+        Json disk;
+        try {
+            const auto root = from_string(settings().value("clips_dir", "")).root_path();
+            ULARGE_INTEGER free{}, total{};
+            if (!root.empty() && GetDiskFreeSpaceExW(root.c_str(), &free, &total, nullptr) && total.QuadPart) {
+                const uint64_t step = 100ull * 1024 * 1024, rounded = free.QuadPart / step * step;
+                auto name = path_string(root);
+                while (!name.empty() && (name.back() == '\\' || name.back() == '/')) name.pop_back();
+                disk = {{"drive", name}, {"free", rounded}, {"total", total.QuadPart}, {"percent", std::floor(1000.0 * static_cast<double>(rounded) / static_cast<double>(total.QuadPart)) / 10.0}};
+            }
+        } catch (...) {}
+        const bool was_low = [&] { std::lock_guard lock(mutex); return state["disk"].is_object() && state["disk"].value("percent", 100.0) <= 5.0; }();
+        const bool low = disk.is_object() && disk.value("percent", 100.0) <= 5.0;
+        if (low != was_low) log_warn("Clips drive low on space: low={} drive={} free_mb={} percent={}", low, quoted_value(disk.value("drive", std::string{})), disk.value("free", uint64_t{}) / (1024 * 1024), disk.value("percent", 0.0));
+        update([&](Json& s) { s["disk"] = disk; });
+    }
+
     void reconcile_clips() {
         Json clips;
         { std::lock_guard lock(mutex); clips = state.at("clips"); }
@@ -337,6 +359,7 @@ struct Controller::Impl {
         } catch (...) { fail("Recent clip history could not be read. Your recordings are still in the clips folder."); }
         reconcile_clips();
         discover_clips();
+        update_disk();
         try { const auto options = integration.options(value); update([&](Json& s) { s["options"] = options; }); }
         catch (const std::exception& e) { fail(e.what()); }
         if (stopping.load()) return;
@@ -586,6 +609,7 @@ struct Controller::Impl {
         try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
         catch (...) { warning += " The recent-clips list could not be persisted; the video is saved."; }
         if (sound) save_feedback();
+        update_disk();
         log_info("Replay saved: file={} bytes={} app={} sorted={}", quoted_value(text), bytes, quoted_value(app), sort);
         message(warning.empty() ? "Saved " + path_string(final.filename()) : warning);
     }
@@ -727,7 +751,7 @@ struct Controller::Impl {
             catch (const std::exception& e) { throw std::runtime_error(std::string("Settings were saved, but OBS could not resume. Choose Start capture to retry. ") + e.what()); }
         }
         if (prepare) update([](Json& s) { s["error"] = ""; });
-        if (previous.value("clips_dir", "") != value.value("clips_dir", "")) discover_clips();
+        if (previous.value("clips_dir", "") != value.value("clips_dir", "")) { discover_clips(); update_disk(); }
         message(restart ? resume ? "Settings applied. Replay capture resumed." : "Settings applied. OBS is ready." : prepare ? "OBS is configured. Start capture when you're ready." : "Settings saved.");
         next_connect = Clock::now();
         if (setup && payload.value("start", false) && !flag("replay_active")) {
@@ -903,6 +927,7 @@ struct Controller::Impl {
                 events();
                 if (Clock::now() >= next_poll) {
                     reconcile_clips();
+                    if (Clock::now() >= next_disk) update_disk();
                     if (Clock::now() >= next_detect) { detect_obs(); next_detect = Clock::now() + std::chrono::seconds(3); }
                     background_connection();
                     next_poll = Clock::now() + std::chrono::seconds(1);

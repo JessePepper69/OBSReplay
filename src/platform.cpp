@@ -558,7 +558,8 @@ void open_help(const std::string& topic) {
         return;
     }
     const wchar_t* url=topic=="webview2"?L"https://developer.microsoft.com/microsoft-edge/webview2/":
-        topic=="obs"?L"https://obsproject.com/download":topic=="ffmpeg"?L"https://ffmpeg.org/download.html":topic=="capture"?L"https://obsproject.com/kb/game-capture-guide":nullptr;
+        topic=="obs"?L"https://obsproject.com/download":topic=="ffmpeg"?L"https://ffmpeg.org/download.html":topic=="capture"?L"https://obsproject.com/kb/game-capture-guide":
+        topic=="storage"?L"ms-settings:storagesense":nullptr;  // Windows Settings, System, Storage
     if(!url) throw std::runtime_error("Unknown help topic.");
     if(reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",url,nullptr,nullptr,SW_SHOWNORMAL))<=32) throw failure("Could not open the help page");
 }

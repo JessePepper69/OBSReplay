@@ -734,6 +734,8 @@ An editor window gets the saved theme from the native side twice. A script injec
 | Clips drive | Free space on the drive of the clips folder. |
 | While in tray | Memory and process count of OBSReplay, read 90 seconds after the window hides and kept in `tray-usage.json`. A suspended page releases its memory over 30 to 45 seconds, so an earlier reading is several times too high. Before the first reading: 20 MB and the current process count. |
 
+The controller state also carries `disk`: `{drive, free, total, percent}` for the clips drive, refreshed every 30 seconds and after each save. Free bytes are rounded down to 100 MB so normal disk activity does not bump the state revision. The Capture page warns at 5% or less.
+
 The **Debug** tab in Settings polls `resources` every second and `log_tail` every 2 seconds, only while the tab is open and the window is visible.
 
 ## Build and embedding
