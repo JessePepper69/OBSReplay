@@ -61,6 +61,8 @@ kbd { font:inherit;font-size:11px;color:var(--muted); }
 /* Window chrome */
 .app { height:100dvh;display:flex;flex-direction:column;min-height:0; }
 .app-header { height:38px;min-height:38px;display:flex;align-items:center;gap:18px;border-bottom:1px solid color-mix(in srgb,var(--line-strong) 40%,transparent);background:var(--page);user-select:none; }
+.app-version { margin-left:-2px;font-size:11px;font-weight:500;letter-spacing:0;color:var(--dim);font-variant-numeric:tabular-nums; }
+.app-version:empty { display:none; }
 .wordmark { display:flex;align-items:center;gap:9px;padding-left:17px;font-size:13px;font-weight:700;letter-spacing:-.01em;white-space:nowrap; }
 /* The logo takes its colours from the theme accent, so it matches every theme. The exe and taskbar icon stay blue. */
 .mark { display:grid;place-items:center;width:22px;height:22px; }
@@ -341,6 +343,7 @@ summary:focus-visible { outline-offset:-3px; }
 .usage-table { width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums; }
 .usage-table th,.usage-table td { width:22%;padding:9px 0 9px 12px;border-top:1px solid var(--line);text-align:right;font-size:14px;white-space:nowrap; }
 .usage-table td { font-weight:650; }
+.usage-note { margin-right:10px;font-size:13px;font-weight:400;color:var(--dim); }
 .usage-table thead th { padding-top:0;border-top:0;font-size:12px;font-weight:600;color:var(--dim); }
 .usage-table th:first-child { width:34%;padding-left:0;text-align:left;font-weight:500;color:var(--muted); }
 .usage-cells { grid-template-columns:repeat(5,minmax(0,1fr));margin-top:14px; }

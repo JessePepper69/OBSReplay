@@ -711,7 +711,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 
 ### Log file
 
-- `log_start` opens `<data>\logs\session-<date>-<time>-<pid>.log` after the single-instance check. The 10 newest files stay.
+- `log_start` opens `<data>\logs\session-<date>-<time>-<pid>.log` after the single-instance check. The 3 newest files stay, this run included. **Export log** saves this run's log.
 - Each line: local time, level (`DEBUG`, `INFO`, `WARN`, `ERROR`), message, then `key=value` pairs. Text values are quoted.
 - The app writes each line to disk at once. A crash leaves its exception code as the last line.
 - Header: version, commit, build time, executable, data folder, Windows build, CPU, memory, graphics adapters, displays, WebView2 runtime.
@@ -731,6 +731,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 | GPU memory | Performance counter `GPU Process Memory`, dedicated. |
 | OBS frame rate, render time, missed and skipped frames | `GetStats` from OBS. The controller asks only while a page polled `resources` in the last 5 seconds. |
 | Clips drive | Free space on the drive of the clips folder. |
+| While in tray | Memory and process count of OBSReplay, read 20 seconds after the window hides and kept in `tray-usage.json`. Before the first reading: 15 MB and the current process count. |
 
 The **Debug** tab in Settings polls `resources` every second and `log_tail` every 2 seconds, only while the tab is open and the window is visible.
 

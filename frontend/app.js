@@ -127,7 +127,7 @@
     groups.capture.append(startup);
     const explanation = $("apply-explanation");
     explanation.textContent = "Capture and audio changes restart OBS. The replay buffer starts again from empty.";
-    groups.debug.innerHTML = "<div class=\"debug-usage entrance-item\" id=\"debug-usage\"><div class=\"debug-usage-head\"><strong>Resource use</strong><span id=\"debug-system\">Measuring…</span></div><table class=\"usage-table\"><thead><tr><th scope=\"col\"><span class=\"sr-only\">Measure</span></th><th scope=\"col\">OBSReplay</th><th scope=\"col\">OBS Studio</th><th scope=\"col\">Both</th></tr></thead><tbody><tr data-usage=\"cpu\"><th scope=\"row\">CPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"memory\"><th scope=\"row\">Memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu\"><th scope=\"row\">GPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_encode\"><th scope=\"row\">GPU video encoder</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_memory\"><th scope=\"row\">GPU memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"processes\"><th scope=\"row\">Processes</th><td>—</td><td>—</td><td>—</td></tr></tbody></table><div class=\"hero-cells usage-cells\"><div><span>OBS frame rate</span><strong id=\"debug-fps\">—</strong></div><div><span>Frame render time</span><strong id=\"debug-render\">—</strong></div><div><span>Missed frames</span><strong id=\"debug-missed\">—</strong></div><div><span>Skipped frames</span><strong id=\"debug-skipped\">—</strong></div><div><span id=\"debug-disk-label\">Clips drive</span><strong id=\"debug-disk\">—</strong></div></div></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Version</strong><small id=\"debug-version\">—</small></div><button type=\"button\" id=\"debug-copy\">Copy</button></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Session log</strong><small id=\"debug-export-status\">Everything OBSReplay did since it opened. Export it and attach the file when you report a problem.</small></div><div class=\"inline-actions\"><button type=\"button\" id=\"debug-open-logs\">Open logs folder</button><button type=\"button\" id=\"debug-export\">Export log…</button></div></div><div class=\"debug-log-row entrance-item\"><strong id=\"debug-log-title\">Latest log lines</strong><pre class=\"debug-log\" id=\"debug-log\" tabindex=\"0\" aria-labelledby=\"debug-log-title\"></pre></div>";
+    groups.debug.innerHTML = "<div class=\"debug-usage entrance-item\" id=\"debug-usage\"><div class=\"debug-usage-head\"><strong>Resource use</strong></div><table class=\"usage-table\"><thead><tr><th scope=\"col\"><span class=\"sr-only\">Measure</span></th><th scope=\"col\">OBSReplay</th><th scope=\"col\">OBS Studio</th><th scope=\"col\">Both</th></tr></thead><tbody><tr data-usage=\"cpu\"><th scope=\"row\">CPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"memory\"><th scope=\"row\">Memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu\"><th scope=\"row\">GPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_encode\"><th scope=\"row\">GPU video encoder</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_memory\"><th scope=\"row\">GPU memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"processes\"><th scope=\"row\">Processes</th><td>—</td><td>—</td><td>—</td></tr></tbody></table><div class=\"hero-cells usage-cells\"><div><span>OBS frame rate</span><strong id=\"debug-fps\">—</strong></div><div><span>Frame render time</span><strong id=\"debug-render\">—</strong></div><div><span>Missed frames</span><strong id=\"debug-missed\">—</strong></div><div><span>Skipped frames</span><strong id=\"debug-skipped\">—</strong></div><div><span id=\"debug-disk-label\">Clips drive</span><strong id=\"debug-disk\">—</strong></div></div></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Version</strong><small id=\"debug-version\">—</small></div><button type=\"button\" id=\"debug-copy\">Copy</button></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Session log</strong><small id=\"debug-export-status\">Everything OBSReplay did since it opened. Export it and attach the file when you report a problem.</small></div><div class=\"inline-actions\"><button type=\"button\" id=\"debug-open-logs\">Open logs folder</button><button type=\"button\" id=\"debug-export\">Export log…</button></div></div><div class=\"debug-log-row entrance-item\"><strong id=\"debug-log-title\">Latest log lines</strong><pre class=\"debug-log\" id=\"debug-log\" tabindex=\"0\" aria-labelledby=\"debug-log-title\"></pre></div>";
     form.replaceChildren(groups.capture, groups.audio, groups.app, groups.debug, explanation);
     for (const row of form.querySelectorAll(".check-row")) {
       const input = row.querySelector("input");
@@ -931,6 +931,7 @@
         schedulePoll(snapshot.busy ? 500 : 1000);
         return;
       }
+      if (!state.native && typeof api().app_info === "function") Promise.resolve(api().app_info()).then(value => { const info = unpack(value); $("app-version").textContent = `v${info.version}`; $("app-version").title = `OBSReplay ${info.full}`; }).catch(() => {});
       if (!state.native && typeof api().installed === "function") api().installed().then(value => { $("uninstall-row").hidden = !value; }).catch(() => {});
       state.native = true;
       const previousObs = state.snapshot?.settings?.obs_path;
@@ -1483,11 +1484,16 @@
       const cells = $("debug-usage").querySelectorAll(`[data-usage="${key}"] td`);
       const both = app[key] == null && (!running || obs[key] == null) ? null : (app[key] || 0) + (running ? obs[key] || 0 : 0);
       cells[0].textContent = format(app[key]);
+      // Memory and processes also say what the app holds once its window is hidden to the tray.
+      if (usage.tray && (key === "memory" || key === "processes") && usage.tray[key] != null) {
+        const note = document.createElement("small");
+        note.className = "usage-note";
+        note.textContent = `(${format(usage.tray[key])} while in tray)`;
+        cells[0].prepend(note);
+      }
       cells[1].textContent = running ? format(obs[key]) : key === "cpu" ? "Not running" : "—";
       cells[2].textContent = format(both);
     }
-    const system = usage.system || {};
-    $("debug-system").textContent = `Whole PC: CPU ${percent(system.cpu)} · memory ${megabytes(system.memory_used)} of ${megabytes(system.memory_total)}`;
     const stats = usage.obs_stats, number = value => Number.isFinite(Number(value)) ? Number(value) : 0;
     const share = (part, total) => `${number(part)}${number(total) ? ` (${(100 * number(part) / number(total)).toFixed(2)}%)` : ""}`;
     $("debug-fps").textContent = stats ? `${number(stats.activeFps).toFixed(1)} fps` : "—";

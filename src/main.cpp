@@ -34,6 +34,7 @@ constexpr UINT save_id = 201, show_id = 202;
 constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
+constexpr UINT tray_sample_timer_id = 304;
 constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404, menu_quit_all = 405;
 constexpr auto& instance_property = replay::app_window_property;
 // Value of that property: 1 for the normal instance, a hash of OBSREPLAY_DATA_DIR for an isolated one,
@@ -117,12 +118,29 @@ std::string pick_path(HWND owner, const std::string& current, bool folder) {
     return result;
 }
 
+// What OBSReplay uses while it sits in the tray: {memory, processes}, measured the last time the window was hidden
+// (this run or an earlier one, kept in tray-usage.json). Null until it has been measured once.
+Json tray_usage;
+void load_tray_usage() {
+    try { const auto saved=Json::parse(replay::read_text(replay::paths().data/L"tray-usage.json")); if (saved.is_object() && saved.contains("memory") && saved.contains("processes")) tray_usage=saved; } catch (...) {}
+}
+void measure_tray_usage() {
+    try {
+        const auto app=replay::resource_usage({}).at("app");
+        tray_usage={{"memory",app.at("memory")},{"processes",app.at("processes")}};
+        replay::log_info("In tray: memory_mb={} processes={}",app.at("memory").get<uint64_t>()/(1024*1024),app.at("processes").get<unsigned>());
+        replay::atomic_write(replay::paths().data/L"tray-usage.json",tray_usage.dump());
+    } catch (...) {}
+}
+
 // What the app and OBS are using, with OBS's own figures and the clips drive, for the Debug tab and exported logs.
 Json usage(replay::Controller& controller) {
     std::string clips;
     try { clips=Json::parse(controller.snapshot()).at("settings").value("clips_dir",std::string{}); } catch (...) {}
     auto result=replay::resource_usage(replay::from_string(clips));
     result["obs_stats"]=controller.obs_stats();
+    // Before the first measurement: the hidden window keeps its processes and holds about 15 MB (measured on a typical PC).
+    result["tray"]=tray_usage.is_object() ? tray_usage : Json{{"memory",15*1024*1024},{"processes",result["app"]["processes"]},{"estimated",true}};
     return result;
 }
 
@@ -194,6 +212,7 @@ struct Desktop {
         KillTimer(hwnd,timer_id);
         KillTimer(hwnd,reveal_timer_id);
         KillTimer(hwnd,suspend_timer_id);
+        KillTimer(hwnd,tray_sample_timer_id);
         UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);
         if (tray_ready) Shell_NotifyIconW(NIM_DELETE,&tray);
         RemovePropW(hwnd,instance_property);
@@ -204,6 +223,7 @@ struct Desktop {
         reveal_requested=true;
         if (!first_frame_ready) return;
         KillTimer(hwnd,suspend_timer_id);
+        KillTimer(hwnd,tray_sample_timer_id);
         auto native = view->native();
         ComPtr<ICoreWebView2_3> suspendable;
         if (SUCCEEDED(native.webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) suspendable->Resume();
@@ -236,6 +256,8 @@ struct Desktop {
         if (SUCCEEDED(view->native().webview->QueryInterface(IID_PPV_ARGS(&suspendable)))) {
             suspendable->TrySuspend(Microsoft::WRL::Callback<ICoreWebView2TrySuspendCompletedHandler>([](HRESULT,BOOL) { return S_OK; }).Get());
         }
+        // Once the suspended page has given its memory back, note what the app holds in the tray (shown on the Debug tab).
+        SetTimer(hwnd,tray_sample_timer_id,20000,nullptr);
     }
     void ready() {
         if (first_frame_ready) return;
@@ -426,6 +448,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
         if (message==WM_TIMER && w==timer_id) { desktop.reconcile();return 0; }
         if (message==WM_TIMER && w==reveal_timer_id) { desktop.ready();return 0; }
         if (message==WM_TIMER && w==suspend_timer_id) { desktop.suspend();return 0; }
+        if (message==WM_TIMER && w==tray_sample_timer_id) { KillTimer(hwnd,tray_sample_timer_id);if (!desktop.reveal_requested) measure_tray_usage();return 0; }
     } catch (...) {}
     return DefSubclassProc(hwnd,message,w,l);
 }
@@ -578,6 +601,7 @@ int main(int argc,char** argv) {
     if (GetLastError()==ERROR_ALREADY_EXISTS) { EnumWindows(find_instance,0);CloseHandle(instance);return 0; }
     const HRESULT apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     try { replay::log_start(replay::paths()); } catch (...) {}
+    load_tray_usage();
     // A crash still leaves its reason as the last line of the session log.
     SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* info) -> LONG {
         replay::log_error("Crash: code=0x{:08X} address={}",static_cast<unsigned>(info->ExceptionRecord->ExceptionCode),info->ExceptionRecord->ExceptionAddress);

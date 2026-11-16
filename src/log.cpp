@@ -13,7 +13,7 @@
 namespace replay {
 namespace {
 constexpr std::size_t kept_lines = 600;   // held in memory for the Debug tab
-constexpr std::size_t kept_sessions = 10; // log files kept on disk, this run included
+constexpr std::size_t kept_sessions = 3;  // log files kept on disk, this run included
 
 std::mutex log_mutex;
 HANDLE log_file = INVALID_HANDLE_VALUE;

@@ -79,7 +79,7 @@ To run it without installing, start it with `OBSReplay.exe --portable`.
 | Edited exports | An `Edited Exports` folder next to the original clip |
 | The app | `%LOCALAPPDATA%\Programs\OBSReplay` |
 | Settings, clip history, editor preferences | `%LOCALAPPDATA%\OBSReplay` |
-| Session logs (the last 10 runs) | `%LOCALAPPDATA%\OBSReplay\logs` |
+| Session logs (the last 3 runs) | `%LOCALAPPDATA%\OBSReplay\logs` |
 | OBS profile and scene collection | `%APPDATA%\obs-studio`, both named `OBSReplay` |
 
 ## What it changes on your PC
