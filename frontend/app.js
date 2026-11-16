@@ -2,9 +2,9 @@
 
 (() => {
   const $ = id => document.getElementById(id);
-  const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled"];
+  const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled", "theme"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true, theme: "original" };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -88,6 +88,22 @@
       groups.app.append(row);
     }
     groups.app.append($("hotkey-help"), $("hotkey-message"));
+    const themeRow = document.createElement("div");
+    themeRow.className = "setting-row theme-row entrance-item";
+    themeRow.innerHTML = '<div class="setting-copy"><strong id="theme-label">Theme</strong><small>Colours for every OBSReplay window.</small></div><input type="hidden" id="theme" name="theme" value="original"><div class="theme-picker" id="theme-picker" role="radiogroup" aria-labelledby="theme-label"></div>';
+    for (const theme of Theme.list) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.setAttribute("role", "radio");
+      option.dataset.themeId = theme.id;
+      const swatch = document.createElement("span");
+      swatch.className = "theme-swatch";
+      swatch.style.background = theme.swatch[0];
+      for (const colour of theme.swatch.slice(1)) { const part = document.createElement("i"); part.style.background = colour; swatch.append(part); }
+      option.append(swatch, theme.name);
+      themeRow.querySelector(".theme-picker").append(option);
+    }
+    groups.app.append(themeRow);
     const animationRow = document.createElement("label");
     animationRow.className = "check-row";
     animationRow.innerHTML = '<span><strong>Animations</strong><small>Page, panel and control transitions.</small></span><input type="checkbox" id="animations_enabled" name="animations_enabled" checked>';
@@ -293,7 +309,11 @@
         input.value = text;
       }
     }
+    if (!Theme.known($("theme").value)) $("theme").value = defaults.theme;
     state.dirty = false;
+    syncThemePicker();
+    // Real settings show their theme in this window; the placeholder defaults used before the first state do not.
+    if (state.snapshot) Theme.preview($("theme").value);
     showPathEnds();
     $("setup-start-at-login").checked = $("start_at_login").checked;
     updateCodecs();
@@ -301,6 +321,21 @@
   }
   function showPathEnds() {
     for (const id of ["obs_path", "clips_dir", "setup-folder"]) { const input = $(id); if (document.activeElement !== input) input.scrollLeft = input.scrollWidth; }
+  }
+  function syncThemePicker() {
+    const chosen = $("theme").value || defaults.theme;
+    for (const option of $("theme-picker").children) {
+      const selected = option.dataset.themeId === chosen;
+      option.setAttribute("aria-checked", String(selected));
+      option.tabIndex = selected ? 0 : -1;
+    }
+  }
+  function chooseTheme(id, focus = false) {
+    $("theme").value = id;
+    syncThemePicker();
+    Theme.preview(id);
+    if (focus) $("theme-picker").querySelector('[aria-checked="true"]')?.focus();
+    markDirty();
   }
   function formValue() {
     const value = { ...settings() };
@@ -847,6 +882,10 @@
         }
       }
       if (!state.initialRoute && !snapshot.busy) { state.initialRoute = true; if (!configured()) { setup.step = snapshot.obs_supported ? "capture" : "obs"; showTab("setup"); } }
+      // The saved theme is shared with every window; a choice still waiting for Apply stays a preview here.
+      // The saved theme is always recorded for the other windows, even if this form still has unapplied edits.
+      Theme.save(settings().theme);
+      if (!state.dirty && !state.pending) Theme.set(settings().theme);
       document.documentElement.dataset.loaded = "";
       renderCapture();
       renderClips();
@@ -1190,6 +1229,16 @@
     if (state.snapshot?.replay_active && !await confirmAction("Stop replay capture?", "The unsaved replay buffer will be discarded. Replays already saved stay in your clips folder.", "Stop capture", true)) return;
     dispatch(state.snapshot?.replay_active ? "stop" : "start");
   });
+  for (const option of $("theme-picker").children) {
+    option.addEventListener("click", () => chooseTheme(option.dataset.themeId));
+    option.addEventListener("keydown", event => {
+      const options = [...$("theme-picker").children], index = options.indexOf(option);
+      const next = event.key === "ArrowRight" || event.key === "ArrowDown" ? index + 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? index - 1 : event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault();
+      chooseTheme(options[(next + options.length) % options.length].dataset.themeId, true);
+    });
+  }
   $("settings-form").addEventListener("input", markDirty);
   $("settings-form").addEventListener("change", markDirty);
   $("encoder").addEventListener("change", () => updateCodecs(true));

@@ -18,7 +18,7 @@
 /* Stage: 16:9 when there is room, shorter when the window is; the video letterboxes inside it. */
 #replay-player .viewer-stage { position:relative;flex:1 1 auto;aspect-ratio:16/9;min-height:120px;overflow:hidden;background:#05080d;cursor:pointer; }
 #replay-player .viewer-stage video { position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent; }
-#replay-player .viewer-message { position:absolute;inset:auto 0 50%;translate:0 50%;max-width:52ch;margin:auto;padding:0 24px;text-align:center;color:var(--muted);font-size:13px;line-height:1.6;pointer-events:none; }
+#replay-player .viewer-message { position:absolute;inset:auto 0 50%;translate:0 50%;max-width:52ch;margin:auto;padding:0 24px;text-align:center;color:var(--ov-muted);font-size:13px;line-height:1.6;pointer-events:none; }
 #replay-player .viewer-message:empty { display:none; }
 #replay-player .viewer-stage:fullscreen { aspect-ratio:auto;width:100%;height:100%; }
 
@@ -30,8 +30,8 @@
 #replay-player .viewer-buttons { display:flex;align-items:center;gap:4px; }
 #replay-player .viewer-buttons .icon-only { width:36px;min-width:36px;height:36px; }
 #replay-player .viewer-buttons svg { width:18px;height:18px; }
-#replay-player .viewer-play { --r-control:10px;width:48px;min-width:48px;height:40px;margin-inline:4px;padding:0;color:#fff;background:var(--ui-accent);border-color:transparent;box-shadow:inset 0 1px 0 #ffffff2e; }
-#replay-player .viewer-play:hover:not(:disabled) { background:#1683e6;border-color:transparent; }
+#replay-player .viewer-play { --r-control:10px;width:48px;min-width:48px;height:40px;margin-inline:4px;padding:0;color:var(--on-accent);background:var(--ui-accent);border-color:transparent;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--on-accent) 18%,transparent); }
+#replay-player .viewer-play:hover:not(:disabled) { background:var(--accent-hover);border-color:transparent; }
 #replay-player .viewer-play svg { width:19px;height:19px; }
 #replay-player .viewer-play .icon-play { fill:currentColor;stroke-width:1.2; }
 #replay-player .viewer-play .icon-pause { display:none;stroke-width:2.4; }

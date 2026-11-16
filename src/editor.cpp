@@ -413,6 +413,57 @@ struct EditorHost::Impl {
     std::atomic<uint64_t> wave_run{0};
     std::map<uint64_t, std::thread> wave_workers;
     std::string wave_key, wave_json;  // last finished result (UI thread only)
+    // One-click FFmpeg install through winget, the same way guided setup installs OBS Studio.
+    std::mutex install_mutex;
+    std::string install_stage, install_error;  // stage: "", preparing, downloading, installing, verifying
+    std::thread installer;
+    std::atomic<bool> closing{false};
+    void set_install(std::string stage, std::string error = {}) { std::lock_guard lock(install_mutex); install_stage = std::move(stage); install_error = std::move(error); }
+    Json install_state() {
+        static const bool available = !winget_path().empty();
+        std::lock_guard lock(install_mutex);
+        return Json{{"stage", install_stage}, {"error", install_error}, {"available", available}};
+    }
+    std::expected<bool, std::string> install_ffmpeg() {
+        { std::lock_guard lock(install_mutex); if (!install_stage.empty()) return std::unexpected("FFmpeg is already being installed."); }
+        const auto winget = winget_path();
+        if (winget.empty()) return std::unexpected("Automatic install isn't available because Windows Package Manager (winget) is missing on this PC. Select Get FFmpeg instead.");
+        if (installer.joinable()) installer.join();
+        set_install("preparing");
+        installer = std::thread([this, winget] {
+            std::string tail;
+            int reached = 0;
+            const int code = run_process(winget, L"install --id Gyan.FFmpeg --exact --source winget --silent --accept-package-agreements --accept-source-agreements",
+                30 * 60 * 1000, [&](const std::string& chunk) {
+                    tail += chunk;
+                    if (tail.size() > 16384) tail.erase(0, tail.size() - 16384);
+                    if (reached < 1 && tail.find("Downloading") != std::string::npos) { reached = 1; set_install("downloading"); }
+                    if (reached < 2 && (tail.find("Extracting archive") != std::string::npos || tail.find("Starting package install") != std::string::npos || tail.find("Successfully verified") != std::string::npos)) { reached = 2; set_install("installing"); }
+                }, [&] { return closing.load(); });
+            if (code == -2) { set_install(""); return; }
+            set_install("verifying");
+            // winget unpacks FFmpeg under the user's WinGet packages folder, one of the places detection already looks.
+            FFmpeg found; found.status = "missing";
+            for (const auto& candidate : ffmpeg_candidates({})) {
+                std::error_code error;
+                if (!fs::is_regular_file(candidate, error)) continue;
+                auto info = inspect_ffmpeg(candidate);
+                if (info.status == "ready") { found = info; break; }
+            }
+            if (found.status == "ready") {
+                { std::lock_guard lock(ffmpeg_mutex); ++detection; ffmpeg = found; }
+                store_preference("ffmpeg_path", path_string(found.exe));
+                set_install("");
+                return;
+            }
+            std::string problem;
+            if (code == -1) problem = "The FFmpeg download didn't finish. Check your internet connection and select Install FFmpeg again.";
+            else if (tail.find("already installed") != std::string::npos) problem = "winget reports FFmpeg as installed, but OBSReplay can't find ffmpeg.exe. Select Locate ffmpeg.exe.";
+            else { std::ostringstream text; text << "FFmpeg wasn't installed (winget code 0x" << std::hex << static_cast<unsigned>(code) << "). Select Install FFmpeg again, or Get FFmpeg to install it yourself."; problem = text.str(); }
+            set_install("", problem);
+        });
+        return true;
+    }
 
     Impl(saucer::application* a, Controller& c, Paths p) : app(a), controller(c), paths(std::move(p)) { try { sweep_previews(); } catch (...) {} }
     // Editor preferences that the page may change. Values are validated before they are saved.
@@ -589,7 +640,7 @@ struct EditorHost::Impl::Session {
         std::lock_guard lock(mutex);
         return Json{
             {"clip", clip}, {"animations", animations}, {"quality", quality}, {"source_missing", missing},
-            {"ffmpeg", {{"status", tool.status}, {"path", path_string(tool.exe)}, {"version", tool.version}, {"message", tool.message},
+            {"ffmpeg", {{"status", tool.status}, {"path", path_string(tool.exe)}, {"version", tool.version}, {"message", tool.message}, {"install", host.install_state()},
                         {"encoder", tool.nvenc ? "NVIDIA NVENC" : tool.x264 ? "x264 (CPU)" : ""}}},
             {"probe", probe}, {"waveform", {{"status", wave_status}, {"rate", 100}}}, {"export", export_state}, {"preview", preview},
             {"prefs", prefs_for_page()}, {"quality_plans", plans}, {"revision", revision}}.dump();
@@ -1236,6 +1287,8 @@ struct EditorHost::Impl::Session {
 
 EditorHost::Impl::~Impl() {
     alive.reset();
+    closing = true;
+    if (installer.joinable()) installer.join();
     ++wave_run;
     for (auto& [run, worker] : wave_workers) if (worker.joinable()) worker.join();
     sessions.clear();
@@ -1326,13 +1379,14 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
         const HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
         SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
-        window.set_background({16, 21, 29, 255});
+        const auto ground = theme_ground(saved_theme());
+        window.set_background({ground.r, ground.g, ground.b, 255});
         auto view = saucer::smartview::create({.window = self->window, .storage_path = isolated_webview_folder()});
         if (!view) return std::unexpected("The editor's WebView2 surface could not start.");
         self->view = std::make_unique<saucer::smartview>(std::move(*view));
         auto& web = *self->view;
-        web.set_force_dark(true);
-        web.set_background({16, 21, 29, 255});
+        web.set_force_dark(!ground.light);
+        web.set_background({ground.r, ground.g, ground.b, 255});
         web.set_context_menu(false);
         // Ctrl+wheel / pinch must not zoom the editor by accident; the titlebar Scale menu sets the zoom instead.
         {
@@ -1357,6 +1411,12 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             return !navigation.new_window() && url.scheme() == "saucer" && url.host() == "embedded" && url.path() == std::filesystem::path("/editor.html") ? saucer::policy::allow : saucer::policy::block;
         });
         web.on<saucer::webview::event::permission>([](const std::shared_ptr<saucer::permission::request>& request) { request->accept(false); return saucer::status::handled; });
+        web.expose("theme_changed", [self](std::string id) {
+            const auto next = theme_ground(id);
+            self->window->set_background({next.r, next.g, next.b, 255});
+            self->view->set_background({next.r, next.g, next.b, 255});
+            self->view->set_force_dark(!next.light);
+        });
         web.expose("editor_state", [self] { return self->state(); });
         web.expose("editor_waveform", [self] { return self->waveform(); });
         web.expose("media_url", [self](std::string requested) -> std::expected<std::string, std::string> {
@@ -1374,6 +1434,7 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             } catch (const std::exception& e) { return std::unexpected(e.what()); }
         });
         web.expose("ffmpeg_help", [] { try { open_help("ffmpeg"); } catch (...) {} });
+        web.expose("install_ffmpeg", [impl] { return impl->install_ffmpeg(); });
         web.expose("reveal_output", [self](bool reveal) -> std::expected<bool, std::string> {
             const auto output = self->exported_path();
             if (output.empty()) return std::unexpected("Export a video first.");

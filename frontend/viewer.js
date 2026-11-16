@@ -157,6 +157,9 @@
   }
 
   // ---------- Drawing (colours and shapes match the editor's timeline) ----------
+  // Timeline colours come from the current theme and follow it when it changes.
+  let colors = Theme.timeline();
+  Theme.onChange(() => { colors = Theme.timeline(); requestDraw(); });
   function requestDraw() { if (!drawFrame) drawFrame = requestAnimationFrame(draw); }
   function roundRect(x, y, w, h, r) {
     context.beginPath();
@@ -178,7 +181,7 @@
     context.font = "500 11px Inter, 'Segoe UI', sans-serif";
     context.textBaseline = "middle";
     if (!state.duration) {
-      context.fillStyle = "#0c121b";
+      context.fillStyle = colors.lane;
       roundRect(0, m.videoTop, width, LAYOUT.video, 6); context.fill();
       if (m.audio) { roundRect(0, m.audioTop, width, LAYOUT.audio, 6); context.fill(); }
       return;
@@ -189,10 +192,10 @@
     for (let t = Math.floor(state.view.start / minor) * minor; t <= state.view.end + minor; t += minor) {
       const x = Math.round(timeToX(t)) + 0.5;
       const major = Math.abs(t / step - Math.round(t / step)) < 1e-4;
-      context.fillStyle = major ? "#8a9bb3" : "#4b5c73";
+      context.fillStyle = major ? colors.label : colors.tick;
       context.fillRect(x, major ? 14 : 18, 1, major ? 9 : 5);
       if (major && x > -40 && x < width + 40) {
-        context.fillStyle = "#b6c4d8";
+        context.fillStyle = colors.labelStrong;
         const label = step < 1 ? formatTime(t) : formatTime(t, false);
         context.fillText(label, Math.min(width - context.measureText(label).width, x + 4), 8);
       }
@@ -203,53 +206,53 @@
     if (blockWidth > 0) {
       context.save();
       roundRect(left, m.videoTop, blockWidth, LAYOUT.video, 5); context.clip();
-      context.fillStyle = "#0b121c"; context.fillRect(left, m.videoTop, blockWidth, LAYOUT.video);
+      context.fillStyle = colors.lane; context.fillRect(left, m.videoTop, blockWidth, LAYOUT.video);
       drawFilmstrip(left, right, m.videoTop);
       context.restore();
       if (m.audio) {
         context.save();
         roundRect(left, m.audioTop, blockWidth, LAYOUT.audio, 5); context.clip();
-        context.fillStyle = "#122236"; context.fillRect(left, m.audioTop, blockWidth, LAYOUT.audio);
-        drawWave(left, right, m.audioTop, "#5f93c8");
+        context.fillStyle = colors.waveBg; context.fillRect(left, m.audioTop, blockWidth, LAYOUT.audio);
+        drawWave(left, right, m.audioTop, colors.wave);
         context.restore();
       }
-      context.lineWidth = 1; context.strokeStyle = "#3c5674";
+      context.lineWidth = 1; context.strokeStyle = colors.laneEdge;
       roundRect(left + 0.5, m.videoTop + 0.5, blockWidth - 1, LAYOUT.video - 1, 5); context.stroke();
       if (m.audio) { roundRect(left + 0.5, m.audioTop + 0.5, blockWidth - 1, LAYOUT.audio - 1, 5); context.stroke(); }
     }
     // Hover guide
     if (state.hover && !state.drag) {
       const x = Math.round(timeToX(state.hover.time)) + 0.5;
-      context.fillStyle = "rgba(215,228,248,.35)"; context.fillRect(x, LAYOUT.ruler, 1, m.bottom - LAYOUT.ruler);
+      context.fillStyle = colors.hoverLine; context.fillRect(x, LAYOUT.ruler, 1, m.bottom - LAYOUT.ruler);
     }
     // Playhead
     const px = Math.round(timeToX(currentTime()));
     if (px >= -8 && px <= width + 8) {
-      context.fillStyle = "#ffffff";
+      context.fillStyle = colors.playhead;
       context.fillRect(px - 1, 12, 2, m.bottom - 10);
       context.beginPath(); context.moveTo(px - 6, 2); context.lineTo(px + 6, 2); context.lineTo(px + 6, 10); context.lineTo(px, 16); context.lineTo(px - 6, 10); context.closePath(); context.fill();
     }
     // Overview scrollbar, only while zoomed
     if (m.zoomed) {
-      roundRect(0, m.overviewTop, width, LAYOUT.overview, 4); context.fillStyle = "#162131"; context.fill();
+      roundRect(0, m.overviewTop, width, LAYOUT.overview, 4); context.fillStyle = colors.overviewTrack; context.fill();
       const x = state.view.start / state.duration * width, w = Math.max(18, span() / state.duration * width);
-      roundRect(Math.min(x, width - w), m.overviewTop, w, LAYOUT.overview, 4); context.fillStyle = state.drag?.mode === "pan" ? "#8fb7d6" : "#5d7896"; context.fill();
-      context.fillStyle = "#ffffff"; context.fillRect(currentTime() / state.duration * width, m.overviewTop - 1, 1.5, LAYOUT.overview + 2);
+      roundRect(Math.min(x, width - w), m.overviewTop, w, LAYOUT.overview, 4); context.fillStyle = state.drag?.mode === "pan" ? colors.overviewActive : colors.overviewThumb; context.fill();
+      context.fillStyle = colors.playhead; context.fillRect(currentTime() / state.duration * width, m.overviewTop - 1, 1.5, LAYOUT.overview + 2);
     }
     // Hover time flag on the ruler
     if (state.hover && !state.drag && Math.abs(timeToX(state.hover.time) - timeToX(currentTime())) > 36) {
       const label = formatTime(state.hover.time);
       const w = context.measureText(label).width + 12;
       const x = Math.min(width - w, Math.max(0, timeToX(state.hover.time) - w / 2));
-      roundRect(x, 0, w, 17, 4); context.fillStyle = "#26364b"; context.fill();
-      context.fillStyle = "#f5f7fc"; context.fillText(label, x + 6, 9);
+      roundRect(x, 0, w, 17, 4); context.fillStyle = colors.flag; context.fill();
+      context.fillStyle = colors.flagText; context.fillText(label, x + 6, 9);
     }
   }
   function drawFilmstrip(left, right, top) {
     const height = LAYOUT.video, tileWidth = Math.max(40, Math.round(height * state.aspect));
     const tileSeconds = tileWidth / canvas.clientWidth * span();
     if (!state.thumbs.length || !tileSeconds) {
-      if (right - left > 120) { context.fillStyle = "#6f819a"; context.fillText("Loading previews…", Math.max(left, 0) + 12, top + height / 2); }
+      if (right - left > 120) { context.fillStyle = colors.loading; context.fillText("Loading previews…", Math.max(left, 0) + 12, top + height / 2); }
       return;
     }
     for (let k = Math.floor(xToTime(Math.max(0, left)) / tileSeconds); ; k++) {

@@ -7,7 +7,9 @@
   <title>Edit replay – OBSReplay</title>
   <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="editor.css">
+  <script src="theme.js"></script>
   <script src="tooltip.js" defer></script>
   <script src="editor.js" defer></script>
 </head>
@@ -98,8 +100,8 @@
         </div>
       </div>
       <div class="ffmpeg-notice" id="ffmpeg-notice" hidden>
-        <div><strong id="ffmpeg-title">FFmpeg is needed to export</strong><p id="ffmpeg-text">Editing works now. Install FFmpeg, or locate ffmpeg.exe if it is already on this PC.</p></div>
-        <div class="notice-actions"><button type="button" id="ffmpeg-copy" title="Copy the install command">Copy winget command</button><button type="button" id="ffmpeg-help">Get FFmpeg</button><button type="button" id="ffmpeg-locate">Locate ffmpeg.exe</button><button type="button" id="probe-retry" hidden>Try again</button></div>
+        <div><strong id="ffmpeg-title">FFmpeg is needed to export</strong><p id="ffmpeg-text">Editing works now. Install FFmpeg to export, or locate ffmpeg.exe if it is already on this PC.</p></div>
+        <div class="notice-actions"><button type="button" class="primary" id="ffmpeg-install">Install FFmpeg</button><button type="button" id="ffmpeg-help">Get FFmpeg</button><button type="button" id="ffmpeg-locate">Locate ffmpeg.exe</button><button type="button" id="probe-retry" hidden>Try again</button></div>
       </div>
       <div class="export-progress" id="export-progress" hidden>
         <div class="progress-copy"><strong id="progress-title">Exporting…</strong><span id="progress-detail"></span></div>

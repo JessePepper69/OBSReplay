@@ -1,8 +1,10 @@
+# Build output
 /build/
 /dist/
+/embedded/
+
+# Editor and tool state
 /.vs/
-/.taste-skill/
-/.impeccable/questions/
-/.impeccable/review/
-/ShadOBS-main/
 *.user
+/.impeccable/
+/.taste-skill/

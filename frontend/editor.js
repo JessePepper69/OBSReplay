@@ -334,6 +334,9 @@
   }
 
   // ---------- Drawing ----------
+  // Timeline colours come from the current theme and follow it when it changes.
+  let colors = Theme.timeline();
+  Theme.onChange(() => { colors = Theme.timeline(); requestDraw(); });
   function requestDraw() { if (!drawFrame) drawFrame = requestAnimationFrame(draw); }
   function roundRect(x, y, w, h, r) {
     context.beginPath();
@@ -355,7 +358,7 @@
     context.font = "500 11px Inter, 'Segoe UI', sans-serif";
     context.textBaseline = "middle";
     if (!state.duration) {
-      roundRect(0, m.videoTop, width, LAYOUT.video, 6); context.fillStyle = "#0c121b"; context.fill();
+      roundRect(0, m.videoTop, width, LAYOUT.video, 6); context.fillStyle = colors.lane; context.fill();
       roundRect(0, m.audioTop, width, LAYOUT.audio, 6); context.fill();
       return;
     }
@@ -363,14 +366,14 @@
     // Ruler
     const step = tickStep(pps);
     const minor = step / (step >= 60 ? 6 : step >= 10 ? 5 : step >= 1 ? 4 : 5);
-    context.fillStyle = "#8a9bb3";
+    context.fillStyle = colors.label;
     for (let t = Math.floor(state.view.start / minor) * minor; t <= state.view.end + minor; t += minor) {
       const x = Math.round(timeToX(t)) + 0.5;
       const major = Math.abs(t / step - Math.round(t / step)) < 1e-4;
-      context.fillStyle = major ? "#8a9bb3" : "#4b5c73";
+      context.fillStyle = major ? colors.label : colors.tick;
       context.fillRect(x, major ? 14 : 18, 1, major ? 9 : 5);
       if (major && x > -40 && x < width + 40) {
-        context.fillStyle = "#b6c4d8";
+        context.fillStyle = colors.labelStrong;
         const label = step < 1 ? formatTime(t) : formatTime(t, false);
         context.fillText(label, Math.min(width - context.measureText(label).width, x + 4), 8);
       }
@@ -386,25 +389,25 @@
       // video lane with filmstrip
       context.save();
       roundRect(left, m.videoTop, w, LAYOUT.video, 5); context.clip();
-      context.fillStyle = "#0b121c"; context.fillRect(left, m.videoTop, w, LAYOUT.video);
+      context.fillStyle = colors.lane; context.fillRect(left, m.videoTop, w, LAYOUT.video);
       drawFilmstrip(left, right, m.videoTop);
       if (piece.removed) {
-        context.fillStyle = "rgba(8,11,17,.78)"; context.fillRect(left, m.videoTop, w, LAYOUT.video);
-        context.strokeStyle = "rgba(238,130,147,.34)"; context.lineWidth = 1.5;
+        context.fillStyle = colors.removedVeil; context.fillRect(left, m.videoTop, w, LAYOUT.video);
+        context.strokeStyle = colors.removedHatch; context.lineWidth = 1.5;
         context.beginPath();
         for (let x = left - LAYOUT.video; x < right; x += 9) { context.moveTo(x, m.videoTop + LAYOUT.video); context.lineTo(x + LAYOUT.video, m.videoTop); }
         context.stroke();
-        if (w > 76) { context.fillStyle = "#f4b8c3"; context.font = "600 11px Inter, 'Segoe UI', sans-serif"; context.fillText("Removed", left + w / 2 - context.measureText("Removed").width / 2, m.videoTop + LAYOUT.video / 2); context.font = "500 11px Inter, 'Segoe UI', sans-serif"; }
-      } else if (selected) { context.fillStyle = "rgba(107,182,255,.16)"; context.fillRect(left, m.videoTop, w, LAYOUT.video); }
+        if (w > 76) { context.fillStyle = colors.removedText; context.font = "600 11px Inter, 'Segoe UI', sans-serif"; context.fillText("Removed", left + w / 2 - context.measureText("Removed").width / 2, m.videoTop + LAYOUT.video / 2); context.font = "500 11px Inter, 'Segoe UI', sans-serif"; }
+      } else if (selected) { context.fillStyle = colors.selectedVeil; context.fillRect(left, m.videoTop, w, LAYOUT.video); }
       context.restore();
       // audio lane
       context.save();
       roundRect(left, m.audioTop, w, LAYOUT.audio, 5); context.clip();
-      context.fillStyle = piece.removed ? "#140f16" : selected ? "#16304b" : "#122236"; context.fillRect(left, m.audioTop, w, LAYOUT.audio);
-      drawWave(left, right, m.audioTop, piece.removed ? "#6d4553" : selected ? "#a9d3ff" : "#5f93c8");
+      context.fillStyle = piece.removed ? colors.removedWaveBg : selected ? colors.waveSelectedBg : colors.waveBg; context.fillRect(left, m.audioTop, w, LAYOUT.audio);
+      drawWave(left, right, m.audioTop, piece.removed ? colors.removedWave : selected ? colors.waveSelected : colors.wave);
       context.restore();
       // outline
-      const outline = selected ? (piece.removed ? "#f4b8c3" : "#a9d3ff") : piece.removed ? "#6f3c4b" : "#3c5674";
+      const outline = selected ? (piece.removed ? colors.removedText : colors.waveSelected) : piece.removed ? colors.removedEdge : colors.laneEdge;
       context.lineWidth = selected ? 2 : 1; context.strokeStyle = outline;
       roundRect(left + (selected ? 1 : .5), m.videoTop + (selected ? 1 : .5), w - (selected ? 2 : 1), LAYOUT.video - (selected ? 2 : 1), 5); context.stroke();
       roundRect(left + (selected ? 1 : .5), m.audioTop + (selected ? 1 : .5), w - (selected ? 2 : 1), LAYOUT.audio - (selected ? 2 : 1), 5); context.stroke();
@@ -416,44 +419,44 @@
       const x = Math.round(timeToX(piece.start));
       if (x < -6 || x > width + 6) return;
       const active = hoverCut === index;
-      context.fillStyle = active ? "#ffffff" : "#d7e4f8";
+      context.fillStyle = active ? colors.playhead : colors.handle;
       context.fillRect(x - (active ? 1.5 : 1), m.videoTop - 3, active ? 3 : 2, m.bottom - m.videoTop + 6);
       roundRect(x - 5, m.videoTop - 7, 10, 8, 2); context.fill();
     });
     // Hover guide
     if (state.hover && !state.drag && state.hover.cut == null) {
       const x = Math.round(timeToX(state.hover.time)) + 0.5;
-      context.fillStyle = "rgba(215,228,248,.35)"; context.fillRect(x, LAYOUT.ruler, 1, m.bottom - LAYOUT.ruler);
+      context.fillStyle = colors.hoverLine; context.fillRect(x, LAYOUT.ruler, 1, m.bottom - LAYOUT.ruler);
     }
     // Playhead
     const px = Math.round(timeToX(currentTime()));
     if (px >= -8 && px <= width + 8) {
-      context.fillStyle = "#ffffff";
+      context.fillStyle = colors.playhead;
       context.fillRect(px - 1, 12, 2, m.bottom - 10);
       context.beginPath(); context.moveTo(px - 6, 2); context.lineTo(px + 6, 2); context.lineTo(px + 6, 10); context.lineTo(px, 16); context.lineTo(px - 6, 10); context.closePath(); context.fill();
     }
     // Overview when zoomed
     if (m.zoomed) {
-      roundRect(0, m.overviewTop, width, LAYOUT.overview, 4); context.fillStyle = "#162131"; context.fill();
-      for (const piece of state.pieces) if (piece.removed) { context.fillStyle = "#4a2734"; context.fillRect(piece.start / state.duration * width, m.overviewTop + 2, (piece.end - piece.start) / state.duration * width, LAYOUT.overview - 4); }
+      roundRect(0, m.overviewTop, width, LAYOUT.overview, 4); context.fillStyle = colors.overviewTrack; context.fill();
+      for (const piece of state.pieces) if (piece.removed) { context.fillStyle = colors.overviewRemoved; context.fillRect(piece.start / state.duration * width, m.overviewTop + 2, (piece.end - piece.start) / state.duration * width, LAYOUT.overview - 4); }
       const x = state.view.start / state.duration * width, w = Math.max(18, span() / state.duration * width);
-      roundRect(Math.min(x, width - w), m.overviewTop, w, LAYOUT.overview, 4); context.fillStyle = state.drag?.mode === "pan" ? "#8fb7d6" : m.zoomed ? "#5d7896" : "#2c3d52"; context.fill();
-      context.fillStyle = "#ffffff"; context.fillRect(currentTime() / state.duration * width, m.overviewTop - 1, 1.5, LAYOUT.overview + 2);
+      roundRect(Math.min(x, width - w), m.overviewTop, w, LAYOUT.overview, 4); context.fillStyle = state.drag?.mode === "pan" ? colors.overviewActive : m.zoomed ? colors.overviewThumb : colors.overviewIdle; context.fill();
+      context.fillStyle = colors.playhead; context.fillRect(currentTime() / state.duration * width, m.overviewTop - 1, 1.5, LAYOUT.overview + 2);
     }
     // Hover time tooltip on ruler
     if (state.hover && state.hover.time != null && !state.drag && Math.abs(timeToX(state.hover.time) - timeToX(currentTime())) > 36) {
       const label = formatTime(state.hover.time);
       const w = context.measureText(label).width + 12;
       const x = Math.min(width - w, Math.max(0, timeToX(state.hover.time) - w / 2));
-      roundRect(x, 0, w, 17, 4); context.fillStyle = "#26364b"; context.fill();
-      context.fillStyle = "#f5f7fc"; context.fillText(label, x + 6, 9);
+      roundRect(x, 0, w, 17, 4); context.fillStyle = colors.flag; context.fill();
+      context.fillStyle = colors.flagText; context.fillText(label, x + 6, 9);
     }
   }
   function drawFilmstrip(left, right, top) {
     const height = LAYOUT.video, tileWidth = Math.max(40, Math.round(height * state.aspect));
     const tileSeconds = tileWidth / canvas.clientWidth * span();
     if (!state.thumbs.length || !tileSeconds) {
-      if (right - left > 120) { context.fillStyle = "#6f819a"; context.fillText("Loading previews…", Math.max(left, 0) + 12, top + height / 2); }
+      if (right - left > 120) { context.fillStyle = colors.loading; context.fillText("Loading previews…", Math.max(left, 0) + 12, top + height / 2); }
       return;
     }
     const first = Math.floor(xToTime(Math.max(0, left)) / tileSeconds);
@@ -676,9 +679,21 @@
     if (mode === "ffmpeg") {
       const toolProblem = tool.status === "missing" || tool.status === "invalid";
       $("ffmpeg-title").textContent = sourceMissing ? "The original replay is gone" : probeFailed && !toolProblem ? "FFmpeg couldn't read this clip" : tool.status === "invalid" ? "That file isn't a usable FFmpeg" : "FFmpeg is needed to export";
-      $("ffmpeg-text").textContent = sourceMissing ? "It was moved or deleted while the editor was open, so it can't be exported. Close the editor." : probeFailed && !toolProblem ? (native.probe.message || "Its video details couldn't be read.") + " Try again, or open the file in another app." : tool.status === "invalid" ? (tool.message || "Choose ffmpeg.exe from a full FFmpeg build.") : "Editing works now. Install FFmpeg with the command below, or locate ffmpeg.exe.";
-      $("ffmpeg-help").hidden = $("ffmpeg-locate").hidden = $("ffmpeg-copy").hidden = sourceMissing || (probeFailed && !toolProblem);
-      $("ffmpeg-copy").hidden = $("ffmpeg-copy").hidden || tool.status === "invalid";
+      $("ffmpeg-text").textContent = sourceMissing ? "It was moved or deleted while the editor was open, so it can't be exported. Close the editor." : probeFailed && !toolProblem ? (native.probe.message || "Its video details couldn't be read.") + " Try again, or open the file in another app." : tool.status === "invalid" ? (tool.message || "Choose ffmpeg.exe from a full FFmpeg build.") : "Editing works now. Install FFmpeg to export, or locate ffmpeg.exe if it is already on this PC.";
+      $("ffmpeg-help").hidden = $("ffmpeg-locate").hidden = $("ffmpeg-install").hidden = sourceMissing || (probeFailed && !toolProblem);
+      // One click installs FFmpeg through winget; the notice then follows the install and reports a failure in place.
+      const install = tool.install || {};
+      const installing = Boolean(install.stage) && toolProblem && !sourceMissing;
+      if (installing) {
+        $("ffmpeg-title").textContent = "Installing FFmpeg…";
+        $("ffmpeg-text").textContent = { preparing: "Getting ready. Keep editing; export unlocks when this finishes.", downloading: "Downloading. Keep editing; export unlocks when this finishes.", installing: "Unpacking the download.", verifying: "Checking the install." }[install.stage] || "Working…";
+        $("ffmpeg-help").hidden = $("ffmpeg-locate").hidden = $("ffmpeg-install").hidden = true;
+      } else if (install.error && tool.status === "missing" && !sourceMissing) {
+        $("ffmpeg-title").textContent = "FFmpeg wasn’t installed";
+        $("ffmpeg-text").textContent = install.error;
+      }
+      if (!install.available) $("ffmpeg-install").hidden = true;
+      $("ffmpeg-notice").classList.toggle("working", installing);
       $("probe-retry").hidden = !(probeFailed && !toolProblem && !sourceMissing);
     }
     if (sourceMissing) $("stage-message").textContent = "The original replay was moved or deleted.";
@@ -999,7 +1014,7 @@
       $("stage-message").textContent = errorText(error);
     }
     const native = state.native;
-    const settling = state.exportStatus === "running" || native?.ffmpeg?.status === "checking" || native?.probe?.status === "pending" || native?.waveform?.status === "pending" || ["pending", "building"].includes(native?.preview?.status);
+    const settling = state.exportStatus === "running" || native?.ffmpeg?.status === "checking" || Boolean(native?.ffmpeg?.install?.stage) || native?.probe?.status === "pending" || native?.waveform?.status === "pending" || ["pending", "building"].includes(native?.preview?.status);
     schedulePoll(state.exportStatus === "running" ? 250 : settling ? 500 : 1500);
   }
   function schedulePoll(delay) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, delay); }
@@ -1153,9 +1168,8 @@
     try { if (await nativeCall("pick_ffmpeg")) schedulePoll(100); } catch (error) { flash(errorText(error)); }
   });
   $("ffmpeg-help").addEventListener("click", () => nativeCall("ffmpeg_help").catch(() => {}));
-  $("ffmpeg-copy").addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText("winget install Gyan.FFmpeg"); flash("Copied: winget install Gyan.FFmpeg. Run it in Terminal, then reopen the editor."); }
-    catch { flash("Run in Terminal: winget install Gyan.FFmpeg"); }
+  $("ffmpeg-install").addEventListener("click", async () => {
+    try { await nativeCall("install_ffmpeg"); schedulePoll(100); } catch (error) { flash(errorText(error)); }
   });
   $("probe-retry").addEventListener("click", () => { nativeCall("retry_analysis").then(() => schedulePoll(200)).catch(() => {}); });
   // Sliders and buttons give the keyboard back to the timeline after a pointer interaction.

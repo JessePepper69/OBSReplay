@@ -1,5 +1,3 @@
-Replay-save chime: unmodified WAV extracted from the user-provided
-valorant-external/neac/root/module_enable_wav.hpp (moduleEnableWav).
-The reference app plays this asset when configuration values change.
+Replay-save chime: an unmodified WAV supplied by the project owner.
 OBSReplay embeds it as WAVE resource 102; no external audio file is required.
 SHA-256: b3aab7bd0426e849dd621ca97eaea45b80e015c9cd31605f9bc61f0434e96994

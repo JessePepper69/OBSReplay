@@ -1,47 +1,164 @@
 # OBSReplay
 
-A compact Windows replay controller written in C++23 with [saucer](https://github.com/saucer/saucer). OBS handles capture and encoding; OBSReplay handles setup, shortcuts, settings and confirmed replay saves.
+Instant replay for Windows, built on OBS Studio. Press a key and the last few minutes of your game land in a folder. Then watch, trim and export the clip without leaving the app.
 
-The application lives at repository root. `ShadOBS-main` is an untouched third-party reference, outside the build.
+![Capture page with the live replay buffer and the latest clips](docs/images/capture.png)
 
-## Run
+> [!NOTE]
+> Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write code in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
 
-1. Make sure Microsoft Edge WebView2 Runtime is installed (it ships with Windows 11).
-2. Run `dist/OBSReplay.exe` from a location you intend to keep. Guided setup opens on first launch.
-3. **OBS Studio:** if OBS 31+ isn't installed, select **Install OBS Studio**. OBSReplay installs (or updates) it with Windows Package Manager (`winget install OBSProject.OBSStudio`); Windows asks for permission once. Without winget, **Download from obsproject.com** opens the download page and setup continues as soon as OBS is installed; **Locate obs64.exe…** picks a copy in another folder.
-4. **Capture:** choose what to record, the display, replay length, quality, microphone, clips folder and Start with Windows. Encoder, frame rate, audio devices and shortcuts start with defaults (the best detected hardware encoder) and stay editable in Settings.
-5. Select **Set up and start capture**. Any open OBS closes gracefully, the dedicated profile is written, OBS reopens minimized in the tray and the replay buffer starts. Press **Alt+Z** to save a replay and **Alt+X** to show or hide the window. Shortcuts are configurable.
+## Contents
 
-Setup creates an OBSReplay profile and scene collection and marks OBS's first run as complete, so OBS's auto-configuration wizard doesn't open over the hidden session. If an open OBS is streaming or recording, setup stops and asks you to stop it first; OBS's own exit confirmation also stays in effect, and no process is forced to stop. The dedicated session starts with `--disable-updater`, so an update prompt never appears over a game; opening OBS normally still checks for updates. The companion starts with Windows by default after setup; this can be disabled in App settings. Microphone recording is opt-in. Settings → Capture also offers **Set up and start** for anyone who skips the guided setup.
+- [About](#about)
+- [Features](#features)
+- [Install](#install)
+- [Hotkeys](#hotkeys)
+- [Where your files go](#where-your-files-go)
+- [What it changes on your PC](#what-it-changes-on-your-pc)
+- [Good to know](#good-to-know)
+- [Build from source](#build-from-source)
+- [Project layout](#project-layout)
+- [Documentation](#documentation)
+- [Credits](#credits)
+- [License](#license)
 
-Capture modes: **Game or display** (the default for new setups) layers a fullscreen-game capture over display capture, so the selected display is recorded, including other windows and notifications, whenever no compatible fullscreen game is captured. **Fullscreen games only** never falls back to desktop capture. **Entire display** always records the selected monitor.
+## About
 
-OBSReplay runs alongside OBS. Once capture is enabled, login startup launches the companion and starts OBS minimized with its rolling replay buffer. OBS performs all capture and encoding. Closing the companion window keeps it in the tray. Quitting the controller leaves OBS and capture running, but the controller's shortcuts stop. Stopping capture discards unsaved buffer history.
+OBS Studio has a good replay buffer and a setup most players never finish. OBSReplay does the setup for you and stays out of the way afterwards.
 
-Apply handles capture and audio changes by saving the current healthy replay buffer, closing the dedicated OBS session, applying the settings and reopening OBS. Active replay capture resumes afterward. Streams, full recordings and other OBS profiles prevent a disruptive restart. App-only settings apply while capture continues. Saved replays use MP4 with web playback metadata at the beginning of the file, preserving separate AAC audio tracks. H.264 offers the widest playback compatibility; HEVC and AV1 remain available for efficient compression. Replay length is an upper limit constrained by the configured memory budget.
+OBS does the capture and the encoding. OBSReplay installs OBS when it is missing, writes its own OBS profile, starts OBS in the tray, registers the hotkeys and keeps a library of what you saved. Your existing OBS profiles and scenes stay as they are.
 
-Quality choices are **Very high, High, Balanced, Low and Very low**. NVIDIA recording combines quality targets with bitrate ceilings scaled to resolution and frame rate, plus a more efficient encoding preset. Other encoders use retuned quality targets. Resolution and FPS stay as selected; higher quality allows larger files. Balanced remains the default. Existing installations can select **Apply improved compression** without editing their preferences.
+The app is one executable of about 3 MB. The interface is plain HTML, CSS and JavaScript inside WebView2, with a C++23 host.
 
-Recorded replays and edited exports are kept apart: Clips and the Latest section on Capture each have **Replays** and **Edited exports** tabs with counts (Latest shows the five newest of the selected tab; Clips shows up to 50 of each). The selected tabs are remembered, and View all opens Clips on the tab Latest is showing. Select a replay's thumbnail or name to watch it inside the app, with playback controls and a scrubbable timeline. The player provides **Show in folder** to select the video in Explorer, **Open file** to use your default video app, and **Delete** with confirmation of permanent removal. Deleted or moved files disappear from recent history automatically; deleting the video being watched closes its player. Playback uses WebView2 and installed Windows codecs, with an external-player option if a codec is unavailable.
+## Features
 
-**Edit** (on Capture, Clips and the player) opens the clip in its own editor window. Scrub the timeline (filmstrip and waveform), press **S** to split at the playhead, click sections to select them (Shift for a range, Ctrl to add) and press **Delete** to remove or restore them; **I**/**O** delete everything before/after the playhead, cuts can be dragged or double-clicked away, and undo/redo cover every change. Preview playback skips removed sections. **Preview quality** in the titlebar sets what the editor shows: **Full** (default) plays the original recording at full resolution; **Half** and **Quarter** build a high-quality scrubbing copy at half or quarter height on the GPU (each built once per editor, the original keeps playing until it's ready). Once the clip is analysed, the editor also copies each audio track. The transport shows one master volume; the track button next to it opens per-track sliders named from the recording (OBSReplay records Desktop and Microphone beside the Mix). The temporary files are deleted when the editor closes. **Export video** writes one MP4, named `… (edited).mp4`, into an **Edited Exports** folder beside the original (for app-sorted clips, inside that game's folder). Every export cuts on the exact frame. **Quality 10 · Original** (default) keeps the recording's video untouched between keyframes and re-encodes only the frames from each cut to the next keyframe (at most 2 s on OBS replays) with the same codec at near-lossless quality, so a typical export takes a couple of seconds. **Quality 1–9** re-encode the whole video at a share of the original bitrate (78% down to 10%; 1–2 also cap at 720p), keeping HEVC when the replay is HEVC and NVIDIA NVENC is available (otherwise H.264, x264 on CPU), so each step down gives a visibly smaller file. The export bar shows the estimated size. Audio is re-encoded to AAC so every track is cut to the exact sample, and track names are kept. When the export finishes, File Explorer opens with the new file selected and it appears at the top of recent clips. The original replay is never modified. Quality, time format (duration, clock or frame timecode), master and per-track volumes, preview cuts and the titlebar interface scale (75–150%) are remembered. Press **?** in the editor for all shortcuts.
+- **Guided setup.** Three steps: install or locate OBS, choose what to record, start. OBS closes and reopens on its own.
+- **One-key save.** A global hotkey saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
+- **Three capture modes.** Game or display, fullscreen games only, or one whole display.
+- **Clips library.** Thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
+- **Replay viewer.** Scrub a filmstrip and waveform timeline, step by frame, zoom with the wheel.
+- **Clip editor.** Split, remove and restore sections, undo and redo, per-track volume, then export. Quality 10 keeps the original video and cuts on the exact frame. Lower levels re-encode to a smaller file.
+- **Hardware encoding.** NVIDIA, AMD and Intel encoders with H.264, HEVC or AV1, picked from what your GPU supports.
+- **Separate audio tracks.** Desktop and microphone record to their own tracks. The microphone is off until you turn it on.
+- **Seven themes.** Original, Mono, Light, Rose, Forest, Amethyst and Ember.
+- **Tray app.** Closing the window keeps the hotkeys alive. Start with Windows is optional.
 
-Exporting needs an installed FFmpeg build (for example `winget install Gyan.FFmpeg`); it is found on PATH, in WinGet/Scoop/Chocolatey locations, or chosen with **Locate ffmpeg.exe**. FFmpeg is not bundled, and editing and previewing work without it.
+![Clip editor with a removed section](docs/images/editor.png)
 
-Settings and confirmed replay history are stored in `%LOCALAPPDATA%\OBSReplay`. The Help screen offers integration reset; it removes owned OBSReplay configuration and conditionally restores shared WebSocket changes while leaving clips intact. Software notices are embedded in the EXE and available from Help.
+![Theme picker in Settings](docs/images/themes.png)
 
-## Build
+## Install
 
-Use Windows x64, Visual Studio C++ desktop tools (MSVC 19.44+), a recent Windows SDK, CMake 3.25+ and Git. The first build downloads pinned dependencies.
+Requirements:
+
+- Windows 10 or 11, 64-bit
+- [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (included with Windows 11)
+- OBS Studio 31 or newer. Setup installs it for you.
+- FFmpeg, only for exporting edited clips. The editor installs it for you.
+
+Steps:
+
+1. Get `OBSReplay.exe` from [Releases](https://github.com/JessePepper69/OBSReplay/releases), or [build it](#build-from-source).
+2. Put it in a folder you plan to keep, then run it.
+3. Follow the three setup steps. If OBS is missing, select **Install OBS Studio**. Windows asks for permission once.
+4. Select **Set up and start capture**.
+
+There is no installer. To remove the app, see [What it changes on your PC](#what-it-changes-on-your-pc).
+
+## Hotkeys
+
+| Action | Default | Scope |
+| --- | --- | --- |
+| Save replay | `Alt+Z` | Global |
+| Show or hide the window | `Alt+X` | Global |
+| Play or pause | `Space` or `K` | Viewer and editor |
+| Move 1 second (5 with `Shift`) | `←` `→` | Viewer and editor |
+| Previous or next frame | `,` `.` | Viewer and editor |
+| Split at the playhead | `S` | Editor |
+| Remove or restore a section | `Delete` | Editor |
+| Remove everything before or after the playhead | `I` `O` | Editor |
+| Undo, redo | `Ctrl+Z` `Ctrl+Y` | Editor |
+| Export | `Ctrl+E` | Editor |
+
+Change the two global hotkeys in **Settings**, **App**. `Alt+Z` is also the default for the NVIDIA overlay. If both are active, OBSReplay reports the conflict and offers **Change shortcut**.
+
+## Where your files go
+
+| What | Location |
+| --- | --- |
+| Saved replays | `Videos\OBSReplay`, in one folder per game. Change it in **Settings**, **Capture**. |
+| Edited exports | An `Edited Exports` folder next to the original clip |
+| Settings, clip history, editor preferences | `%LOCALAPPDATA%\OBSReplay` |
+| OBS profile and scene collection | `%APPDATA%\obs-studio`, both named `OBSReplay` |
+
+## What it changes on your PC
+
+- Installs or updates OBS Studio through `winget`, only when you ask it to.
+- Installs FFmpeg through `winget` when you select **Install FFmpeg** in the editor.
+- Adds an `OBSReplay` profile and scene collection to OBS. It does not edit your other profiles.
+- Enables the OBS WebSocket server so the app can talk to OBS on this PC.
+- Marks the OBS first-run wizard as done, so the wizard does not open over a hidden session.
+- Adds an `OBSReplay` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` while **Start with Windows** is on.
+
+To undo it: open **Help**, select **Reset integration**, turn off **Start with Windows**, then delete the executable and `%LOCALAPPDATA%\OBSReplay`. Your clips stay where they are.
+
+## Good to know
+
+- **Game or display records your desktop between games.** Other windows and notifications end up in the buffer. Choose **Fullscreen games only** to avoid that.
+- **Stopping capture discards the buffer.** Save first.
+- **Changing capture or audio settings restarts OBS.** OBSReplay saves the current buffer before it does.
+- **Quitting OBSReplay leaves OBS running.** Capture continues. The hotkeys stop until you reopen the app.
+- **Replay length is an upper limit.** OBS holds the buffer in memory.
+- **A stream or full recording in OBS blocks setup.** OBSReplay asks you to stop it and never force-closes OBS.
+- **Game folders are named after the app in front** when you save. That is a best guess at the game.
+- **Some games block capture.** Anti-cheat and protected video can leave a black frame. That comes from OBS game capture.
+
+## Build from source
+
+You need Windows x64, Visual Studio with the C++ desktop workload (MSVC 19.44 or newer), CMake 3.25 or newer, and Git.
 
 ```powershell
 ./build.ps1
 ```
 
-The output is `dist/OBSReplay.exe`. The frontend (including the editor window), application icon, notices, saucer, JSON library and MSVC runtime are compiled into that one file. OBS Studio (installed by guided setup when missing) and Evergreen WebView2 remain separate installs.
+The first build downloads the pinned dependencies. The result is `dist/OBSReplay.exe`, with the interface, icon, font, notices and runtime compiled in. There is no npm step.
 
-The frontend uses plain HTML, CSS and JavaScript; there is no npm build or frontend framework. Native worker threads own OBS transport and setup. The UI only submits actions and reads state; a completed OBS save event and file existence confirm a replay.
+To run a second copy with its own data folder, set `OBSREPLAY_DATA_DIR` to an absolute path before you start it. [docs/validation.md](docs/validation.md) covers the headless mode used for automated checks.
 
-For isolated app-data checks, set `OBSREPLAY_DATA_DIR` to an absolute directory before launching. That run uses its own single-instance lock and WebView2 profile, so it can run beside your normal OBSReplay. Setting `OBSREPLAY_HEADLESS=1` as well (test use) opens windows off-screen without focus and never opens Explorer. OBS configuration still refers to the current Windows user's installed OBS.
+## Project layout
 
-The UI follows the user's PlayerCard reference: navy/blue, bundled Inter, a compact rail and quiet settings rows. See [SCOPE.md](SCOPE.md) for reviewed behavior, [DESIGN.md](DESIGN.md) for the UI contract and [VALIDATION.md](VALIDATION.md) for release evidence and hardware coverage.
+```text
+OBSReplay/
+├── src/            C++ host: window, tray, OBS control, settings, media, editor export
+├── frontend/       Interface: HTML, CSS, JavaScript, bundled Inter font
+├── resources/      Icon, manifest, version resource, save sound
+├── docs/           Product, scope, architecture, design system, validation, research
+├── CMakeLists.txt  Build definition and pinned dependencies
+└── build.ps1       Configure, build and copy the executable to dist/
+```
+
+## Documentation
+
+| Document | Covers |
+| --- | --- |
+| [docs/product.md](docs/product.md) | What the app is for and the rules it keeps |
+| [docs/scope.md](docs/scope.md) | Features in and out of scope |
+| [docs/architecture.md](docs/architecture.md) | Source map, native bridge, OBS integration, settings, export pipeline |
+| [docs/design.md](docs/design.md) | Design system: tokens, themes, layout, components, motion |
+| [docs/validation.md](docs/validation.md) | What has been tested, and how to run the checks |
+| [docs/research/standalone-obs.md](docs/research/standalone-obs.md) | Research on shipping without a separate OBS install |
+
+## Credits
+
+- [OBS Studio](https://obsproject.com) does the capture and encoding.
+- [saucer](https://github.com/saucer/saucer) hosts the WebView2 interface.
+- [Inter](https://rsms.me/inter/) is the typeface, under the SIL Open Font License.
+- [FFmpeg](https://ffmpeg.org) exports edited clips.
+
+Third-party notices are compiled into the executable. Open them from **Help**, **Software notices**.
+
+OBSReplay is not affiliated with the OBS Project.
+
+## License
+
+[MIT](LICENSE).

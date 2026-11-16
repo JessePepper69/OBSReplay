@@ -277,7 +277,9 @@ struct Desktop {
         try {
             if (action=="setup" || action=="apply") {
                 if (pending_keys) return std::unexpected("Wait for the current settings change to finish.");
-                const auto settings=Json::parse(payload);
+                // Guided setup sends {settings, start}; Settings sends the settings object itself.
+                const auto request=Json::parse(payload);
+                const auto settings=request.is_object() && request.contains("settings") && request["settings"].is_object() ? request["settings"] : request;
                 replay::validate_settings(settings);
                 const auto previous=Json::parse(controller->snapshot()).at("settings");
                 const auto result=bind(settings.at("save_hotkey"),settings.at("show_hotkey"));
@@ -382,12 +384,13 @@ coco::stray start(saucer::application* app) {
             SetWindowPos(startup_hwnd,nullptr,x,y,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
         }
     }
-    window->set_background({16,21,29,255});
+    const auto ground = replay::theme_ground(replay::saved_theme());
+    window->set_background({ground.r,ground.g,ground.b,255});
     auto view_created=saucer::smartview::create({.window=window,.storage_path=replay::isolated_webview_folder()});
     if (!view_created) { MessageBoxW(nullptr,L"The WebView2 interface could not start. Repair or update Microsoft Edge WebView2 Runtime and try again.",L"OBSReplay",MB_OK|MB_ICONERROR);app->quit();co_return; }
     auto view=std::move(*view_created);
-    view.set_force_dark(true);
-    view.set_background({16,21,29,255});
+    view.set_force_dark(!ground.light);
+    view.set_background({ground.r,ground.g,ground.b,255});
     view.set_context_menu(false);
     {
         // Accidental Ctrl+wheel zoom would rescale the whole interface.
@@ -424,6 +427,12 @@ coco::stray start(saucer::application* app) {
     view.expose("hide",[&] { desktop.hide(); });
     view.expose("hotkey_recording",[&](bool enabled) { desktop.record_hotkey(enabled); });
     view.expose("ui_ready",[&] { desktop.ready(); });
+    view.expose("theme_changed",[&](std::string id) {
+        const auto next = replay::theme_ground(id);
+        window->set_background({next.r,next.g,next.b,255});
+        view.set_background({next.r,next.g,next.b,255});
+        view.set_force_dark(!next.light);
+    });
     view.expose("quit",[&] { app->post([app] { app->quit(); }); });
     view.embed(saucer::embedded::all());
     view.serve("/index.html");

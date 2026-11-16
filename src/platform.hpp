@@ -26,6 +26,11 @@ void atomic_write(const fs::path& path, const std::string& text);
 Json default_settings(const Paths& p);
 Json load_settings(const Paths& p);
 void validate_settings(const Json& settings);
+// The window ground of a colour theme (the page colour in frontend/themes.css), painted natively behind the page
+// so a window never shows another theme's colour while it opens or resizes. Unknown ids give Original.
+struct ThemeGround { unsigned char r, g, b; bool light; };
+ThemeGround theme_ground(const std::string& id);
+std::string saved_theme();
 void save_settings(const Paths& p, const Json& settings);
 fs::path find_obs();
 // File version (major, minor, patch) from the executable's version resource.

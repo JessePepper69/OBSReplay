@@ -16,6 +16,7 @@
 #include <tlhelp32.h>
 #include <algorithm>
 #include <array>
+#include <map>
 #include <chrono>
 #include <cwctype>
 #include <fstream>
@@ -199,7 +200,24 @@ Json default_settings(const Paths&) {
         {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
         {"encoder","auto"},{"codec","h264"},{"quality",20},{"mic_enabled",false},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
-        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true}};
+        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true},{"theme","original"}};
+}
+
+ThemeGround theme_ground(const std::string& id) {
+    static const std::map<std::string, ThemeGround> grounds{
+        {"original", {0x09, 0x0d, 0x13, false}},
+        {"mono", {0x0a, 0x0a, 0x0a, false}},
+        {"light", {0xf2, 0xf4, 0xf7, true}},
+        {"rose", {0x10, 0x0b, 0x0d, false}},
+        {"forest", {0x0a, 0x0e, 0x0b, false}},
+        {"amethyst", {0x0d, 0x0c, 0x11, false}},
+        {"ember", {0x0f, 0x0c, 0x0a, false}}};
+    const auto found = grounds.find(id);
+    return found == grounds.end() ? grounds.at("original") : found->second;
+}
+
+std::string saved_theme() {
+    try { return load_settings(paths()).value("theme", std::string{"original"}); } catch (...) { return "original"; }
 }
 
 void validate_settings(const Json& settings) {
@@ -216,6 +234,11 @@ void validate_settings(const Json& settings) {
         if (!settings.contains(key) || !settings[key].is_boolean()) throw std::runtime_error(std::string("Invalid setting: ") + key);
     if (settings.contains("animations_enabled") && !settings["animations_enabled"].is_boolean())
         throw std::runtime_error("Invalid setting: animations_enabled");
+    // The colour theme is the page's business; here it only has to be a short plain id.
+    if (settings.contains("theme")) {
+        const bool plain = settings["theme"].is_string() && [&] { const auto id = settings["theme"].get<std::string>(); return !id.empty() && id.size() <= 32 && std::all_of(id.begin(), id.end(), [](unsigned char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; }); }();
+        if (!plain) throw std::runtime_error("Invalid setting: theme");
+    }
     for (const auto key : {"clip_seconds","output_height","fps","quality"})
         if (!settings.contains(key) || !settings[key].is_number_integer()) throw std::runtime_error(std::string("Invalid setting: ") + key);
     const int duration=settings["clip_seconds"].get<int>(), height=settings["output_height"].get<int>(), fps=settings["fps"].get<int>(), quality=settings["quality"].get<int>();

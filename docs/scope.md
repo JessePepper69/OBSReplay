@@ -1,0 +1,155 @@
+# Scope
+
+This file lists what OBSReplay includes and excludes, feature by feature, with the status of each item in the code.
+
+## Contents
+
+- [Deliverable](#deliverable)
+- [Status legend](#status-legend)
+- [Setup](#setup)
+- [Capture](#capture)
+- [Settings](#settings)
+- [Clips and viewer](#clips-and-viewer)
+- [Clip editor](#clip-editor)
+- [Desktop integration](#desktop-integration)
+- [Out of scope](#out-of-scope)
+- [Constraints](#constraints)
+- [Acceptance evidence](#acceptance-evidence)
+
+## Deliverable
+
+- One release `OBSReplay.exe` with compiled-in HTML, CSS and JavaScript and static C++ dependencies.
+- Running the exe needs no Node, no frontend runtime, no sidecar UI, no admin task and no installer.
+- Installed OBS Studio captures. Installed WebView2 renders the UI. Installed FFmpeg exports edits.
+
+## Status legend
+
+| Status | Meaning |
+| --- | --- |
+| Done | Present in the code. |
+| Out | Excluded on purpose. |
+
+Hardware coverage and test evidence live in [validation](validation.md).
+
+## Setup
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Three-step guided setup (**OBS Studio**, **Capture**, **Start**) | Done | Opens on first run while no integration exists. |
+| Detect installed OBS | Done | Registry key, then `Program Files\obs-studio`. Re-checks every 3 s while no supported OBS is known. |
+| Install or update OBS through winget | Done | `OBSProject.OBSStudio`. Windows shows its own permission prompt. |
+| Download page and **Locate obs64.exe…** | Done | The located file must be `obs64.exe` version 31 or newer. |
+| Close an open OBS before setup | Done | Sends `WM_CLOSE` to the OBS main window. Refuses when OBS reports a stream or recording. |
+| Dedicated profile and scene collection | Done | Owner markers guard both. Setup refuses unrelated files with the same names. |
+| Authenticated local WebSocket control | Done | Changes to shared OBS WebSocket settings are recorded and backed up. |
+| Skip the OBS first-run wizard | Done | Writes `FirstRun=true` to `user.ini`. |
+| Launch OBS in the tray and start the buffer | Done | One step from the **Start** page. |
+| Rollback on failure | Done | Staged file changes restore in reverse order. |
+| Reset integration | Done | Needs OBS closed. Removes owned files, restores shared values that still match. Clips stay. |
+
+## Capture
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Start and stop the replay buffer | Done | Stop discards buffered history. |
+| Save by button, tray menu or global hotkey | Done | A save completes when OBS reports the file and the file exists. A failed save is not retried. |
+| Connection and replay state display | Done | Shows connection, session ownership, pending work, errors and the confirmed file. |
+| Reconnect and **Open OBS** | Done | Reconnect never repeats a save. |
+| Capture readiness checks | Done | Verifies scene, sources, display and audio devices before start and save. |
+| Stop capture when the selected display disconnects | Done | Prevents recording another display. |
+| Resume capture at login | Done | Runs when `replay_enabled` is `true` and the integration exists. |
+
+## Settings
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Replay length 30 s to 10 min | Done | Six choices in the UI. |
+| Resolution original, 1440p, 1080p, 720p | Done | |
+| Frame rate 30, 60, 120, 144 fps | Done | |
+| Encoder: automatic, NVIDIA, AMD, Intel, CPU | Done | Hardware encoders are probed with OBS test tools on the default adapter. |
+| Codec H.264, HEVC, AV1 | Done | CPU encoding supports H.264 only. |
+| Five quality presets | Done | **Very high** to **Very low**. |
+| Capture modes: game or display, fullscreen games, entire display | Done | |
+| Desktop and microphone device choice | Done | Devices are validated at apply time. |
+| RNNoise and Speex noise suppression | Done | |
+| Separate audio tracks | Done | Mix, Desktop, Microphone. |
+| Clips folder | Done | Write access is tested before applying. |
+| Sort clips into app folders | Done | Best-effort label from the foreground window. |
+| Save sound | Done | |
+| Start at Windows login | Done | Current-user `Run` entry. |
+| Configurable hotkeys with conflict detection | Done | |
+| Animations switch | Done | |
+| Seven color themes | Done | Applied to every window. |
+| One explicit Apply with pending state | Done | Capture and audio changes restart the owned OBS session and resume capture. |
+
+## Clips and viewer
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Recent clip history | Done | Up to 50 replays and 50 edited exports, from confirmed saves. |
+| **Replays** and **Edited exports** tabs | Done | On **Capture** (latest 8) and **Clips** (24 per page). |
+| App filter and paging on **Clips** | Done | |
+| Thumbnails and clip length | Done | Decoded in the page from the clip file. |
+| In-app viewer with timeline, filmstrip and waveform | Done | The waveform needs FFmpeg. |
+| **Show in folder**, **Open file**, **Delete** | Done | Delete asks for confirmation and removes the file. |
+| Remove missing files from history | Done | Checked every second. |
+
+## Clip editor
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| One editor window per clip | Done | Reopening a clip focuses its window. |
+| Split, remove, restore, undo, redo | Done | Edit decisions live in the page. |
+| Preview quality **Full**, **Half**, **Quarter** | Done | Half and Quarter build a proxy file with FFmpeg. |
+| Per-track volume in preview | Done | Uses audio stems copied from the clip. |
+| Export quality 1 to 10 with size estimate | Done | 10 keeps the original video where the file allows it. |
+| Frame-exact cuts | Done | |
+| Named exports in `Edited Exports` | Done | Never overwrites a file. |
+| FFmpeg detection and **Locate ffmpeg.exe** | Done | |
+| Warn on quit with unexported cuts or a running export | Done | |
+
+## Desktop integration
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Single instance | Done | A second launch shows the running window. |
+| System tray icon and menu | Done | |
+| Hide to tray on close | Done | |
+| Show/hide hotkey | Done | |
+| Tray notifications for saves and errors while hidden | Done | |
+| Volume mixer shows OBSReplay name and icon | Done | |
+| Embedded third-party notices | Done | Opened from Help. |
+
+## Out of scope
+
+| Item | Status |
+| --- | --- |
+| Forced termination of OBS | Out |
+| Dismissing dialogs of other processes | Out |
+| Changing Windows Game Bar or capture settings | Out |
+| Always-admin requirement | Out |
+| Editing a personal OBS profile or an active session | Out |
+| Arbitrary shell commands or URLs from the page | Out |
+| Bundled OBS, WebView2 or FFmpeg | Out |
+| Installer | Out |
+| Streaming and full-length recording controls | Out |
+| Claims of AMD, Intel or anti-cheat compatibility without test evidence | Out |
+
+## Constraints
+
+- Toolchain: CMake, C++23, saucer v8.0.5, plain embedded web UI, Windows APIs.
+- Transport: native WinHTTP WebSocket, correlated request IDs, protocol authentication, bounded waits.
+- One worker thread runs controller actions in order. The page reads state and submits actions.
+- C++ validates every setting. Settings files are written through a temporary file and a rename.
+- The page never receives the WebSocket password.
+- The page can load `saucer://embedded/index.html` or `saucer://embedded/editor.html` and nothing else.
+- OBS WebSocket events do not expose the game hook. App labels stay separate from capture readiness.
+- Setup never rewrites OBS configuration while OBS runs.
+
+## Acceptance evidence
+
+- Compile Release and inspect the dependencies and size of the exe.
+- Run the native exe. Check the UI at normal size, minimum size and high DPI. Check keyboard focus, animations off, and the setup, error, capturing, saving and settings states.
+- Exercise a real installed OBS: setup, authenticated connection, buffer start, a playable saved clip, stop, restart, reconnect, settings persistence, tray and hotkeys.
+- Review the implementation, fix material findings, rerun the affected checks.
+- Document build, run and prerequisite details and hardware limits in [validation](validation.md).
