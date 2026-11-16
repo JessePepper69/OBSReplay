@@ -17,7 +17,7 @@ namespace replay {
 namespace {
 uint64_t ticks(const FILETIME& time) { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; }
 
-struct Process { DWORD id{}, parent{}; std::wstring name; unsigned threads{}; int group{}; bool read{}; uint64_t created{}, cpu{}, memory{}; };
+struct Process { DWORD id{}, parent{}; std::wstring name; unsigned threads{}; int group{}; bool read{}, ended{}; uint64_t created{}, cpu{}, memory{}; };
 struct Group { double cpu{}; uint64_t memory{}, gpu_memory{}; unsigned processes{}, threads{}; std::map<std::wstring, double> engines; };
 struct Previous { uint64_t created{}, cpu{}; };
 
@@ -80,8 +80,11 @@ Json resource_usage(const fs::path& clips_folder) {
     const auto read = [](Process& process) {
         if (process.read) return;
         process.read = true;
-        const HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process.id);
+        // Windows keeps listing a process that has ended while something still holds a handle to it. Those are not counted.
+        if (!process.threads) { process.ended = true; return; }
+        const HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, process.id);
         if (!handle) return;
+        if (WaitForSingleObject(handle, 0) == WAIT_OBJECT_0) { process.ended = true; CloseHandle(handle); return; }
         FILETIME created{}, exited{}, kernel{}, user{};
         if (GetProcessTimes(handle, &created, &exited, &kernel, &user)) { process.created = ticks(created); process.cpu = ticks(kernel) + ticks(user); }
         // Private working set: memory only this process holds, the figure Task Manager shows. The plain working set
@@ -131,6 +134,7 @@ Json resource_usage(const fs::path& clips_folder) {
     for (auto& process : processes) {
         if (!process.group) continue;
         read(process);
+        if (process.ended) continue;
         auto& group = groups[process.group];
         ++group.processes;
         group.threads += process.threads;
