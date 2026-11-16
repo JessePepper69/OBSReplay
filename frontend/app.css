@@ -366,6 +366,8 @@ dialog p { margin-top:10px;font-size:14px;line-height:1.55;color:var(--muted); }
 .task-list li[data-state="failed"] .task-mark { border-color:transparent;background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red); }
 @keyframes task-spin { to { rotate:360deg; } }
 .mode-choice { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 16px;padding:0;border:0;min-width:0; }
+[data-step-panel="capture"] .setting-row { min-height:54px;padding-block:7px; }
+[data-step-panel="capture"] .mode-option { padding-block:14px; }
 .mode-choice legend { padding:0;margin-bottom:10px;font-size:14px;font-weight:650;color:var(--muted); }
 .mode-option { position:relative;display:flex;flex-direction:column;gap:4px;padding:16px 16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--card);cursor:pointer;transition:border-color var(--fast) var(--ease),background-color var(--fast) var(--ease); }
 .mode-option:hover { border-color:var(--line-hover); }

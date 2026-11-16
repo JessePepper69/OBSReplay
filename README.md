@@ -9,37 +9,36 @@ Instant replay for Windows, built on OBS Studio. Press a key and the last few mi
 
 ## Contents
 
-- [About](#about)
+- [Why OBSReplay](#why-obsreplay)
 - [Features](#features)
 - [Install](#install)
-- [Hotkeys](#hotkeys)
 - [Where your files go](#where-your-files-go)
 - [What it changes on your PC](#what-it-changes-on-your-pc)
-- [Good to know](#good-to-know)
 - [Build from source](#build-from-source)
-- [Project layout](#project-layout)
 - [Documentation](#documentation)
 - [Credits](#credits)
 - [License](#license)
 
-## About
+## Why OBSReplay
 
-OBS Studio has a good replay buffer and a setup most players never finish. OBSReplay does the setup for you and stays out of the way afterwards.
+OBSReplay pairs the OBS capture engine with the convenience of ShadowPlay.
 
-OBS does the capture and the encoding. OBSReplay installs OBS when it is missing, writes its own OBS profile, starts OBS in the tray, registers the hotkeys and keeps a library of what you saved. Your existing OBS profiles and scenes stay as they are.
+- **OBS Studio alone** has no player or library for your clips, uses encoder terms that confuse new users, and takes manual work to start capture at every Windows boot.
+- **ShadowPlay alone** draws common complaints: heavy resource use, corrupted video or audio tracks, recording that turns itself off, large files, few controls and weak microphone noise suppression.
+- **OBSReplay** sets up OBS for you, starts capture with Windows, and adds a clip player, a library filtered by game, trim and export, separate desktop and microphone tracks, and quality settings in plain words.
 
-The app is one executable of about 3 MB. The interface is plain HTML, CSS and JavaScript inside WebView2, with a C++23 host.
+OBS does the capture and the encoding. OBSReplay installs OBS when it is missing, writes its own OBS profile, starts OBS in the tray and registers the hotkeys. Your existing OBS profiles and scenes stay as they are.
 
 ## Features
 
 - **Guided setup.** Three steps: install what is missing, choose what to record, start. Setup checks for OBS Studio and FFmpeg and installs both with one button.
-- **One-key save.** A global hotkey saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
+- **One-key save.** A global hotkey, `Alt+Z` by default, saves the replay buffer while you play. A sound confirms the save once OBS reports the file.
 - **Three capture modes.** Game or display, fullscreen games only, or one whole display.
-- **Clips library.** Thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
+- **Clips library.** One folder per game, thumbnails, clip length and file size, a filter per game, 24 clips a page, separate tabs for replays and edited exports.
 - **Replay viewer.** Scrub a filmstrip and waveform timeline, step by frame, zoom with the wheel.
-- **Clip editor.** Split, remove and restore sections, undo and redo, per-track volume, then export. Quality 10 keeps the original video and cuts on the exact frame. Lower levels re-encode to a smaller file.
+- **Clip editor.** Split, remove and restore sections, undo and redo, per-track volume in preview, then export. Quality 10 keeps the original video and cuts on the exact frame. Lower levels re-encode to a smaller file.
 - **Hardware encoding.** NVIDIA, AMD and Intel encoders with H.264, HEVC or AV1, picked from what your GPU supports.
-- **Separate audio tracks.** Desktop and microphone record to their own tracks. The microphone is off until you turn it on.
+- **Separate audio tracks.** Desktop and microphone record to their own tracks. The microphone is off until you turn it on, with optional RNNoise or Speex noise suppression.
 - **Seven themes.** Original, Mono, Light, Rose, Forest, Amethyst and Ember.
 - **Tray app.** Closing the window keeps the hotkeys alive. Start with Windows is optional.
 
@@ -65,23 +64,6 @@ Steps:
 
 There is no installer. To remove the app, see [What it changes on your PC](#what-it-changes-on-your-pc).
 
-## Hotkeys
-
-| Action | Default | Scope |
-| --- | --- | --- |
-| Save replay | `Alt+Z` | Global |
-| Show or hide the window | `Alt+X` | Global |
-| Play or pause | `Space` or `K` | Viewer and editor |
-| Move 1 second (5 with `Shift`) | `←` `→` | Viewer and editor |
-| Previous or next frame | `,` `.` | Viewer and editor |
-| Split at the playhead | `S` | Editor |
-| Remove or restore a section | `Delete` | Editor |
-| Remove everything before or after the playhead | `I` `O` | Editor |
-| Undo, redo | `Ctrl+Z` `Ctrl+Y` | Editor |
-| Export | `Ctrl+E` | Editor |
-
-Change the two global hotkeys in **Settings**, **App**. `Alt+Z` is also the default for the NVIDIA overlay. If both are active, OBSReplay reports the conflict and offers **Change shortcut**.
-
 ## Where your files go
 
 | What | Location |
@@ -102,17 +84,6 @@ Change the two global hotkeys in **Settings**, **App**. `Alt+Z` is also the defa
 
 To undo it: open **Help**, select **Reset integration**, turn off **Start with Windows**, then delete the executable and `%LOCALAPPDATA%\OBSReplay`. Your clips stay where they are.
 
-## Good to know
-
-- **Game or display records your desktop between games.** Other windows and notifications end up in the buffer. Choose **Fullscreen games only** to avoid that.
-- **Stopping capture discards the buffer.** Save first.
-- **Changing capture or audio settings restarts OBS.** OBSReplay saves the current buffer before it does.
-- **Quitting OBSReplay leaves OBS running.** Capture continues. The hotkeys stop until you reopen the app.
-- **Replay length is an upper limit.** OBS holds the buffer in memory.
-- **A stream or full recording in OBS blocks setup.** OBSReplay asks you to stop it and never force-closes OBS.
-- **Game folders are named after the app in front** when you save. That is a best guess at the game.
-- **Some games block capture.** Anti-cheat and protected video can leave a black frame. That comes from OBS game capture.
-
 ## Build from source
 
 You need Windows x64, Visual Studio with the C++ desktop workload (MSVC 19.44 or newer), CMake 3.25 or newer, and Git.
@@ -124,18 +95,6 @@ You need Windows x64, Visual Studio with the C++ desktop workload (MSVC 19.44 or
 The first build downloads the pinned dependencies. The result is `dist/OBSReplay.exe`, with the interface, icon, font, notices and runtime compiled in. There is no npm step.
 
 To run a second copy with its own data folder, set `OBSREPLAY_DATA_DIR` to an absolute path before you start it. [docs/validation.md](docs/validation.md) covers the headless mode used for automated checks.
-
-## Project layout
-
-```text
-OBSReplay/
-├── src/            C++ host: window, tray, OBS control, settings, media, editor export
-├── frontend/       Interface: HTML, CSS, JavaScript, bundled Inter font
-├── resources/      Icon, manifest, version resource, save sound
-├── docs/           Product, scope, architecture, design system, validation, research
-├── CMakeLists.txt  Build definition and pinned dependencies
-└── build.ps1       Configure, build and copy the executable to dist/
-```
 
 ## Documentation
 

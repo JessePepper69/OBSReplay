@@ -156,6 +156,7 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `editors_pending` | none | string | Text that describes running exports or unexported cuts. Empty when none. |
 | `ffmpeg_state` | `refresh` (bool) | JSON string | FFmpeg as the editor host found it: `status` (`checking`, `ready`, `missing`, `invalid`), `version`, and `install` (`stage`, `error`, `available`). `refresh` looks again when FFmpeg is missing. Guided setup step 1 polls it. |
 | `install_ffmpeg` | none | `true` or an error | Start `winget install --id Gyan.FFmpeg` on a worker thread. Same call as the editor window's. |
+| `pick_ffmpeg` | none | `true`, `false` on cancel, or an error | Native file dialog for `ffmpeg.exe`. The editor host checks the file and adopts it. |
 | `clip_waveform` | `path` string | JSON string | Viewer waveform. `{"status":"ready","rate":100,"peaks":"<base64>"}` or `{"status":"unavailable"}`. A new call cancels a running decode. |
 | `pick_folder` | `current` string | path or empty string | Native folder dialog for the clips folder. |
 | `pick_obs` | `current` string | path or empty string | Native file dialog for `obs64.exe`. |

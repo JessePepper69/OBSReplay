@@ -23,6 +23,8 @@ public:
     // Guided setup shows it beside OBS Studio. `refresh` looks again when FFmpeg is missing.
     std::string ffmpeg_state(bool refresh);
     std::expected<bool, std::string> install_ffmpeg();
+    // Opens a file picker owned by `owner` (an HWND) and uses the chosen ffmpeg.exe. False when the user cancels.
+    std::expected<bool, std::string> pick_ffmpeg(void* owner);
     // Audio peaks for the replay viewer's waveform lane, as JSON: {"status":"ready","rate":100,"peaks":"<base64>"}
     // or {"status":"unavailable"}. Decoded on a worker thread; `done` is called once, on the UI thread.
     // Asking for another clip stops a decode that is still running. Only clips in the recent history are read.

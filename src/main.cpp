@@ -423,6 +423,7 @@ coco::stray start(saucer::application* app) {
     view.expose("editors_pending",[&] { return editors.pending(); });
     view.expose("ffmpeg_state",[&](bool refresh) { return editors.ffmpeg_state(refresh); });
     view.expose("install_ffmpeg",[&] { return editors.install_ffmpeg(); });
+    view.expose("pick_ffmpeg",[&] { return editors.pick_ffmpeg(desktop.hwnd); });
     view.expose("clip_waveform",[&](std::string path,saucer::executor<std::string> executor) {
         editors.waveform(path,[executor=std::move(executor)](std::string result) { executor.resolve(std::move(result)); });
     });

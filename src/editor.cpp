@@ -1309,6 +1309,15 @@ std::string EditorHost::ffmpeg_state(bool refresh) {
 
 std::expected<bool, std::string> EditorHost::install_ffmpeg() { return impl_->install_ffmpeg(); }
 
+std::expected<bool, std::string> EditorHost::pick_ffmpeg(void* owner) {
+    try {
+        const auto chosen = pick_ffmpeg_file(static_cast<HWND>(owner), impl_->ffmpeg_info().exe);
+        if (chosen.empty()) return false;
+        impl_->detect(from_string(chosen));
+        return true;
+    } catch (const std::exception& e) { return std::unexpected(e.what()); }
+}
+
 std::string EditorHost::pending() const {
     int exporting = 0, edited = 0;
     for (const auto& session : impl_->sessions) {

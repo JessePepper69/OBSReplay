@@ -431,7 +431,7 @@
     const snapshot = state.snapshot || {};
     const value = settings();
     const active = Boolean(snapshot.replay_active && snapshot.connected && snapshot.owned);
-    $("connection-label").textContent = !state.native ? "Not connected" : !configured() && !snapshot.connected ? "Not set up yet" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
+    $("connection-label").textContent = !state.native ? "Not connected" : operating("setup") ? "Setting up…" : operating("install_obs") ? "Installing OBS Studio…" : !configured() && !snapshot.connected ? "Not set up yet" : snapshot.connected ? snapshot.owned ? "OBS connected" : "Other OBS session" : snapshot.busy ? "Connecting to OBS…" : "OBS disconnected";
     $("connection-dot").className = `state-dot${snapshot.connected && snapshot.owned ? " ready" : ""}`;
     let title = "Capture stopped";
     let description = "Start capture to keep your recent moments ready to save.";
@@ -697,7 +697,8 @@
   }
   function renderClips() {
     const clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : [];
-    const key = JSON.stringify(clips);
+    // The empty state names the save shortcut while capture runs, so it follows the capture state too.
+    const key = JSON.stringify(clips.some(clip => !clip.edited) ? clips : [clips, capturing(), settings().save_hotkey, settings().clip_seconds]);
     if (key === state.clipsKey) return;
     state.clipsKey = key;
     thumbnailObserver.disconnect();
@@ -773,6 +774,7 @@
       animation.finished.catch(() => {}).finally(() => entranceAnimations.delete(animation));
     });
   }
+  const capturing = () => Boolean(state.snapshot?.replay_active && state.snapshot?.connected && state.snapshot?.owned);
   const emptyCopy = {
     replays: { title: "No replays saved yet", text: "Start capture, then press your save shortcut. Open your clips folder to find older files.", short: "No replays saved yet. Start capture, then press your save shortcut." },
     edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." }
@@ -809,7 +811,7 @@
         const empty = document.createElement("div");
         empty.className = "clips-empty";
         const title = document.createElement("h2"); title.textContent = emptyCopy[tab].title;
-        const description = document.createElement("p"); description.textContent = emptyCopy[tab].text;
+        const description = document.createElement("p"); description.textContent = tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
         empty.append(title, description);
         container.append(empty);
       }
@@ -861,6 +863,7 @@
       }
       state.native = true;
       const previousObs = state.snapshot?.settings?.obs_path;
+      const lackedObs = state.snapshot ? !state.snapshot.obs_supported : false;
       state.snapshot = snapshot;
       if (state.loaded && previousObs !== snapshot.settings.obs_path) $("obs_path").value = snapshot.settings.obs_path || "";
       syncMotion();
@@ -873,18 +876,25 @@
         if (!snapshot.busy && (changed || state.pending.sawBusy)) {
           const action = state.pending.action;
           state.pending = null;
-          if (action === "setup") setup.flow = snapshot.error ? "failed" : "done";
-          if (action === "install_obs" && !snapshot.error && snapshot.obs_supported) {
-            // FFmpeg follows OBS and finishes in the background while setup moves on.
-            installFfmpegIfWanted();
-            if (setup.step === "obs") goStep("capture");
+          if (action === "setup") {
+            setup.flow = snapshot.error ? "failed" : "done";
+            // A finished setup shows its checks for a moment, then opens the Capture page on its own.
+            if (!snapshot.error && state.tab === "setup") setTimeout(finishSetup, 1100);
           }
+          if (action === "install_obs") {
+            // FFmpeg follows OBS, also when the OBS install failed, and finishes in the background while setup moves on.
+            installFfmpegIfWanted();
+            if (!snapshot.error && snapshot.obs_supported && setup.step === "obs") goStep("capture");
+          }
+          if (action === "locate_obs" && !snapshot.error && snapshot.obs_supported && setup.step === "obs" && state.ffmpeg?.status === "ready") goStep("capture");
           if (!snapshot.error && ["setup", "apply", "install_obs", "locate_obs"].includes(action)) fillForm(snapshot.settings);
         } else if (Date.now() - state.pending.started > 120000) {
           state.pending = null;
           showError("OBSReplay hasn’t heard back from OBS. Check that OBS is open, then try again. A replay save is never retried on its own.");
         }
       }
+      // OBS Studio installed by hand while step 1 waits: carry on without a click when nothing else is missing.
+      if (lackedObs && snapshot.obs_supported && !state.pending && state.tab === "setup" && setup.step === "obs" && state.ffmpeg?.status === "ready") goStep("capture");
       if (!state.initialRoute && !snapshot.busy) {
         state.initialRoute = true;
         if (!configured()) {
@@ -987,7 +997,7 @@
   async function pollFfmpeg(refresh = false) {
     clearTimeout(ffmpegTimer);
     const next = await readFfmpeg(refresh);
-    if (next && JSON.stringify(next) !== JSON.stringify(state.ffmpeg)) { state.ffmpeg = next; renderSetup(); }
+    if (next && JSON.stringify(next) !== JSON.stringify(state.ffmpeg)) { state.ffmpeg = next; renderFeedback(); }
     const watching = state.tab === "setup" && setup.step === "obs" && !document.hidden;
     if (ffmpegBusy() || watching) ffmpegTimer = setTimeout(pollFfmpeg, ffmpegBusy() ? 500 : 3000);
   }
@@ -1050,7 +1060,7 @@
     const snapshot = state.snapshot || {};
     if (busy()) return snapshot.message || "Working…";
     if (setup.step === "obs") return snapshot.obs_supported ? `OBS Studio ${snapshot.obs_version} is ready` : "OBS Studio is needed for capture";
-    if (setup.step === "capture") return "Step 2 of 3";
+    if (setup.step === "capture") return state.ffmpeg?.install?.stage ? "Step 2 of 3. FFmpeg is installing in the background." : state.ffmpeg?.install?.error ? "Step 2 of 3. FFmpeg wasn’t installed. Go back to Install to try again." : "Step 2 of 3";
     if (setup.flow === "done") return "Replay capture is running";
     return snapshot.message || "";
   }
@@ -1125,13 +1135,16 @@
     $("obs-path").hidden = !obsReady || installing;
     $("obs-path").textContent = snapshot.settings?.obs_path || "";
     const needObs = !obsReady;
-    $("obs-actions").hidden = installing || ffmpegInstalling || (!needObs && !canInstallFfmpeg);
+    $("obs-actions").hidden = installing || (!needObs && (ffmpegInstalling || !ffmpegMissing));
     $("install-obs").hidden = needObs ? !snapshot.winget : !canInstallFfmpeg;
     $("install-obs").textContent = !needObs ? "Install FFmpeg" : `${snapshot.obs_found ? "Update OBS Studio" : "Install OBS Studio"}${canInstallFfmpeg ? " and FFmpeg" : ""}`;
     $("download-obs").hidden = $("locate-obs").hidden = !needObs;
     $("download-obs").className = snapshot.winget ? "" : "primary";
     $("download-obs").textContent = snapshot.winget ? "Download from obsproject.com" : "Download OBS Studio";
-    for (const id of ["install-obs", "download-obs", "locate-obs"]) $(id).disabled = !state.native || pending;
+    // Manual ways to add FFmpeg, offered once OBS Studio is in so step 1 never shows five buttons.
+    $("download-ffmpeg").hidden = $("locate-ffmpeg").hidden = needObs || !ffmpegMissing;
+    for (const id of ["install-obs", "download-obs", "locate-obs", "download-ffmpeg", "locate-ffmpeg"]) $(id).disabled = !state.native || pending;
+    if (ffmpegInstalling) $("install-obs").disabled = true;
     // Step 2: capture essentials
     for (const element of document.querySelectorAll('[data-step-panel="capture"] input, [data-step-panel="capture"] select, [data-step-panel="capture"] button')) element.disabled = !state.native || pending;
     if (!pending) $("setup-monitor").disabled = $("capture").value === "game";
@@ -1160,7 +1173,7 @@
       $("start-text").textContent = setup.flow === "failed" ? (configured() ? "Your settings were saved. Check the problem above, then try again." : "Nothing was started. Check the problem above, then try again.") : "OBS closes and reopens on its own. This takes a few seconds.";
     }
     $("start-mark").className = `capture-mark ${setup.flow === "done" ? "active" : setup.flow === "failed" ? "failed" : "working"}`;
-    $("start-hint").hidden = setup.flow !== "done";
+    $("start-hint").hidden = setup.flow !== "done" && setup.flow !== "running";
     // Inline error
     const showSetupError = Boolean(failedError) && failedError !== state.dismissedError && !installing && !running;
     $("setup-error").hidden = !showSetupError;
@@ -1169,16 +1182,21 @@
     // Footer actions
     const back = $("setup-back"), next = $("setup-next");
     back.hidden = setup.step === "obs" || setup.flow === "done" || running;
-    next.hidden = running || (setup.step === "obs" && !obsReady);
+    next.hidden = running || setup.flow === "done" || (setup.step === "obs" && !obsReady);
     back.disabled = next.disabled = !state.native || pending;
     if (setup.step === "obs") next.textContent = "Continue";
     else if (setup.step === "capture") next.textContent = "Set up and start capture";
-    else next.textContent = setup.flow === "done" ? "Go to Capture" : "Try again";
+    else next.textContent = "Try again";
   }
   function setupNext() {
     if (setup.step === "obs") goStep("capture");
     else if (setup.step === "capture" || setup.flow === "failed") runSetup(formValue());
-    else if (setup.flow === "done") { setup.flow = null; setup.step = null; showTab("capture"); }
+    else finishSetup();
+  }
+  function finishSetup() {
+    if (setup.flow !== "done") return;
+    setup.flow = null; setup.step = null;
+    if (state.tab === "setup") showTab("capture");
   }
   function setupBack() {
     if (setup.step === "capture") goStep("obs");
@@ -1191,6 +1209,10 @@
     $("install-obs").addEventListener("click", installMissing);
     window.addEventListener("focus", () => { if (state.tab === "setup" && setup.step === "obs") pollFfmpeg(true); });
     $("download-obs").addEventListener("click", () => dispatch("help", { topic: "obs" }));
+    $("download-ffmpeg").addEventListener("click", () => dispatch("help", { topic: "ffmpeg" }));
+    $("locate-ffmpeg").addEventListener("click", async () => {
+      try { if (await nativeCall("pick_ffmpeg")) pollFfmpeg(); } catch (error) { showError(error); }
+    });
     $("locate-obs").addEventListener("click", async () => {
       try {
         const path = await nativeCall("pick_obs", state.snapshot?.settings?.obs_path || "");

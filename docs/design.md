@@ -386,7 +386,8 @@ No rounded primary pills.
 - Current step: filled accent blue.
 - Finished steps: a green check.
 - Unreachable steps: disabled.
-- The footer carries **Back** and the forward action: **Continue**, **Set up and start capture**, **Try again** or **Go to Capture**.
+- The footer carries **Back** and the forward action: **Continue**, **Set up and start capture** or **Try again**.
+- A new user with nothing installed reaches a running capture in two clicks: the install button, then **Set up and start capture**.
 - **All settings** leads to Settings, whose unconfigured action is **Set up and start**.
 
 Step 1, Install:
@@ -398,8 +399,11 @@ Step 1, Install:
 - Setup checks both when the step opens. It opens on step 2 only when both are present.
 - One primary action installs what is missing through winget: **Install OBS Studio and FFmpeg**, **Install OBS Studio**, **Update OBS Studio**, or **Install FFmpeg**. OBS Studio installs first, then FFmpeg, so two winget runs never overlap.
 - When winget is missing the primary action is **Download OBS Studio**.
-- Secondary actions, only while OBS Studio is missing: **Download from obsproject.com** and **Locate obs64.exe**.
-- Installing hides the actions. The rows show the progress.
+- Secondary actions while OBS Studio is missing: **Download from obsproject.com** and **Locate obs64.exe**.
+- Secondary actions once OBS Studio is ready and FFmpeg is missing: **Download from ffmpeg.org** and **Locate ffmpeg.exe**. They also show when winget is missing.
+- A failed OBS Studio install still starts the FFmpeg install.
+- OBS Studio installed by hand while step 1 waits: setup moves to step 2 on its own when FFmpeg is present.
+- Installing hides the actions. The rows show the progress. On step 2 the footer reports an FFmpeg install that still runs or has failed.
 - OBS Studio is required. FFmpeg is not: **Continue** is available as soon as OBS Studio is ready, and an FFmpeg install finishes in the background.
 - A failed FFmpeg install shows the reason in the panel and keeps **Install FFmpeg** and **Continue**.
 
@@ -418,8 +422,9 @@ Step 3, Start:
 - A task list: Close OBS (only when OBS was open), Create the OBSReplay profile, Open OBS in the tray, Start replay capture.
 - Row states: pending, then a spinning accent ring, then a green check.
 - A failing stage shows a red cross. The error appears in an inline notice above the list.
-- Success reads "Replay capture is running" with the save shortcut as a key cap.
-- Success includes a note that a Windows network prompt for OBS can be answered either way.
+- While setup runs, a note says that a Windows network prompt for OBS can be answered either way.
+- Success reads "Replay capture is running" with the save shortcut as a key cap, holds for about a second, then opens the Capture page. No click is needed.
+- The empty replay list on the Capture page names the save shortcut while capture runs.
 
 ### Capture hero
 
