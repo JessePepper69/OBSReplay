@@ -496,6 +496,7 @@ On failure the controller restores the previous login entry and, after an owned-
 
 - String values allow at most 32700 bytes, no control characters, valid UTF-8.
 - `start_at_login` writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\OBSReplay` as `"<exe>" --tray`.
+- At launch, with `start_at_login` on, a missing entry or one whose executable no longer exists is written again. Isolated runs (`OBSREPLAY_DATA_DIR`) skip this.
 
 ### Data folder
 

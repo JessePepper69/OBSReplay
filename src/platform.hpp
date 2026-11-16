@@ -59,6 +59,8 @@ std::string safe_name(const std::string& name);
 void open_path(const fs::path& path, bool reveal = false);
 void open_help(const std::string& topic);
 void set_login_startup(const Paths& p, bool enabled);
+// Re-creates the login entry when the setting is on but the entry is gone or its executable no longer exists.
+void repair_login_startup(const Paths& p);
 std::string random_secret();
 std::string sha256_base64(const std::string& input);
 std::string now_iso();

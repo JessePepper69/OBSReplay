@@ -332,9 +332,11 @@ struct Controller::Impl {
 
     void initialize() {
         Json value;
+        bool loaded = true;
         try { value = load_settings(paths); }
-        catch (const std::exception& e) { value = default_settings(paths); fail(e.what()); }
+        catch (const std::exception& e) { loaded = false; value = default_settings(paths); fail(e.what()); }
         set_settings(value);
+        if (loaded && value.value("start_at_login", false)) try { repair_login_startup(paths); } catch (const std::exception& e) { log_error("Login startup repair failed: error={}", quoted_value(e.what())); }
         detect_obs();
         const bool configured = integration.configured();
         const bool winget = !winget_path().empty();

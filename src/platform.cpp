@@ -586,6 +586,23 @@ void set_login_startup(const Paths& p,bool enabled) {
     RegCloseKey(key);
     if(result!=ERROR_SUCCESS) throw std::runtime_error("Windows could not save the login startup option.");
 }
+// The entry can be lost while the setting stays on: an installer launched from a packaged (MSIX) app writes into that
+// app's private registry view, and cleanup tools remove Run values. Restore it when it is gone or points at a missing file.
+void repair_login_startup(const Paths& p) {
+    wchar_t custom[2]{};
+    if(GetEnvironmentVariableW(L"OBSREPLAY_DATA_DIR",custom,2)!=0||GetLastError()==ERROR_INSUFFICIENT_BUFFER) return;  // isolated check
+    std::wstring current(32768,L'\0');
+    DWORD bytes=static_cast<DWORD>(current.size()*sizeof(wchar_t));
+    const auto result=RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",L"OBSReplay",RRF_RT_REG_SZ,nullptr,current.data(),&bytes);
+    if(result==ERROR_SUCCESS) {
+        current.resize(wcsnlen(current.c_str(),bytes/sizeof(wchar_t)));
+        const auto close=current.size()>1&&current.front()==L'"'?current.find(L'"',1):std::wstring::npos;
+        std::error_code error;
+        if(close!=std::wstring::npos&&fs::exists(fs::path(current.substr(1,close-1)),error)) return;
+    } else if(result!=ERROR_FILE_NOT_FOUND) return;
+    log_warn("Start at Windows login entry was missing or stale; restoring it");
+    set_login_startup(p,true);
+}
 
 std::string random_secret() {
     std::array<unsigned char,32> bytes{};
