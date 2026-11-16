@@ -1817,6 +1817,8 @@
     watchReplay(clip);
   });
   window.addEventListener("obsreplay:reopen", () => { diskResample = true; });
+  // Sent by the native side when a replay was saved or an error appeared: read the state now.
+  window.addEventListener("obsreplay:state", () => schedulePoll(0));
   window.addEventListener("obsreplay:reopen", () => {
     if (!presented || !heldForReopen) { schedulePoll(0); cancelEntrance(); return; }
     requestAnimationFrame(() => requestAnimationFrame(() => { if (heldForReopen) playEntrance($(state.tab + "-view"), true); }));

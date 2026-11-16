@@ -17,6 +17,10 @@ std::optional<fs::path> isolated_webview_folder();
 // Test-only (OBSREPLAY_HEADLESS set): windows open off-screen without focus and Explorer is never opened.
 bool headless_mode();
 void show_headless(void* hwnd);
+// Stops a lone Alt press from putting the window (an HWND) into Windows' keyboard menu mode. These windows have no
+// menu bar, so that mode shows nothing, takes the keyboard and swallows the next click. A shortcut such as Alt+Z,
+// pressed while the window has focus, ends with exactly that lone Alt. Alt+Space still opens the system menu.
+void ignore_alt_menu(void* hwnd);
 std::string utf8(const std::wstring& value);
 std::wstring wide(const std::string& value);
 std::string path_string(const fs::path& path);

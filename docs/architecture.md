@@ -99,6 +99,8 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 
 - `Desktop::add_tray` adds the icon. `TaskbarCreated` re-adds it after Explorer restarts.
 - Left click, keyboard select or double click shows the window.
+- `ignore_alt_menu` (main window and editors) drops `WM_SYSCOMMAND` `SC_KEYMENU` with no key. A lone Alt, such as the end of Alt+Z pressed while the window has focus, would otherwise start keyboard menu mode: nothing shows, and the next click is swallowed. Alt+Space still opens the system menu.
+- When the newest clip or the error changes while the window is open, `Desktop::reconcile` sends the page `obsreplay:state`. The page polls at once and does not wait for its one-second timer.
 - Right click opens the tray menu (`src/tray_menu.cpp`): a borderless popup drawn with GDI+ in the colours of the saved theme. Header: app icon, name, a state dot and one status line. Rows: **Save replay** (with the save shortcut), **Start capture** or **Stop capture**, **Open OBSReplay**, **Close OBSReplay** (OBS keeps running), **Close OBSReplay and OBS**. Rows that cannot run are dim. It closes on Escape, a click elsewhere or lost focus. Arrow keys and Enter work.
 - **Close OBSReplay and OBS** dispatches the `shutdown` action. The controller stops the replay buffer, closes the OBSReplay session of OBS through its main window, then sets `quit` in its state. `Desktop::reconcile` ends the app when it reads `quit`. OBS is left open, with a notification, when it runs a different session or is streaming or recording. The saved capture choice is kept, so capture resumes at the next launch.
 - Quit asks for confirmation when `EditorHost::pending()` reports a running export or unexported cuts.

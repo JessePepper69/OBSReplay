@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <commctrl.h>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <mmdeviceapi.h>
@@ -114,6 +115,16 @@ Paths paths() {
     fs::create_directories(result.data);
     return result;
 }
+namespace {
+LRESULT CALLBACK alt_menu_proc(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR) {
+    // SC_KEYMENU with no key: Alt pressed and released on its own.
+    if (message == WM_SYSCOMMAND && (w & 0xFFF0) == SC_KEYMENU && l == 0) return 0;
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, alt_menu_proc, id);
+    return DefSubclassProc(window, message, w, l);
+}
+}
+void ignore_alt_menu(void* hwnd) { SetWindowSubclass(static_cast<HWND>(hwnd), alt_menu_proc, 7, 0); }
+
 bool headless_mode() {
     static const bool enabled = GetEnvironmentVariableW(L"OBSREPLAY_HEADLESS", nullptr, 0) > 0;
     return enabled;

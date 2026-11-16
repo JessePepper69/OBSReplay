@@ -334,6 +334,9 @@ struct Desktop {
                 if (!error.empty() && error!=last_error) notify(error);
                 else if (!clip.empty() && clip!=last_clip) notify("Replay saved: "+replay::path_string(replay::from_string(clip).filename()));
             }
+            // A new replay or error reaches an open window at once: the page is told to read the state now
+            // and does not wait for its own one-second timer, which Windows may slow down for a window without focus.
+            if (observed_state && first_frame_ready && reveal_requested && (clip!=last_clip || error!=last_error)) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:state'))");
             last_error=error;last_clip=clip;observed_state=true;
             if (recording_hotkey) {
                 if (std::chrono::steady_clock::now()-recording_started<std::chrono::seconds(45)) return;
@@ -514,6 +517,7 @@ coco::stray start(saucer::application* app) {
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     if (SetWindowSubclass(desktop.hwnd,desktop_proc,1,reinterpret_cast<DWORD_PTR>(&desktop))) desktop.add_tray();
+    replay::ignore_alt_menu(desktop.hwnd);
     SetTimer(desktop.hwnd,timer_id,500,nullptr);
     desktop.reconcile();
     window->on<saucer::window::event::close>([&] { desktop.hide();return saucer::policy::block; });
