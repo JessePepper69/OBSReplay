@@ -445,3 +445,45 @@ html[data-motion="off"] button:active { scale:none; }
 html[data-motion="off"] .task-list li[data-state="active"] .task-mark { border-color:var(--ui-accent-text); }
 @media(forced-colors:active) { .switch-track{border:1px solid ButtonText}.switch-control input:checked+.switch-track::after{background:Highlight}.capture-mark{border:1px solid CanvasText}.settings-tabs [role="tab"][aria-selected="true"]{outline:1px solid Highlight} }
 .setting-row .inline-actions { flex:none;margin:0;padding:0; }
+/* Update dialog: what changed, then one decision. The notes sit in a well and scroll on their own. */
+#update-dialog { max-width:540px;padding:22px 24px 24px;outline:none; }
+.update-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px; }
+.update-head p { margin-top:6px; }
+.update-head .icon-only { margin:-4px -8px 0 0;flex:none; }
+.update-notes { margin-top:18px;max-height:min(300px,42vh);overflow:auto;overscroll-behavior:contain;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--well);font-size:13.5px;line-height:1.6;color:var(--muted);user-select:text;-webkit-user-select:text; }
+.update-notes>:first-child { margin-top:0; }
+.update-notes h3,.update-notes h4 { margin-top:16px;font-size:13.5px;font-weight:650;line-height:1.4;color:var(--text); }
+.update-notes h4 { font-weight:600;color:var(--muted); }
+.update-notes p { margin-top:8px;font-size:inherit;line-height:inherit;color:inherit; }
+.update-notes ul,.update-notes ol { margin:6px 0 0;padding-left:20px; }
+.update-notes li { margin-top:3px; }
+.update-notes li.nested { margin-left:18px; }
+.update-notes li::marker { color:var(--dim); }
+.update-notes strong { font-weight:650;color:var(--text); }
+.update-notes code { padding:1px 5px;border-radius:5px;background:var(--surface);font:12px/1.5 "Cascadia Mono",Consolas,ui-monospace,monospace;color:var(--text); }
+.update-notes pre { margin-top:8px;padding:10px 12px;border-radius:8px;background:var(--surface);overflow:auto; }
+.update-notes pre code { padding:0;background:none; }
+.update-notes a { color:var(--ui-accent-text);text-decoration:underline;text-underline-offset:2px;cursor:pointer; }
+.update-notes a:focus-visible { outline:2px solid var(--ui-accent-text);outline-offset:2px;border-radius:3px; }
+.update-notes hr { margin:14px 0;border:0;border-top:1px solid var(--line); }
+.update-notes blockquote { margin:8px 0 0;padding-left:12px;border-left:1px solid var(--line-strong); }
+.update-note { margin-top:14px;font-size:13px;line-height:1.5;color:var(--dim); }
+.update-note:empty { display:none; }
+.update-note.problem { color:var(--red); }
+.update-note.blocked { color:var(--warning); }
+.update-progress { margin-top:20px; }
+.update-bar { height:6px;border-radius:3px;background:var(--surface);overflow:hidden; }
+.update-bar i { display:block;width:0;height:100%;border-radius:3px;background:var(--ui-accent);transition:width 140ms linear; }
+.update-bar.busy i { width:35%;transition:none;animation:update-slide 1.15s cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes update-slide { from { transform:translateX(-100%); } to { transform:translateX(290%); } }
+html[data-motion="off"] .update-bar.busy i { width:100%;opacity:.55; }
+.update-progress-row { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px;margin-top:10px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums; }
+.update-progress-row button { height:32px;padding:0 12px; }
+/* The site's light toast: one line above the footer, gone on its own. */
+.toast { position:fixed;z-index:30;left:50%;bottom:78px;translate:-50% 0;display:flex;align-items:center;gap:4px;max-width:min(560px,calc(100% - 32px));padding:5px 5px 5px 16px;border-radius:12px;background:var(--toast);color:var(--toast-text);font-size:13px;font-weight:600;box-shadow:0 14px 30px -12px var(--shadow);animation:rise 240ms var(--ease) both; }
+.toast[hidden] { display:none; }
+.toast span { padding-right:8px; }
+.toast button { height:30px;padding:0 10px;border-color:transparent;background:transparent;box-shadow:none;color:var(--toast-text);font-size:13px;font-weight:650; }
+.toast button:hover:not(:disabled) { background:color-mix(in srgb,var(--toast-text) 10%,transparent);border-color:transparent;color:var(--toast-text); }
+.toast #toast-action { text-decoration:underline;text-underline-offset:3px; }
+.toast button.icon-only { width:30px;min-width:30px;color:color-mix(in srgb,var(--toast-text) 70%,transparent); }

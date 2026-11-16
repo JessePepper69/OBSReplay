@@ -663,11 +663,16 @@ Layout from top to bottom:
 - Title: 22px/700.
 - Action row: right-aligned, 40px buttons, 8px gap.
 - Destructive confirmations focus **Cancel** first.
+- The update dialog is 540px wide with a close button in its header. Release notes sit in a `--well` box (12px radius, 1px `--line`) that scrolls on its own, at most 300px tall.
+- Update dialog actions: **Skip this version** and the primary **Update now**. Focus starts on the dialog, so Enter does not start an update.
+- During a download the action row becomes a 6px progress bar (`--ui-accent` on `--surface`) with one status line and **Cancel**. While it verifies and installs the bar slides and nothing can be closed.
+- One line under the notes carries the state: dim for the restart note, `--warning` when an editor blocks the update, `--red` for a failure.
 
 ### Toast
 
 - The site's light toast: `--toast` background, `--toast-text` text, 10px radius, 13px/600.
 - In the editor the toast sits over the preview, centred at the bottom.
+- In the main window it sits centred above the footer, 12px radius, with an optional underlined action and a close button. It leaves after 9 seconds. Used for "Updated to 1.2.3".
 
 ### Error card
 

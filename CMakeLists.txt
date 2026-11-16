@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OBSReplay VERSION 0.1.0 LANGUAGES CXX RC)
+project(OBSReplay VERSION 1.0.0 LANGUAGES CXX RC)
 
 if(NOT WIN32)
   message(FATAL_ERROR "OBSReplay currently supports Windows x64.")
@@ -52,7 +52,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" ${build_info_args})
 add_custom_target(build_info ALL COMMAND "${CMAKE_COMMAND}" ${build_info_args} BYPRODUCTS "${BUILD_INFO}" VERBATIM)
 
 add_executable(OBSReplay WIN32
-  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp src/installer.cpp src/tray_menu.cpp src/log.cpp src/resources.cpp
+  src/main.cpp src/platform.cpp src/integration.cpp src/controller.cpp src/obs_socket.cpp src/media.cpp src/editor.cpp src/audio_sessions.cpp src/installer.cpp src/tray_menu.cpp src/log.cpp src/resources.cpp src/updater.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 add_dependencies(OBSReplay build_info)
 target_include_directories(OBSReplay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")

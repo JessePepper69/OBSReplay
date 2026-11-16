@@ -6,6 +6,7 @@
 #include "tray_menu.hpp"
 #include "log.hpp"
 #include "resources.hpp"
+#include "updater.hpp"
 
 #include <saucer/smartview.hpp>
 #include <saucer/embedded/all.hpp>
@@ -35,8 +36,9 @@ constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
 constexpr UINT tray_sample_timer_id = 304;
+constexpr UINT update_timer_id = 305;
 constexpr int tray_sample_seconds = 90;
-constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404, menu_quit_all = 405;
+constexpr UINT menu_show = 401, menu_save = 402, menu_toggle = 403, menu_quit = 404, menu_quit_all = 405, menu_update = 406;
 constexpr auto& instance_property = replay::app_window_property;
 // Value of that property: 1 for the normal instance, a hash of OBSREPLAY_DATA_DIR for an isolated one,
 // so a second launch only raises the window of its own instance.
@@ -192,6 +194,8 @@ struct Desktop {
     saucer::smartview* view;
     replay::Controller* controller;
     replay::EditorHost* editors = nullptr;
+    replay::Updater* updater = nullptr;
+    unsigned update_revision = 0;
     HWND hwnd;
     NOTIFYICONDATAW tray{};
     bool tray_ready = false;
@@ -215,6 +219,7 @@ struct Desktop {
         KillTimer(hwnd,reveal_timer_id);
         KillTimer(hwnd,suspend_timer_id);
         KillTimer(hwnd,tray_sample_timer_id);
+        KillTimer(hwnd,update_timer_id);
         UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);
         if (tray_ready) Shell_NotifyIconW(NIM_DELETE,&tray);
         RemovePropW(hwnd,instance_property);
@@ -393,7 +398,7 @@ struct Desktop {
         } catch (const std::exception& e) { return std::unexpected(e.what()); }
     }
     // The tray menu's content for a controller state: the capture state in the header, then the actions.
-    static replay::TrayMenu tray_model(const Json& state) {
+    static replay::TrayMenu tray_model(const Json& state,const std::string& update={}) {
         const bool active=state.value("replay_active",false),configured=state.value("integration",false);
         const Json settings=state.value("settings",Json::object());
         const int seconds=settings.value("clip_seconds",120);
@@ -409,7 +414,20 @@ struct Desktop {
             {static_cast<int>(menu_show),L"Open OBSReplay",L"",true,false},
             {static_cast<int>(menu_quit),L"Close OBSReplay",L"OBS keeps running",true,true},
             {static_cast<int>(menu_quit_all),L"Close OBSReplay and OBS",L"",true,false}};
+        // A newer release that was not skipped: one row that opens the window on the update.
+        if (!update.empty()) model.items.insert(model.items.begin()+3,{static_cast<int>(menu_update),L"Update to "+replay::wide(update),L"",true,true});
         return model;
+    }
+    // Tells the page the update state changed. `open` also asks it to show the update dialog.
+    void announce_update(bool open=false) {
+        if (!first_frame_ready || !reveal_requested) return;
+        const std::string script=std::string("window.dispatchEvent(new CustomEvent('obsreplay:update',{detail:")+(open ? "'open'" : "''")+"}))";
+        static_cast<saucer::webview&>(*view).execute(script);
+    }
+    void update_tick() {
+        if (!updater) return;
+        updater->tick();
+        if (const auto revision=updater->revision(); revision!=update_revision) { update_revision=revision;announce_update(); }
     }
     void menu() {
         // One menu at a time: a second open while the first is tracking would nest menus and swallow the choice.
@@ -419,10 +437,11 @@ struct Desktop {
         Json state=Json::object();
         try { state=Json::parse(controller->snapshot()); } catch (...) {}
         const bool active=state.value("replay_active",false);
-        const auto model=tray_model(state);
+        const auto model=tray_model(state,updater ? updater->offered() : std::string{});
         const int selected=replay::show_tray_menu(hwnd,model);
-        replay::log_info("Tray menu: choice={}",selected==menu_show ? "open" : selected==menu_save ? "save" : selected==menu_toggle ? (active ? "stop" : "start") : selected==menu_quit ? "close" : selected==menu_quit_all ? "close_with_obs" : "none");
+        replay::log_info("Tray menu: choice={}",selected==menu_show ? "open" : selected==menu_save ? "save" : selected==menu_toggle ? (active ? "stop" : "start") : selected==menu_quit ? "close" : selected==menu_quit_all ? "close_with_obs" : selected==menu_update ? "update" : "none");
         if (selected==menu_show) show();
+        else if (selected==menu_update) { show();announce_update(true); }
         else if (selected==menu_save) command("save");
         else if (selected==menu_toggle) command(active ? "stop" : "start");
         else if (selected==menu_quit || selected==menu_quit_all) {
@@ -457,6 +476,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
         if (message==WM_TIMER && w==timer_id) { desktop.reconcile();return 0; }
         if (message==WM_TIMER && w==reveal_timer_id) { desktop.ready();return 0; }
         if (message==WM_TIMER && w==suspend_timer_id) { desktop.suspend();return 0; }
+        if (message==WM_TIMER && w==update_timer_id) { desktop.update_tick();return 0; }
         if (message==WM_TIMER && w==tray_sample_timer_id) { KillTimer(hwnd,tray_sample_timer_id);if (!desktop.reveal_requested) measure_tray_usage();return 0; }
     } catch (...) {}
     return DefSubclassProc(hwnd,message,w,l);
@@ -512,13 +532,15 @@ coco::stray start(saucer::application* app) {
     replay::Controller controller(replay::paths());
     replay::ClipMedia media(view.native().webview, controller);
     replay::EditorHost editors(app, controller, replay::paths());
-    Desktop desktop{app,window,&view,&controller,&editors,window->native().hwnd};
+    replay::Updater updater(replay::paths());
+    Desktop desktop{app,window,&view,&controller,&editors,&updater,0,window->native().hwnd};
     SetPropW(desktop.hwnd,instance_property,reinterpret_cast<HANDLE>(instance_tag));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     SendMessageW(desktop.hwnd,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1))));
     if (SetWindowSubclass(desktop.hwnd,desktop_proc,1,reinterpret_cast<DWORD_PTR>(&desktop))) desktop.add_tray();
     replay::ignore_alt_menu(desktop.hwnd);
     SetTimer(desktop.hwnd,timer_id,500,nullptr);
+    SetTimer(desktop.hwnd,update_timer_id,1000,nullptr);
     desktop.reconcile();
     window->on<saucer::window::event::close>([&] { desktop.hide();return saucer::policy::block; });
     window->on<saucer::window::event::focus>([&](bool focused) { if (!focused && desktop.recording_hotkey) desktop.record_hotkey(false); });
@@ -570,6 +592,31 @@ coco::stray start(saucer::application* app) {
         if (text.size()>2000) text.resize(2000);
         replay::log_write(level=="error" ? replay::LogLevel::error : level=="warn" ? replay::LogLevel::warn : level=="debug" ? replay::LogLevel::debug : replay::LogLevel::info,"UI: "+text);
     });
+    // Updates. The page reads the state when told it changed (obsreplay:update) and while its dialog is open.
+    const auto update_blocked=[&]() -> std::string { return editors.pending().empty() ? std::string{} : "An editor has unfinished work. Export or close it, then update."; };
+    view.expose("update_state",[&] { auto state=updater.state();state["blocked"]=update_blocked();return state.dump(-1,' ',false,Json::error_handler_t::replace); });
+    view.expose("update_check",[&] { updater.check(true); });
+    view.expose("update_skip",[&](bool skipped) { updater.skip(skipped); });
+    view.expose("update_enabled",[&](bool enabled) { updater.set_enabled(enabled); });
+    view.expose("update_cancel",[&] { updater.cancel(); });
+    view.expose("update_seen",[&] { updater.seen(); });
+    view.expose("update_start",[&,app]() -> std::expected<bool,std::string> {
+        if (const auto blocked=update_blocked(); !blocked.empty()) return std::unexpected(blocked);
+        // The download ends on a worker thread; the installer is started from this one, after one more look at the editors.
+        return updater.start([&,app](const replay::fs::path& file) { app->post([&,file] {
+            if (const auto blocked=update_blocked(); !blocked.empty()) { updater.fail(blocked);return; }
+            updater.install(file);
+        }); });
+    });
+    // Links in release notes and the releases page: GitHub only, in the default browser.
+    view.expose("open_link",[](std::string url) -> std::expected<bool,std::string> {
+        const bool plain=std::all_of(url.begin(),url.end(),[](unsigned char c) { return c>32 && c<127 && c!='"' && c!='\\' && c!='<' && c!='>' && c!='|' && c!='^'; });
+        if (!url.starts_with("https://github.com/") || url.size()>600 || !plain) return std::unexpected("Only GitHub links open from here.");
+        replay::log_info("Link opened: url={}",replay::quoted_value(url));
+        if (replay::headless_mode()) return true;  // checks never open a browser
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",replay::wide(url).c_str(),nullptr,nullptr,SW_SHOWNORMAL))<=32) return std::unexpected("Windows could not open your browser.");
+        return true;
+    });
     // "Play video" in an editor: bring this window forward and let the page open the clip in its viewer.
     editors.on_play([&](const std::string& path) {
         desktop.show();
@@ -598,6 +645,7 @@ int main(int argc,char** argv) {
             const Json off{{"replay_active",false},{"integration",true},{"settings",{{"theme",theme},{"clip_seconds",120},{"save_hotkey","Alt+Z"}}}};
             replay::write_tray_menu_image(Desktop::tray_model(on),0,std::wstring(folder)+L"\\"+replay::wide(theme)+L"-capturing.png");
             replay::write_tray_menu_image(Desktop::tray_model(off),-1,std::wstring(folder)+L"\\"+replay::wide(theme)+L"-stopped.png");
+            replay::write_tray_menu_image(Desktop::tray_model(on,"1.1.0"),3,std::wstring(folder)+L"\\"+replay::wide(theme)+L"-update.png");
         }
         return 0;
     }

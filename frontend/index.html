@@ -136,6 +136,14 @@
     </div>
   </div>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel">Cancel</button><button value="confirm" class="primary" id="confirm-action">Continue</button></div></form></dialog>
+  <dialog id="update-dialog" aria-labelledby="update-title" tabindex="-1">
+    <header class="update-head"><div><h2 id="update-title"></h2><p id="update-sub"></p></div><button type="button" class="icon-only" id="update-close" aria-label="Close" title="Close  Esc"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
+    <div class="update-notes" id="update-notes" tabindex="0" role="region" aria-label="Changes in this version"></div>
+    <p class="update-note" id="update-note" aria-live="polite"></p>
+    <div class="update-progress" id="update-progress" hidden><div class="update-bar" id="update-bar" role="progressbar" aria-labelledby="update-stage" aria-valuemin="0" aria-valuemax="100"><i id="update-fill"></i></div><div class="update-progress-row"><span id="update-stage" aria-live="polite"></span><button type="button" id="update-cancel">Cancel</button></div></div>
+    <div class="dialog-actions" id="update-actions"><button type="button" id="update-secondary">Skip this version</button><button type="button" class="primary" id="update-primary">Update now</button></div>
+  </dialog>
+  <div class="toast" id="app-toast" role="status" hidden><span id="toast-text"></span><button type="button" id="toast-action" hidden></button><button type="button" class="icon-only" id="toast-close" aria-label="Dismiss"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button></div>
   <dialog id="replay-player" aria-labelledby="player-title">
     <header class="viewer-header" data-webview-drag data-webview-maximize="double">
       <div class="viewer-heading"><h2 id="player-title">Replay</h2><p class="viewer-details" id="player-detail"></p></div>

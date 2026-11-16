@@ -45,6 +45,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 
 - **Guided setup:** Installs OBS Studio and FFmpeg if they are missing, then starts capture. Two clicks.
 - **Self-install:** Run the exe once. It installs itself, adds a Start menu shortcut and can be uninstalled from Windows or from Settings.
+- **Updates:** OBSReplay checks GitHub once a day. A new version shows its changes and installs with one click, or you skip it.
 - **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
 - **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
 - **Clips library:** Browse every clip with a thumbnail, its length and its size. Filter by game. Delete a clip from its card.
@@ -79,7 +80,9 @@ Steps:
 3. Follow the three setup steps. If OBS Studio or FFmpeg is missing, select **Install OBS Studio and FFmpeg**. Windows asks for permission once.
 4. Select **Set up and start capture**.
 
-To update, download the new `OBSReplay.exe` and run it. To remove the app, open **Settings**, **App** in OBSReplay and select **Uninstall**, or use Windows **Installed apps**.
+OBSReplay tells you when a new version is out. Select **Update now** and it downloads the release, checks it and restarts into the new version. OBS keeps capturing meanwhile. You can also check from **Settings**, **App**, or download the new `OBSReplay.exe` and run it yourself.
+
+To remove the app, open **Settings**, **App** in OBSReplay and select **Uninstall**, or use Windows **Installed apps**.
 
 To run it without installing, start it with `OBSReplay.exe --portable`.
 
@@ -92,6 +95,7 @@ To run it without installing, start it with `OBSReplay.exe --portable`.
 | The app | `%LOCALAPPDATA%\Programs\OBSReplay` |
 | Settings, clip history, editor preferences | `%LOCALAPPDATA%\OBSReplay` |
 | Session logs (the last 3 runs) | `%LOCALAPPDATA%\OBSReplay\logs` |
+| A downloaded update, until it is installed | `%LOCALAPPDATA%\OBSReplay\updates` |
 | OBS profile and scene collection | `%APPDATA%\obs-studio`, both named `OBSReplay` |
 
 ## What it changes on your PC

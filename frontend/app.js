@@ -135,6 +135,14 @@
     animationRow.innerHTML = '<span><strong>Animations</strong><small>Page, panel and control transitions.</small></span><input type="checkbox" id="animations_enabled" name="animations_enabled" checked>';
     groups.app.append(animationRow);
     for (const name of ["start_at_login", "replay_enabled", "sort_by_app", "save_sound"]) groups.app.append($(name).closest(".check-row"));
+    const updateRow = document.createElement("div");
+    updateRow.className = "setting-row entrance-item";
+    updateRow.id = "update-row";
+    updateRow.innerHTML = '<div class="setting-copy"><strong>Updates</strong><small id="update-status" aria-live="polite">OBSReplay checks GitHub for new versions.</small></div><button type="button" id="update-check">Check now</button>';
+    const updateAuto = document.createElement("label");
+    updateAuto.className = "check-row";
+    updateAuto.innerHTML = '<span><strong>Check for updates automatically</strong><small>Once a day. Nothing installs until you choose Update now.</small></span><input type="checkbox" id="update-auto" checked>';
+    groups.app.append(updateRow, updateAuto);
     const startup = document.createElement("label");
     startup.className = "check-row";
     startup.id = "setup-startup-row";
@@ -956,6 +964,7 @@
         return;
       }
       if (!state.native && typeof api().app_info === "function") Promise.resolve(api().app_info()).then(value => { const info = unpack(value); $("app-version").textContent = `v${info.version}`; $("app-version").title = `OBSReplay ${info.full}`; }).catch(() => {});
+      if (!state.native) readUpdate();
       if (!state.native && typeof api().installed === "function") api().installed().then(value => { $("uninstall-row").hidden = !value; }).catch(() => {});
       state.native = true;
       const previousObs = state.snapshot?.settings?.obs_path;
@@ -1551,7 +1560,234 @@
   }
   function scheduleDebug() { clearTimeout(debugTimer); debugTimer = setTimeout(debugTick, 0); }
 
+  // Updates. The native side checks GitHub and holds the state; this page shows it. A new version opens the dialog
+  // once per run of the app: closing it asks again next launch, Skip hides that version for good.
+  const update = { state: null, prompted: false, wanted: false, mode: "offer", timer: 0, notesKey: "", problem: "", toastTimer: 0, toastAction: null, toastWanted: false, closing: false };
+  const updateReady = () => typeof api()?.update_state === "function";
+  const megabyteCount = bytes => (bytes / 1024 ** 2).toFixed(1);
+  const longDate = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" }).format(date); };
+  function showToast(text, actionLabel = "", action = null) {
+    clearTimeout(update.toastTimer);
+    $("toast-text").textContent = text;
+    $("toast-action").hidden = !actionLabel;
+    $("toast-action").textContent = actionLabel;
+    update.toastAction = action;
+    $("app-toast").hidden = false;
+    update.toastTimer = setTimeout(() => { $("app-toast").hidden = true; }, 9000);
+  }
+  // Release notes are Markdown written on GitHub. They are drawn as plain elements: text is never read as HTML,
+  // and only links to github.com are links.
+  function renderNotes(box, text) {
+    box.replaceChildren();
+    const source = String(text || "").replace(/\r\n?/g, "\n").replace(/<!--[\s\S]*?-->/g, "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/<\/?[a-z][^>\n]*>/gi, "").trim();
+    if (!source) { const empty = document.createElement("p"); empty.textContent = "This release has no notes."; box.append(empty); return; }
+    const shortLink = url => { const pull = /\/(?:pull|issues)\/(\d+)$/.exec(url); if (pull) return `#${pull[1]}`; const compare = /\/compare\/(.+)$/.exec(url); return compare ? compare[1] : url.replace(/^https?:\/\//, ""); };
+    const link = (label, url) => {
+      if (!url.startsWith("https://github.com/")) return document.createTextNode(label === url ? url : `${label} (${url})`);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.textContent = label;
+      anchor.addEventListener("click", event => { event.preventDefault(); Promise.resolve(api()?.open_link?.(url)).catch(() => {}); });
+      return anchor;
+    };
+    const inline = (parent, value) => {
+      const pattern = /\*\*(.+?)\*\*|(`+)(.+?)\2|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>)\]]+)|\*(?=\S)(.+?)(?<=\S)\*/g;
+      let last = 0, match;
+      while ((match = pattern.exec(value))) {
+        if (match.index > last) parent.append(value.slice(last, match.index));
+        last = pattern.lastIndex;
+        if (match[1] !== undefined) { const strong = document.createElement("strong"); inline(strong, match[1]); parent.append(strong); }
+        else if (match[3] !== undefined) { const code = document.createElement("code"); code.textContent = match[3]; parent.append(code); }
+        else if (match[5] !== undefined) parent.append(link(match[4], match[5]));
+        else if (match[6] !== undefined) { const url = match[6].replace(/[.,;:!?]+$/, ""); parent.append(link(shortLink(url), url)); last -= match[6].length - url.length; pattern.lastIndex = last; }
+        else { const em = document.createElement("em"); inline(em, match[7]); parent.append(em); }
+      }
+      if (last < value.length) parent.append(value.slice(last));
+    };
+    let paragraph = null, list = null, item = null;
+    const lines = source.split("\n");
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      if (/^\s*```/.test(line)) {
+        const code = [];
+        for (index++; index < lines.length && !/^\s*```/.test(lines[index]); index++) code.push(lines[index]);
+        const pre = document.createElement("pre"), inner = document.createElement("code");
+        inner.textContent = code.join("\n");
+        pre.append(inner); box.append(pre);
+        paragraph = list = item = null;
+        continue;
+      }
+      const heading = /^(#{1,6})\s+(.*?)\s*#*$/.exec(line), bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line), numbered = /^(\s*)\d+[.)]\s+(.*)$/.exec(line), quote = /^>\s?(.*)$/.exec(line);
+      if (!line.trim()) { paragraph = list = item = null; }
+      else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { box.append(document.createElement("hr")); paragraph = list = item = null; }
+      else if (heading) { const element = document.createElement(heading[1].length <= 2 ? "h3" : "h4"); inline(element, heading[2]); box.append(element); paragraph = list = item = null; }
+      else if (bullet || numbered) {
+        const found = bullet || numbered, tag = bullet ? "UL" : "OL";
+        if (!list || list.tagName !== tag) { list = document.createElement(tag); box.append(list); }
+        item = document.createElement("li");
+        if (found[1].length >= 2) item.className = "nested";
+        inline(item, found[2].replace(/^\[[ xX]\]\s+/, ""));
+        list.append(item);
+        paragraph = null;
+      }
+      else if (item && /^\s{2,}\S/.test(line)) { item.append(" "); inline(item, line.trim()); }
+      else if (quote) { const block = document.createElement("blockquote"); inline(block, quote[1]); box.append(block); paragraph = list = item = null; }
+      else {
+        if (!paragraph) { paragraph = document.createElement("p"); box.append(paragraph); list = item = null; }
+        else paragraph.append(" ");
+        inline(paragraph, line.trim());
+      }
+    }
+  }
+  function renderUpdateRow(info) {
+    const version = info.latest?.version, working = ["downloading", "verifying", "installing"].includes(info.status);
+    let text = `You have version ${info.current}.`;
+    if (info.status === "checking") text = "Checking for updates…";
+    else if (working) text = `Updating to ${version}…`;
+    else if (info.status === "error" && info.error_stage === "check") text = info.error;
+    else if (info.available) text = `Version ${version} is available.${info.skipped ? " You skipped it." : ""}`;
+    else if (info.checked_at) {
+      const when = new Date(info.checked_at * 1000), today = when.toDateString() === new Date().toDateString();
+      const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(when);
+      text = `You have the latest version, ${info.current}. Last checked ${today ? `today at ${time}` : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long" }).format(when)}.`;
+    }
+    $("update-status").textContent = text;
+    $("update-check").textContent = info.available ? "View update" : "Check now";
+    $("update-check").disabled = info.status === "checking";
+    $("update-auto").checked = info.enabled;
+    document.querySelector('[data-switch-label="update-auto"]').textContent = info.enabled ? "On" : "Off";
+  }
+  function renderUpdateDialog(info) {
+    const latest = info.latest || {}, installed = update.mode === "installed";
+    const working = !installed && ["downloading", "verifying", "installing"].includes(info.status);
+    const failed = !installed && ((info.status === "error" && info.error_stage === "download") || Boolean(update.problem));
+    $("update-title").textContent = installed ? `OBSReplay ${info.current} is installed` : `OBSReplay ${latest.version} is available`;
+    const released = longDate(latest.published);
+    $("update-sub").textContent = installed ? (info.previous ? `Updated from ${info.previous}.` : "You have the latest version.") : `You have ${info.current}.${released ? ` Released ${released}.` : ""}`;
+    const key = `${latest.version}\n${latest.notes}`;
+    if (key !== update.notesKey) { update.notesKey = key; renderNotes($("update-notes"), latest.notes); $("update-notes").scrollTop = 0; }
+    const note = $("update-note");
+    note.className = "update-note" + (failed ? " problem" : info.blocked && !working && !installed ? " blocked" : "");
+    note.textContent = installed || working ? "" : failed ? (update.problem || info.error) : info.blocked ? info.blocked : latest.downloadable ? "OBSReplay restarts to finish. OBS keeps capturing while it does." : "This release has no installer attached. Get it from the releases page.";
+    $("update-progress").hidden = !working;
+    $("update-actions").hidden = working;
+    if (working) {
+      const share = info.total > 0 ? Math.min(1, info.received / info.total) : 0, downloading = info.status === "downloading";
+      $("update-bar").classList.toggle("busy", !downloading || !info.total);
+      $("update-fill").style.width = downloading && info.total ? `${(share * 100).toFixed(1)}%` : "";
+      if (downloading && info.total) $("update-bar").setAttribute("aria-valuenow", String(Math.round(share * 100))); else $("update-bar").removeAttribute("aria-valuenow");
+      $("update-stage").textContent = downloading ? (info.total ? `Downloading ${megabyteCount(info.received)} of ${megabyteCount(info.total)} MB` : "Downloading…") : info.status === "verifying" ? "Checking the download…" : "Installing. OBSReplay reopens in a moment.";
+      $("update-cancel").hidden = !downloading;
+    }
+    $("update-secondary").hidden = installed;
+    $("update-secondary").textContent = failed ? "Open releases page" : "Skip this version";
+    $("update-primary").textContent = installed ? "Done" : failed ? "Try again" : latest.downloadable ? "Update now" : "Open releases page";
+    $("update-primary").disabled = !installed && !failed && Boolean(info.blocked) && Boolean(latest.downloadable);
+    $("update-close").hidden = info.status === "installing" && !installed;
+  }
+  function renderUpdate() {
+    const info = update.state;
+    if (!info) return;
+    renderUpdateRow(info);
+    const dialog = $("update-dialog");
+    if (dialog.open && !update.closing) {
+      // The offer has nothing left to show once the version is gone (a later check found none).
+      if (update.mode === "offer" && !info.available) closeUpdate(); else renderUpdateDialog(info);
+    }
+    if (info.just_updated) { update.toastWanted = true; Promise.resolve(api().update_seen?.()).catch(() => {}); }
+    if (info.available && !info.skipped && !update.prompted) update.wanted = true;
+    offerUpdate();
+  }
+  async function readUpdate() {
+    if (!updateReady()) return null;
+    try { update.state = unpack(await api().update_state()); } catch { return update.state; }
+    renderUpdate();
+    // Without the dialog open nothing else asks again while a check runs.
+    if (update.state.status === "checking" && !$("update-dialog").open) setTimeout(readUpdate, 500);
+    return update.state;
+  }
+  // The dialog and the toast wait for a quiet moment: a shown window, no other dialog, no setup, nothing in progress.
+  function offerUpdate() {
+    if (document.hidden || !presented || !state.initialRoute || state.tab === "setup" || state.recording || document.querySelector("dialog[open]")) return;
+    if (update.toastWanted) {
+      update.toastWanted = false;
+      const info = update.state;
+      showToast(`Updated to ${info.current}`, info.latest?.version === info.current && info.latest.notes ? "What’s new" : "", () => openUpdate("installed"));
+    }
+    if (!update.wanted || update.prompted || busy()) return;
+    update.wanted = false;
+    openUpdate("offer");
+  }
+  function openUpdate(mode) {
+    const dialog = $("update-dialog");
+    if (!update.state || dialog.open || (mode === "offer" && !update.state.available)) return;
+    if (mode === "offer") update.prompted = true;
+    update.mode = mode;
+    update.problem = "";
+    update.notesKey = "";
+    renderUpdateDialog(update.state);
+    dialog.showModal();
+    // Focus starts on the dialog itself: Enter must not start an update nobody read about.
+    dialog.focus({ preventScroll: true });
+    animateDialog(dialog, true);
+    uiLog("info", `Update dialog opened: mode=${mode} version=${update.state.latest?.version}`);
+    clearInterval(update.timer);
+    update.timer = setInterval(readUpdate, 350);
+  }
+  function closeUpdate() {
+    const dialog = $("update-dialog");
+    if (!dialog.open || update.closing) return;
+    clearInterval(update.timer);
+    const finish = () => { dialog.classList.remove("closing"); for (const animation of dialog.getAnimations()) animation.cancel(); if (dialog.open) dialog.close(); update.closing = false; $("main").focus({ preventScroll: true }); };
+    if (!motionEnabled()) { finish(); return; }
+    update.closing = true;
+    dialog.classList.add("closing");
+    animateDialog(dialog, false).then(finish);
+  }
+  // Closing while the file downloads stops the download. Once the installer runs there is nothing to close.
+  function dismissUpdate() {
+    const status = update.state?.status;
+    if (update.mode === "offer" && status === "installing") return;
+    if (update.mode === "offer" && (status === "downloading" || status === "verifying")) Promise.resolve(api().update_cancel()).catch(() => {});
+    closeUpdate();
+  }
+  async function startUpdate() {
+    update.problem = "";
+    try { await api().update_start(); } catch (error) { update.problem = errorText(error) || "The update couldn’t start. Try again."; }
+    readUpdate();
+  }
+  function bindUpdate() {
+    $("update-close").addEventListener("click", dismissUpdate);
+    $("update-dialog").addEventListener("cancel", event => { event.preventDefault(); dismissUpdate(); });
+    $("update-cancel").addEventListener("click", () => Promise.resolve(api().update_cancel()).catch(() => {}));
+    $("update-primary").addEventListener("click", () => {
+      const info = update.state;
+      if (update.mode === "installed") closeUpdate();
+      else if (!info.latest?.downloadable && !update.problem && info.status !== "error") Promise.resolve(api().open_link(info.latest?.page || info.releases)).catch(showError);
+      else startUpdate();
+    });
+    $("update-secondary").addEventListener("click", () => {
+      const info = update.state;
+      if ($("update-secondary").textContent === "Open releases page") { Promise.resolve(api().open_link(info.latest?.page || info.releases)).catch(showError); return; }
+      Promise.resolve(api().update_skip(true)).then(readUpdate).catch(() => {});
+      closeUpdate();
+    });
+    $("update-check").addEventListener("click", () => {
+      if (!updateReady()) return;
+      if (update.state?.available) { openUpdate("offer"); return; }
+      Promise.resolve(api().update_check()).then(readUpdate).catch(showError);
+    });
+    $("update-auto").addEventListener("change", () => { if (updateReady()) Promise.resolve(api().update_enabled($("update-auto").checked)).then(readUpdate).catch(showError); });
+    $("toast-close").addEventListener("click", () => { $("app-toast").hidden = true; });
+    $("toast-action").addEventListener("click", () => { $("app-toast").hidden = true; update.toastAction?.(); });
+    // Sent by the native side when the update state changed; "open" comes from the tray menu's update row.
+    window.addEventListener("obsreplay:update", async event => { const info = await readUpdate(); if (event.detail === "open" && info?.available) openUpdate("offer"); });
+    window.addEventListener("obsreplay:reopen", readUpdate);
+    setInterval(offerUpdate, 1500);
+  }
+
   arrangeSettings();
+  bindUpdate();
   $("disk-storage").addEventListener("click", () => dispatch("help", { topic: "storage" }));
   $("disk-dismiss").addEventListener("click", () => {
     diskSeenClip = newestReplay();

@@ -8,6 +8,7 @@ This file covers how the OBSReplay code is organized and how each part works: pr
 - [Source map](#source-map)
 - [Process and window model](#process-and-window-model)
 - [Self-install](#self-install)
+- [Updates](#updates)
 - [Native bridge](#native-bridge)
 - [Controller](#controller)
 - [OBS integration](#obs-integration)
@@ -43,6 +44,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | [`platform.cpp`](../src/platform.cpp), [`platform.hpp`](../src/platform.hpp) | Paths, settings load/validate/save, atomic file writes, OBS discovery and launch/close, monitors, audio devices, process runner, login startup, help links, theme grounds. |
 | [`media.cpp`](../src/media.cpp), [`media.hpp`](../src/media.hpp) | `ClipMedia`: serves clip files and generated preview files to a WebView2 view with range support. |
 | [`editor.cpp`](../src/editor.cpp), [`editor.hpp`](../src/editor.hpp) | `EditorHost`: editor windows, FFmpeg detection, probe, waveform, preview proxies, export, editor bridge. |
+| [`updater.cpp`](../src/updater.cpp), [`updater.hpp`](../src/updater.hpp) | `Updater`: asks GitHub for the latest release, downloads and verifies it, starts it as the installer. |
 | [`audio_sessions.cpp`](../src/audio_sessions.cpp), [`audio_sessions.hpp`](../src/audio_sessions.hpp) | `AudioSessionLabel`: names the WebView2 audio sessions "OBSReplay" in the Windows volume mixer. |
 
 ### Frontend (`frontend/`)
@@ -178,6 +180,57 @@ Uninstall asks for confirmation, then whether to delete settings. With `--quiet`
 
 `OBSREPLAY_INSTALL_TEST=<absolute folder>` is for checks. The install goes to `<folder>\app`, the shortcut to `<folder>`, the registry key is `OBSReplay.Test`. No window shows, nothing launches, and the running app, Run value, settings and OBS integration are left alone.
 
+## Updates
+
+`Updater` in `src/updater.cpp` reads GitHub Releases. It never downloads or installs without a click.
+
+### Flow
+
+1. **Check.** `GET https://api.github.com/repos/JessePepper69/OBSReplay/releases/latest` over WinHTTP, on a worker thread.
+2. **Compare.** The release tag (`v1.2.3`) against the version built into the app. A higher tag is an update.
+3. **Offer.** The page opens the update dialog with the release notes. The tray menu gains an **Update to 1.2.3** row.
+4. **Download.** On **Update now** the asset `OBSReplay.exe` goes to `<data>\updates\OBSReplay-1.2.3.exe`.
+5. **Verify.** Size, SHA-256 against the asset's `digest`, and the version resource inside the file must match the tag.
+6. **Hand over.** The app writes `updated_from` to `updates.json` and starts the downloaded exe. That exe is the installer described in [Self-install](#self-install): it closes this copy, replaces the installed file and opens it.
+7. **First start.** The new version sees `updated_from`, shows "Updated to 1.2.3" once and deletes the download.
+
+### Schedule
+
+- First check 10 seconds after launch, skipped when the last check is under an hour old.
+- Then once every 24 hours. A failed check retries after an hour.
+- **Check now** in Settings checks at once and reports a failure. Scheduled checks fail silently into the session log.
+- The **Check for updates automatically** switch turns the schedule off. **Check now** still works.
+
+### Rules
+
+- **Skip this version** stores the version in `updates.json`. That version is not offered again. A newer one is.
+- Closing the dialog asks again on the next launch.
+- No prompt while the window is hidden, during guided setup or while another dialog is open.
+- An editor with a running export or unexported cuts blocks **Update now**.
+- A file with the wrong size, hash or version is deleted and reported. The installed app is not touched.
+- The download address must start with `https://github.com/JessePepper69/OBSReplay/releases/download/`.
+- Release notes are Markdown. The page draws headings, lists, bold, italic, code and links as elements and never reads the text as HTML. Only `https://github.com/` links open, in the default browser.
+- A release with a tag that has no version number, or no `.exe` asset, cannot be installed from the app. The dialog links to the releases page.
+
+### Publishing a release
+
+1. Set the version in `project(OBSReplay VERSION x.y.z)` in `CMakeLists.txt`. Commit and push.
+2. Build Release from that clean commit.
+3. Create a GitHub release with the tag `vx.y.z`. The tag must match step 1.
+4. Attach the built file under the name `OBSReplay.exe`.
+5. Write the release notes. They are the changelog users see.
+
+Pre-releases and drafts are never offered.
+
+### Checks
+
+An isolated run (`OBSREPLAY_DATA_DIR`) never contacts GitHub. Two more variables work only in such a run:
+
+| Variable | Effect |
+| --- | --- |
+| `OBSREPLAY_UPDATE_URL` | Address used in place of the GitHub API. Its release may point at `http://127.0.0.1`. |
+| `OBSREPLAY_UPDATE_AS` | Version the build pretends to be, so the same build can be offered to itself. |
+
 ## Native bridge
 
 The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise. A function that returns `std::expected` rejects the promise with the error string.
@@ -208,6 +261,14 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `export_log` | none | path, `""` or an error | Save dialog, then write the session log with the current state and resource use. Empty when cancelled. |
 | `open_logs` | none | `true` or an error | Open the logs folder. |
 | `ui_log` | `level`, `text` | nothing | Add a line from the page: page changes and script errors. |
+| `update_state` | none | JSON string | `{enabled, status, current, latest, available, skipped, received, total, error, error_stage, checked_at, just_updated, previous, releases, blocked}`. `status` is `idle`, `checking`, `current`, `available`, `downloading`, `verifying`, `installing` or `error`. |
+| `update_check` | none | nothing | Ask GitHub now. |
+| `update_skip` | `skipped` | nothing | Hide the available version, or bring it back. |
+| `update_enabled` | `enabled` | nothing | Turn scheduled checks on or off. |
+| `update_start` | none | `true` or an error | Download, verify and install the available version. Refused while an editor has unfinished work. |
+| `update_cancel` | none | nothing | Stop a download. |
+| `update_seen` | none | nothing | The "Updated to" toast was shown. |
+| `open_link` | `url` | `true` or an error | Open a `https://github.com/` address in the default browser. |
 | `hide` | none | nothing | Hide to tray. |
 | `hotkey_recording` | `enabled` bool | nothing | Suspend or restore global hotkeys while the page records a shortcut. |
 | `ui_ready` | none | nothing | First frame is ready; reveal the window. |
@@ -510,6 +571,8 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 | `integration.json` | `Integration` | Ownership manifest. |
 | `websocket.original.json` | `Integration::prepare` | WebSocket config before first setup. |
 | `editor.json` | `EditorHost` | `ffmpeg_path` and editor preferences. |
+| `updates.json` | `Updater` | `enabled`, `skipped`, `checked_at`, the latest release seen, `updated_from`. |
+| `updates\` | `Updater` | A downloaded update. Emptied 10 seconds after each launch. |
 | `THIRD-PARTY-NOTICES.txt` | `open_help("notices")` | Notices extracted from the exe. |
 | `WebView2\` | WebView2 | Browser profile, in isolated runs only. |
 
@@ -711,7 +774,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 
 - `project(OBSReplay VERSION x.y.z)` in `CMakeLists.txt` is the one place the version is set. The version resource and the notices file read it.
 - `cmake/build_info.cmake` runs on every build. It writes `build/generated/build_info.hpp` with the version, the full Git commit and a flag for uncommitted changes to tracked files. It rewrites the file only when the content changes.
-- `app_version()` returns `0.1.0+abc1234`. A build from changed files ends in `.dirty`. Release builds come from a clean commit.
+- `app_version()` returns `1.0.0+abc1234`. A build from changed files ends in `.dirty`. Release builds come from a clean commit.
 
 ### Log file
 
