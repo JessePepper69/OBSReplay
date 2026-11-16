@@ -190,7 +190,7 @@ Uninstall asks for confirmation, then whether to delete settings. With `--quiet`
 2. **Compare.** The release tag (`v1.2.3`) against the version built into the app. A higher tag is an update.
 3. **Offer.** The page opens the update dialog with the release notes. The tray menu gains an **Update to 1.2.3** row.
 4. **Download.** On **Update now** the asset `OBSReplay.exe` goes to `<data>\updates\OBSReplay-1.2.3.exe`.
-5. **Verify.** Size, SHA-256 against the asset's `digest`, and the version resource inside the file must match the tag.
+5. **Verify.** Size and SHA-256 must match the asset's `size` and `digest`. The file's version resource must name the product `OBSReplay` and carry the tag's version.
 6. **Hand over.** The app writes `updated_from` to `updates.json` and starts the downloaded exe. That exe is the installer described in [Self-install](#self-install): it closes this copy, replaces the installed file and opens it.
 7. **First start.** The new version sees `updated_from`, shows "Updated to 1.2.3" once and deletes the download.
 

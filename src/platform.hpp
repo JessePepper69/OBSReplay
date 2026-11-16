@@ -39,6 +39,8 @@ void save_settings(const Paths& p, const Json& settings);
 fs::path find_obs();
 // File version (major, minor, patch) from the executable's version resource.
 std::optional<std::array<int, 3>> file_version(const fs::path& file);
+// ProductName from the same resource; empty when the file has none.
+std::string file_product(const fs::path& file);
 // Windows Package Manager's app execution alias; empty when winget is unavailable.
 fs::path winget_path();
 bool obs_running();

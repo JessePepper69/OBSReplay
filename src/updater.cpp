@@ -262,9 +262,9 @@ struct Updater::Impl {
                 const auto actual = hash.hex();
                 if (digest.starts_with("sha256:") && digest.substr(7) != actual) throw std::runtime_error("The download did not match the file GitHub published, so it was deleted. Try again.");
                 if (!MoveFileExW(part.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) throw std::runtime_error("The update could not be saved to " + path_string(folder) + ".");
-                // The file must be the OBSReplay it claims to be: same version in its own resources.
+                // The file must be the OBSReplay it claims to be: its own resources name the product and the same version.
                 const auto inside = file_version(target);
-                if (!inside || version_text(*inside) != version) throw std::runtime_error("The file in this release is not OBSReplay " + version + ". Download it from the releases page instead.");
+                if (file_product(target) != "OBSReplay" || !inside || version_text(*inside) != version) throw std::runtime_error("The file in this release is not OBSReplay " + version + ". Download it from the releases page instead.");
                 log_info("Update download checked: version={} bytes={} sha256={} digest_published={}", version, written, actual, digest.starts_with("sha256:"));
             }
         } catch (const std::exception& e) { problem = e.what(); }

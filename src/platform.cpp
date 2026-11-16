@@ -200,6 +200,18 @@ std::optional<std::array<int,3>> file_version(const fs::path& file) {
     return std::array<int,3>{HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS), HIWORD(info->dwFileVersionLS)};
 }
 
+std::string file_product(const fs::path& file) {
+    DWORD unused = 0;
+    const DWORD length = GetFileVersionInfoSizeW(file.c_str(), &unused);
+    if (!length) return {};
+    std::vector<unsigned char> buffer(length);
+    wchar_t* name = nullptr;
+    UINT size = 0;
+    if (!GetFileVersionInfoW(file.c_str(), 0, length, buffer.data()) ||
+        !VerQueryValueW(buffer.data(), L"\\StringFileInfo\\040904b0\\ProductName", reinterpret_cast<void**>(&name), &size) || !name || !size) return {};
+    return utf8(std::wstring(name, wcsnlen(name, size)));
+}
+
 fs::path winget_path() {
     try {
         const auto alias = folder(FOLDERID_LocalAppData) / L"Microsoft/WindowsApps/winget.exe";
