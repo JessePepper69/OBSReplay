@@ -15,7 +15,7 @@ Alternative to Shadowplay & OBS Replay buffer to capture clips. Then watch, trim
 
 </div>
 
-![Capture page: the live replay buffer and the latest clips](docs/images/capture.png)
+https://github.com/user-attachments/assets/bf2eb3b8-5c40-4355-a52d-ab684e762aa1
 
 > [!NOTE]
 > Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write code in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
