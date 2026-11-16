@@ -411,12 +411,13 @@ Json Integration::prepare(const Json& settings) {
              {"desktop_device", "audio_outputs", resolved["desktop_device"] != "off"},
              {"mic_device", "audio_inputs", resolved["mic_enabled"].get<bool>()}}}) {
         const std::string device = resolved[key];
+        const bool microphone = std::string_view(key) == "mic_device";
         if (enabled && device == "default" && std::none_of(choices[list].begin(), choices[list].end(), [](const auto& item) {
                 const std::string id = item["id"];
                 return id != "default" && id != "off";
-            })) throw std::runtime_error("No active audio device is available. Connect a device or turn off this audio source.");
+            })) throw std::runtime_error(microphone ? "No microphone is connected. Connect one, or turn off the microphone." : "No speakers or headphones are active. Connect an output device, or turn off desktop audio.");
         if (enabled && device != "default" && std::none_of(choices[list].begin(), choices[list].end(), [&](const auto& item) { return item["id"] == device; }))
-            throw std::runtime_error("The selected audio device is disconnected. Choose an available device.");
+            throw std::runtime_error(microphone ? "The selected microphone is disconnected. Choose another microphone." : "The selected desktop audio device is disconnected. Choose another device.");
     }
     std::string encoder = resolved["encoder"];
     const auto& encoders = choices["encoders"];

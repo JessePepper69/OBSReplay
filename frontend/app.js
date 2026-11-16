@@ -394,6 +394,26 @@
     scheduleFade();
     renderFeedback();
   }
+  // Errors with one obvious remedy get a button that applies it and tries again, so nobody has to hunt for the setting.
+  const errorFixes = [
+    { match: /No microphone is connected/, label: "Turn off microphone", apply() { $("mic_enabled").checked = false; } },
+    { match: /selected microphone is disconnected/, label: "Use default microphone", apply() { $("mic_device").value = "default"; } },
+    { match: /No speakers or headphones are active/, label: "Turn off desktop audio", apply() { $("desktop_device").value = "off"; } },
+    { match: /selected desktop audio device is disconnected/, label: "Use default device", apply() { $("desktop_device").value = "default"; } },
+    { match: /selected monitor is disconnected/, label: "Use main display", apply() { $("monitor_id").value = $("monitor_id").options[0]?.value || ""; } }
+  ];
+  const errorFix = text => errorFixes.find(fix => fix.match.test(text || "")) || null;
+  function applyErrorFix(text) {
+    const fix = errorFix(text);
+    if (!fix || busy()) return;
+    fix.apply();
+    markDirty();
+    syncSetupControls();
+    syncDropdowns();
+    state.dismissedError = text; state.localError = "";
+    if (!configured() || state.tab === "setup") runSetup(formValue());
+    else { renderFeedback(); $("settings-form").requestSubmit(); }
+  }
   function renderFeedback() {
     const snapshot = state.snapshot;
     const backendError = [errorText(snapshot?.error), errorText(snapshot?.hotkey_error)].filter(Boolean).join("\n");
@@ -403,6 +423,11 @@
     $("error-text").textContent = visibleError ? error : "";
     $("change-conflicting-shortcut").hidden = !errorText(snapshot?.hotkey_error) || !visibleError;
     $("change-conflicting-shortcut").disabled = !state.native || busy();
+    const noticeFix = visibleError ? errorFix(error) : null;
+    $("error-fix").hidden = !noticeFix;
+    $("error-fix").textContent = noticeFix?.label || "";
+    $("error-fix").dataset.error = noticeFix ? error : "";
+    $("error-fix").disabled = !state.native || busy();
     $("settings-actions").hidden = state.tab !== "settings";
     $("footer-hide").hidden = state.tab === "settings" || state.tab === "setup";
     const pending = busy();
@@ -1002,9 +1027,15 @@
   async function pollFfmpeg(refresh = false) {
     clearTimeout(ffmpegTimer);
     const next = await readFfmpeg(refresh);
+    // Looking again while FFmpeg is known to be missing reports "checking" for a moment. The page keeps showing
+    // "missing" with its install button until the new answer is in, and polls quickly meanwhile.
+    const rechecking = next?.status === "checking" && ["missing", "invalid"].includes(state.ffmpeg?.status);
+    if (rechecking) next.status = state.ffmpeg.status;
     if (next && JSON.stringify(next) !== JSON.stringify(state.ffmpeg)) { state.ffmpeg = next; renderFeedback(); }
+    // An install asked for while a check was still running starts as soon as the answer is known.
+    if (!rechecking) installFfmpegIfWanted();
     const watching = state.tab === "setup" && setup.step === "obs" && !document.hidden;
-    if (ffmpegBusy() || watching) ffmpegTimer = setTimeout(pollFfmpeg, ffmpegBusy() ? 500 : 3000);
+    if (ffmpegBusy() || rechecking || watching) ffmpegTimer = setTimeout(pollFfmpeg, ffmpegBusy() || rechecking ? 400 : 3000);
   }
   // The first definite answer (found or missing), waited for briefly so setup can open on the right step.
   async function settledFfmpeg() {
@@ -1025,7 +1056,9 @@
   }
   function installFfmpegIfWanted() {
     const tool = state.ffmpeg;
-    if (!setup.wantFfmpeg || !tool || tool.status !== "missing" && tool.status !== "invalid" || tool.install?.stage || !tool.install?.available) return;
+    if (!setup.wantFfmpeg || !tool || tool.status === "checking") return;
+    // Already there, already installing, or not installable here: the request is settled.
+    if (tool.status !== "missing" && tool.status !== "invalid" || tool.install?.stage || !tool.install?.available) { if (tool.status === "ready" || !tool.install?.available) setup.wantFfmpeg = false; return; }
     setup.wantFfmpeg = false;
     // Read the state at once and again shortly after, so progress shows without waiting for the slow idle poll.
     api().install_ffmpeg().then(() => { pollFfmpeg(); setTimeout(pollFfmpeg, 350); }).catch(showError);
@@ -1184,6 +1217,11 @@
     $("setup-error").hidden = !showSetupError;
     $("setup-error-title").textContent = setup.step === "obs" ? "OBS Studio isn’t ready" : "Setup couldn’t finish";
     $("setup-error-text").textContent = showSetupError ? failedError : "";
+    const setupFix = showSetupError ? errorFix(failedError) : null;
+    $("setup-error-fix").hidden = !setupFix;
+    $("setup-error-fix").textContent = setupFix?.label || "";
+    $("setup-error-fix").dataset.error = setupFix ? failedError : "";
+    $("setup-error-fix").disabled = !state.native || pending;
     // Footer actions
     const back = $("setup-back"), next = $("setup-next");
     back.hidden = setup.step === "obs" || setup.flow === "done" || running;
@@ -1209,6 +1247,7 @@
   }
   function bindSetup() {
     $("setup-next").addEventListener("click", setupNext);
+    for (const id of ["setup-error-fix", "error-fix"]) $(id).addEventListener("click", () => applyErrorFix($(id).dataset.error));
     $("setup-back").addEventListener("click", setupBack);
     for (const button of document.querySelectorAll("[data-setup-step]")) button.addEventListener("click", () => goStep(button.dataset.setupStep));
     $("install-obs").addEventListener("click", installMissing);

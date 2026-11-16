@@ -162,6 +162,7 @@ html:not([data-loaded]) .hero-cells strong { width:min(96px,80%);border-radius:6
 #error-notice { position:absolute;z-index:8;top:14px;left:var(--gutter);right:calc(var(--gutter) + 8px);max-width:720px;margin:0 auto;border-color:color-mix(in srgb,var(--red) 40%,transparent);background:color-mix(in srgb,var(--red) 9%,var(--canvas));box-shadow:0 24px 50px -18px var(--shadow);animation:notice-in 220ms var(--ease) both; }
 @keyframes notice-in { from { opacity:0;transform:translateY(-8px); } }
 .notice-buttons { display:flex;gap:8px;flex:none; }
+.notice-buttons:not(:has(button:not([hidden]))) { display:none; }
 .notice>div { min-width:0; }
 .notice strong { font-size:14px;font-weight:650;color:var(--red); }
 .notice p { color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:3px;font-size:13px; }

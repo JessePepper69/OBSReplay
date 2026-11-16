@@ -44,7 +44,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Microphone noise suppression:** Optional RNNoise or Speex filter on your microphone.
 - **Start with Windows:** Capture is running after you sign in. Nothing to open.
 - **Tray menu:** Save a replay, start or stop capture, or close the app from the tray.
-- **Themes:** Six colour themes: Original, Mono, Light, Rose, Amethyst and Ember.
+- **Themes:** Navy, Mono, Light, Rose, Amethyst and Ember.
 
 ![Clip editor: a clip with one section removed](docs/images/editor.png)
 

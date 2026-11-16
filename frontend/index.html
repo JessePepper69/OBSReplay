@@ -35,7 +35,7 @@
       <button type="button" id="help-button" aria-label="Help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 2.5M12 17h.01"/></svg><span>Help</span></button>
     </div></nav>
     <div class="content-shell">
-    <div class="notice error" id="error-notice" role="alert" hidden><div><strong id="error-title">Action couldn’t complete</strong><p id="error-text"></p></div><div class="notice-buttons"><button type="button" id="change-conflicting-shortcut" hidden>Change shortcut</button><button type="button" id="dismiss-error" aria-label="Dismiss error">Dismiss</button></div></div>
+    <div class="notice error" id="error-notice" role="alert" hidden><div><strong id="error-title">Action couldn’t complete</strong><p id="error-text"></p></div><div class="notice-buttons"><button type="button" id="change-conflicting-shortcut" hidden>Change shortcut</button><button type="button" id="error-fix" hidden></button><button type="button" id="dismiss-error" aria-label="Dismiss error">Dismiss</button></div></div>
     <main id="main" tabindex="-1">
       <section id="setup-view" aria-labelledby="setup-title" hidden>
         <div class="view-heading"><div><h1 id="setup-title">Set up replay capture</h1><p>OBS Studio records in the background. OBSReplay installs it, sets it up and keeps it running.</p></div><button type="button" class="text-button" id="setup-all-settings">All settings</button></div>
@@ -44,7 +44,7 @@
           <li><button type="button" data-setup-step="capture"><span class="step-mark" aria-hidden="true">2</span><span>Capture</span></button></li>
           <li><button type="button" data-setup-step="start"><span class="step-mark" aria-hidden="true">3</span><span>Start</span></button></li>
         </ol>
-        <div class="notice setup-error" id="setup-error" role="alert" hidden><div><strong id="setup-error-title">Setup couldn’t finish</strong><p id="setup-error-text"></p></div></div>
+        <div class="notice setup-error" id="setup-error" role="alert" hidden><div><strong id="setup-error-title">Setup couldn’t finish</strong><p id="setup-error-text"></p></div><div class="notice-buttons"><button type="button" id="setup-error-fix" hidden></button></div></div>
         <div class="setup-stage" data-step-panel="obs">
           <div class="setup-panel">
             <div class="setup-state"><span class="capture-mark" id="obs-mark"></span><div><h2 id="obs-title">Checking what’s installed…</h2><p id="obs-text"></p><p class="file-path" id="obs-path" hidden></p></div></div>
