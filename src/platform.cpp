@@ -198,7 +198,7 @@ fs::path winget_path() {
 Json default_settings(const Paths&) {
     return Json{{"obs_path", path_string(find_obs())}, {"clips_dir", path_string(folder(FOLDERID_Videos) / L"OBSReplay")},
         {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
-        {"encoder","auto"},{"codec","h264"},{"quality",20},{"mic_enabled",false},{"mic_device","default"},
+        {"encoder","auto"},{"codec","h264"},{"quality",18},{"mic_enabled",true},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
         {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true},{"theme","original"}};
 }
@@ -401,7 +401,7 @@ std::map<std::wstring,std::wstring> monitor_names() {
     return names;
 }
 
-// Labels read "<name> · Primary · <width> × <height>": the name and the primary mark come first, so a narrow control
+// Labels read "<name> (Primary) (<width>x<height>)": the name and the primary mark come first, so a narrow control
 // cuts the resolution, not what tells two screens apart. The id is unchanged, so a saved choice stays valid.
 Json monitors() {
     struct Listing { Json rows=Json::array(); std::map<std::wstring,std::wstring> names; std::map<std::string,int> seen; } listing;
@@ -425,7 +425,7 @@ Json monitors() {
         // Two screens of the same model get a number.
         const int count=++output.seen[name];
         if(count>1) name+=" ("+std::to_string(count)+")";
-        const auto label=name+(primary?" · Primary":"")+" · "+std::to_string(width)+" × "+std::to_string(height);
+        const auto label=name+(primary?" (Primary)":"")+" ("+std::to_string(width)+"x"+std::to_string(height)+")";
         Json row{{"id",utf8(device.DeviceID[0]?device.DeviceID:info.szDevice)},{"label",label},{"name",name},{"width",width},{"height",height},{"primary",primary}};
         if(primary) output.rows.insert(output.rows.begin(),row); else output.rows.push_back(row);
         return TRUE;

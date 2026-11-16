@@ -226,6 +226,53 @@ struct Controller::Impl {
         catch (...) { fail("Deleted replays were removed from this view, but the recent-clips history could not be saved."); }
     }
 
+    // Lists videos already in the clips folder that the history does not know: after a fresh install, after the
+    // history was deleted, or after the clips folder changed. Looks two folders deep (game, then Edited Exports).
+    void discover_clips() {
+        try {
+            const auto root = from_string(settings().value("clips_dir", ""));
+            std::error_code error;
+            if (root.empty() || !root.is_absolute() || !fs::is_directory(root, error)) return;
+            Json listed;
+            { std::lock_guard lock(mutex); listed = state.at("clips"); }
+            std::set<std::string> known;
+            std::vector<Json> clips;
+            for (const auto& clip : listed) { known.insert(clip.value("path", "")); clips.push_back(clip); }
+            std::size_t seen = 0, found = 0;
+            for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; !error && it != end; it.increment(error)) {
+                if (it.depth() > 2) { it.disable_recursion_pending(); continue; }
+                if (++seen > 20000) break;
+                std::error_code ignored;
+                if (!it->is_regular_file(ignored) || !media_file(it->path())) continue;
+                const auto text = path_string(it->path());
+                if (known.contains(text)) continue;
+                // The folder under the clips folder is the game; an "Edited Exports" folder marks an export.
+                const auto relative = it->path().lexically_relative(root);
+                bool edited = false;
+                std::string app;
+                for (auto part = relative.begin(); part != relative.end() && std::next(part) != relative.end(); ++part) {
+                    if (_wcsicmp(part->c_str(), L"Edited Exports") == 0) edited = true;
+                    else if (app.empty()) app = path_string(*part);
+                }
+                WIN32_FILE_ATTRIBUTE_DATA details{};
+                SYSTEMTIME utc{}, local{};
+                char saved[32]{};
+                if (GetFileAttributesExW(it->path().c_str(), GetFileExInfoStandard, &details) && FileTimeToSystemTime(&details.ftLastWriteTime, &utc) && SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local))
+                    snprintf(saved, sizeof(saved), "%04d-%02d-%02dT%02d:%02d:%02d", local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond);
+                const auto bytes = (static_cast<uint64_t>(details.nFileSizeHigh) << 32) | details.nFileSizeLow;
+                clips.push_back(Json{{"path", text}, {"name", path_string(it->path().filename())}, {"app", app}, {"bytes", bytes}, {"saved_at", saved}});
+                if (edited) clips.back()["edited"] = true;
+                ++found;
+            }
+            if (!found) return;
+            std::stable_sort(clips.begin(), clips.end(), [](const Json& a, const Json& b) { return a.value("saved_at", "") > b.value("saved_at", ""); });
+            Json merged = clips;
+            trim_history(merged);
+            update([&](Json& s) { s["clips"] = merged; });
+            atomic_write(paths.data / L"clips.json", merged.dump(2));
+        } catch (...) {}
+    }
+
     void initialize() {
         Json value;
         try { value = load_settings(paths); }
@@ -253,6 +300,7 @@ struct Controller::Impl {
             }
         } catch (...) { fail("Recent clip history could not be read. Your recordings are still in the clips folder."); }
         reconcile_clips();
+        discover_clips();
         try { const auto options = integration.options(value); update([&](Json& s) { s["options"] = options; }); }
         catch (const std::exception& e) { fail(e.what()); }
         if (stopping.load()) return;
@@ -591,7 +639,6 @@ struct Controller::Impl {
                 if (socket.request("GetStreamStatus").value("outputActive", false) || socket.request("GetRecordStatus").value("outputActive", false))
                     throw std::runtime_error("Stop your stream or full recording before applying capture settings. OBS was left running.");
                 resume = flag("replay_active");
-                if (resume) save("Before settings change", true);
                 restart = true;
                 if (resume) {
                     message("Pausing replay capture to apply settings…");
@@ -638,6 +685,7 @@ struct Controller::Impl {
             catch (const std::exception& e) { throw std::runtime_error(std::string("Settings were saved, but OBS could not resume. Choose Start capture to retry. ") + e.what()); }
         }
         if (prepare) update([](Json& s) { s["error"] = ""; });
+        if (previous.value("clips_dir", "") != value.value("clips_dir", "")) discover_clips();
         message(restart ? resume ? "Settings applied. Replay capture resumed." : "Settings applied. OBS is ready." : prepare ? "OBS is configured. Start capture when you're ready." : "Settings saved.");
         next_connect = Clock::now();
         if (setup && payload.value("start", false) && !flag("replay_active")) {

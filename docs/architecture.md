@@ -429,7 +429,7 @@ Rate control by `quality` (16, 18, 20, 24, 28):
 1. Validate the settings.
 2. Decide `prepare`: `true` for setup, a missing integration, a pending `compression_update`, or a change in any capture key (`obs_path`, `clips_dir`, `clip_seconds`, `capture`, `monitor_id`, `output_height`, `fps`, `encoder`, `codec`, `quality`, `mic_enabled`, `mic_device`, `desktop_device`, `noise`, `separate_tracks`).
 3. Without `prepare`: update the login startup entry if it changed, store the settings and stop here. OBS keeps running.
-4. With `prepare` and an owned OBS session: refuse on an active stream or recording, save the current buffer (app label `Before settings change`), stop the buffer, close OBS with `close_obs`.
+4. With `prepare` and an owned OBS session: refuse on an active stream or recording, stop the buffer, close OBS with `close_obs`. The buffer is not saved first; it starts again from empty.
 5. With `prepare` and any other OBS session: check `other_session_busy`, then `close_all_obs`.
 6. Update the login startup entry when it changed or on setup.
 7. Run `Integration::prepare`.

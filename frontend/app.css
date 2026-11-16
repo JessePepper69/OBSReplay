@@ -196,7 +196,10 @@ input[type="text"],input[readonly],select { width:100%;min-width:0;height:36px;p
 .dropdown.setting-control { width:min(36%,280px); }
 /* Dropdowns. The <select> stays in the form as the value, unseen; a button and a list stand in for the system menu. */
 .dropdown { position:relative;width:100%;min-width:0; }
-.dropdown select { position:absolute;inset:0;opacity:0;pointer-events:none; }
+.dropdown select,.dropdown select:disabled { position:absolute;inset:0;opacity:0;pointer-events:none; }
+.dropdown[hidden] { display:none; }
+label.setting-copy,label.switch-control { cursor:pointer; }
+label.setting-copy strong { display:block; }
 button.dropdown-button { width:100%;justify-content:space-between;padding:0 10px 0 12px;background:var(--canvas);text-align:left;font-weight:600; }
 button.dropdown-button:hover:not(:disabled) { background:var(--canvas); }
 button.dropdown-button:active:not(:disabled) { scale:none; }

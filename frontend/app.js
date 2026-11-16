@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled", "theme"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 20, mic_enabled: false, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true, theme: "original" };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 18, mic_enabled: true, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true, theme: "original" };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -115,7 +115,7 @@
     startup.innerHTML = '<span><strong>Start with Windows</strong><small>Keep replay controls available after you sign in.</small></span><input type="checkbox" id="setup-start-at-login" checked>';
     groups.capture.append(startup);
     const explanation = $("apply-explanation");
-    explanation.textContent = "Capture and audio changes restart OBS. Your current replay is saved first.";
+    explanation.textContent = "Capture and audio changes restart OBS. The replay buffer starts again from empty.";
     form.replaceChildren(groups.capture, groups.audio, groups.app, explanation);
     for (const row of form.querySelectorAll(".check-row")) {
       const input = row.querySelector("input");
@@ -966,7 +966,7 @@
   const setupTasks = ["closing", "configuring", "launching", "starting"];
   const checkIcon = '<svg viewBox="0 0 12 12"><path d="m2.5 6.2 2.3 2.3 4.7-5"/></svg>';
   const crossIcon = '<svg viewBox="0 0 12 12"><path d="m3 3 6 6m0-6-6 6"/></svg>';
-  const setupBindings = [["setup-monitor", "monitor_id"], ["setup-length", "clip_seconds"], ["setup-quality", "quality"], ["setup-mic", "mic_enabled"], ["setup-folder", "clips_dir"], ["setup-start-login", "start_at_login"]];
+  const setupBindings = [["setup-monitor", "monitor_id"], ["setup-length", "clip_seconds"], ["setup-quality", "quality"], ["setup-mic", "mic_enabled"], ["setup-mic-device", "mic_device"], ["setup-folder", "clips_dir"], ["setup-start-login", "start_at_login"]];
   function operating(name) { return state.pending?.action === name || Boolean(state.snapshot?.busy && state.snapshot?.operation === name); }
   function mirrorOptions(source, target) {
     const key = [...source.options].map(option => `${option.value}\u0000${option.textContent}`).join("\u0001");
@@ -985,6 +985,9 @@
     }
     for (const radio of document.querySelectorAll('[name="setup-capture"]')) radio.checked = radio.value === $("capture").value;
     $("setup-monitor-row").hidden = $("capture").value === "game";
+    // The device choice sits beside the switch and shows only while the microphone is recorded.
+    const micChoice = $("setup-mic-device").closest(".dropdown");
+    if (micChoice) micChoice.hidden = !$("mic_enabled").checked;
     const auto = state.snapshot?.options?.encoders?.[0]?.label || "";
     const encoder = auto.replace(/^Automatic · /, "");
     $("setup-defaults").textContent = `${encoder && !/CPU/.test(encoder) ? `Encoding uses ${encoder} automatically. ` : encoder ? "No supported GPU encoder was found, so encoding uses the CPU. " : ""}You can change frame rate, audio devices and shortcuts in Settings.`;
@@ -1228,6 +1231,8 @@
       if (control.type === "checkbox") target.checked = control.checked; else target.value = control.value;
       if (field === "start_at_login") $("setup-start-at-login").checked = control.checked;
       markDirty();
+      syncSetupControls();
+      syncDropdowns();
     });
     for (const radio of document.querySelectorAll('[name="setup-capture"]')) radio.addEventListener("change", () => { $("capture").value = radio.value; markDirty(); renderSetup(); });
     $("setup-pick-folder").addEventListener("click", async () => {
@@ -1335,6 +1340,7 @@
       list.id = `${select.id}-list`;
       list.setAttribute("role", "listbox");
       const caption = document.querySelector(`label[for="${select.id}"]`);
+      if (!caption && select.getAttribute("aria-label")) button.setAttribute("aria-label", select.getAttribute("aria-label"));
       if (caption) { caption.id ||= `${select.id}-label`; button.setAttribute("aria-labelledby", `${caption.id} ${label.id}`); list.setAttribute("aria-labelledby", caption.id); }
       button.setAttribute("aria-controls", list.id);
       select.before(wrap);
