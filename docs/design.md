@@ -460,7 +460,7 @@ Step 3, Start:
 ### Clips toolbar and pager
 
 - The toolbar shows whenever the selected tab has clips.
-- Search field: 32px high, a search icon inside its left edge, placeholder "Search clips", a clear button once it has text.
+- Search field: 32px high and 132px wide at rest; it widens to 270px while it has the keyboard or holds text. A search icon inside its left edge, placeholder "Search clips", a clear button once it has text.
 - Search matches every typed word against the file name, the game and the saved date. The date matches as the card shows it, or as weekday, month name, year, local numeric date or `2026-11-15`. It filters as you type and keeps the field focused.
 - Ctrl+F on the Clips page focuses the field. Escape clears it.
 - While a search runs, chips keep their order and show how many matches each game has. A game with none is disabled.
@@ -470,6 +470,27 @@ Step 3, Start:
 - Game names drop build suffixes from the executable name. "FortniteClient-Win64-Shipping" reads "Fortnite".
 - The pager shows previous, a range such as "1–24 of 31", next.
 - The pager appears only when there is more than one page.
+- A date menu sits after the search field: **Any time**, **Today**, **Last 7 days**, **Last 30 days**, **This year**. It is the dropdown component at 32px.
+- A date choice that leaves nothing shows "No replays from the last 7 days" and **Show any time**.
+
+### Day headings
+
+- On Clips, cards sit under day headings that span the grid: **Today**, **Yesterday**, then the date ("Friday, November 13").
+- A heading is a divider: a 4px marker, the day at 16px/700, a 1px `--line-strong` rule to the far edge, then the count ("3 clips") in the quiet colour. Today's marker is the accent colour; other days use `--line-hover`.
+- A date from another year shows its year.
+- A short age follows the date in the quiet colour: "3d ago", "2w ago", "1m ago", "1y ago". Today and Yesterday have none.
+- Under a heading a card shows the time alone. Latest on Capture has no headings and shows date and time.
+
+### Selecting clips
+
+- A 24px check box sits on the thumbnail's top left corner. It appears with the pointer or focus, like the "more" button.
+- Shift+click or Ctrl+click on a card selects it, and the same click on a selected card deselects it. A plain click plays the clip and keeps the selection.
+- While anything is selected, every check box stays visible. A selected card keeps its colour, gets a filled check box and grows to 104% over 240ms. It has no edge of its own. Every other card turns fully grey, picture, name and time alike, at half strength; pointing at one brings it to 80%.
+- A bar floats over the foot of the page on the dropdown surface: "3 selected", **Select all 31**, **Copy**, **Delete** (danger), **Clear selection**. Every button is labelled and the same height.
+- **Delete** asks first: "Delete 3 clips?".
+- **Clear selection** or Escape ends select mode. Changing page, filter, tab or opening a clip does not.
+- Latest on Capture has no check boxes.
+- A card dragged 8px starts a file drag out of the window. A selected card carries the whole selection.
 
 ### Clip cards
 
@@ -496,7 +517,7 @@ Step 3, Start:
 - Focus handed back by a closed viewer does not keep the hover state showing.
 - A thumbnail still being decoded shows the site's skeleton sweep. The frame then fades in.
 - Thumbnails decode one visible clip at a time.
-- Thumbnails keep a bounded in-memory cache.
+- Thumbnails keep a bounded in-memory cache and a copy on disk, so a reopened app shows them at once.
 - Clicking the thumbnail or name opens the replay viewer.
 
 ### Replay viewer
@@ -546,7 +567,7 @@ Layout from top to bottom:
 - Shift+click on Play restarts from the first kept section. A double click does nothing extra, so quick play and pause taps never jump back.
 - A Preview cuts switch follows the buttons.
 - One master volume slider, 50% by default.
-- A Track volumes button opens a popover with a slider and mute per recorded track.
+- An Audio tracks button opens a popover with a check box, a slider and mute per recorded track. A ticked track goes into the export.
 - Track rows use the file's own track names.
 - The frame-step and Play buttons have no tooltips. Their accessible names remain.
 
@@ -576,7 +597,7 @@ Layout from top to bottom:
 
 - Export length is a menu button that selects the time format.
 - A 10-step quality slider with plain-language labels from "Smallest · 720p" to "Original".
-- A "Click/Drag to select quality level" hint.
+- A **Max size** row under the slider: five chips, 10, 25, 50, 100 and 500, then "MB". A chosen chip dims the slider, and the label reads "Fit to 25 MB", "Already fits" or "Too long". The estimate reads "Up to 25 MB". Moving the slider or pressing the chip again ends the choice. A size the edit cannot meet is dimmed and explains why in a toast.
 - A tooltip explains Original versus smaller files.
 - The estimated file size and codec.
 - **Export video**, 40px.

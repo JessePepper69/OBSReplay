@@ -8,7 +8,9 @@
 #endif
 #include <windows.h>
 #include <commctrl.h>
+#include <ole2.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -655,4 +657,114 @@ std::string now_iso() {
     return result;
 }
 void save_feedback() { PlaySoundW(MAKEINTRESOURCEW(102),GetModuleHandleW(nullptr),SND_RESOURCE|SND_ASYNC|SND_NODEFAULT); }
+
+bool process_running(const wchar_t* executable) {
+    Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
+    if (snapshot.value==INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{}; entry.dwSize=sizeof(entry);
+    if (!Process32FirstW(snapshot.value,&entry)) return false;
+    do { if (_wcsicmp(entry.szExeFile,executable)==0) return true; } while(Process32NextW(snapshot.value,&entry));
+    return false;
+}
+
+namespace {
+// The files that exist, as full paths with native separators.
+std::vector<std::wstring> existing_files(const std::vector<fs::path>& files) {
+    std::vector<std::wstring> result;
+    for (auto file : files) {
+        std::error_code error;
+        file.make_preferred();
+        if (file.is_absolute() && fs::is_regular_file(file,error)) result.push_back(file.wstring());
+    }
+    return result;
+}
+// One data object for several files, the same one Explorer hands out for a copy or a drag.
+IDataObject* file_data_object(const std::vector<std::wstring>& files) {
+    std::vector<PIDLIST_ABSOLUTE> items;
+    for (const auto& file : files) if (PIDLIST_ABSOLUTE item=ILCreateFromPathW(file.c_str())) items.push_back(item);
+    IDataObject* data=nullptr;
+    if (!items.empty()) {
+        IShellItemArray* array=nullptr;
+        if (SUCCEEDED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(items.size()),const_cast<PCIDLIST_ABSOLUTE*>(items.data()),&array)) && array) {
+            array->BindToHandler(nullptr,BHID_DataObject,IID_PPV_ARGS(&data));
+            array->Release();
+        }
+    }
+    for (auto item : items) CoTaskMemFree(item);
+    return data;
+}
+struct FullscreenState { WINDOWPLACEMENT placement; LONG_PTR style; };
+std::map<HWND,FullscreenState> fullscreen_windows;  // touched only on the window thread
+}
+
+std::size_t copy_files_to_clipboard(const std::vector<fs::path>& files) {
+    const auto list=existing_files(files);
+    if (list.empty()) throw std::runtime_error("That file is no longer available.");
+    // CF_HDROP: a DROPFILES header, then each path ended by a zero, then one more zero.
+    std::size_t characters=1;
+    for (const auto& file : list) characters+=file.size()+1;
+    const std::size_t bytes=sizeof(DROPFILES)+characters*sizeof(wchar_t);
+    HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE|GMEM_ZEROINIT,bytes);
+    if (!memory) throw failure("Windows could not copy the file");
+    auto* header=static_cast<DROPFILES*>(GlobalLock(memory));
+    header->pFiles=sizeof(DROPFILES); header->fWide=TRUE;
+    auto* text=reinterpret_cast<wchar_t*>(reinterpret_cast<unsigned char*>(header)+sizeof(DROPFILES));
+    for (const auto& file : list) { std::copy(file.begin(),file.end(),text); text+=file.size()+1; }
+    GlobalUnlock(memory);
+    HGLOBAL effect=GlobalAlloc(GMEM_MOVEABLE,sizeof(DWORD));
+    if (effect) { *static_cast<DWORD*>(GlobalLock(effect))=DROPEFFECT_COPY; GlobalUnlock(effect); }
+    bool opened=false;
+    for (int attempt=0; attempt<10 && !(opened=OpenClipboard(nullptr)!=FALSE); ++attempt) Sleep(20);
+    if (!opened) { GlobalFree(memory); if (effect) GlobalFree(effect); throw std::runtime_error("Another app is using the clipboard. Try again."); }
+    EmptyClipboard();
+    const bool placed=SetClipboardData(CF_HDROP,memory)!=nullptr;
+    if (!placed) GlobalFree(memory);
+    if (effect && !(placed && SetClipboardData(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT),effect))) GlobalFree(effect);
+    CloseClipboard();
+    if (!placed) throw failure("Windows could not copy the file");
+    log_info("Copied to clipboard: files={}", list.size());
+    return list.size();
+}
+
+void drag_files(void* hwnd,const std::vector<fs::path>& files) {
+    const auto list=existing_files(files);
+    if (list.empty() || !(GetAsyncKeyState(VK_LBUTTON)&0x8000)) return;
+    static const HRESULT ole=OleInitialize(nullptr);  // drag and drop needs OLE on this thread; once is enough
+    (void)ole;
+    IDataObject* data=file_data_object(list);
+    if (!data) return;
+    DWORD effect=DROPEFFECT_NONE;
+    const HRESULT result=SHDoDragDrop(static_cast<HWND>(hwnd),data,nullptr,DROPEFFECT_COPY,&effect);
+    data->Release();
+    log_info("Dragged out: files={} dropped={}", list.size(), result==DRAGDROP_S_DROP && effect!=DROPEFFECT_NONE);
+}
+
+void set_window_fullscreen(void* handle,bool enabled) {
+    const HWND hwnd=static_cast<HWND>(handle);
+    const auto saved=fullscreen_windows.find(hwnd);
+    if (enabled) {
+        if (saved!=fullscreen_windows.end()) return;
+        MONITORINFO monitor{}; monitor.cbSize=sizeof(monitor);
+        if (!GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)) return;
+        FullscreenState state{}; state.placement.length=sizeof(WINDOWPLACEMENT);
+        GetWindowPlacement(hwnd,&state.placement);
+        state.style=GetWindowLongPtrW(hwnd,GWL_STYLE);
+        fullscreen_windows[hwnd]=state;
+        SetWindowLongPtrW(hwnd,GWL_STYLE,state.style&~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW));
+        const RECT& area=monitor.rcMonitor;
+        SetWindowPos(hwnd,HWND_TOP,area.left,area.top,area.right-area.left,area.bottom-area.top,SWP_NOOWNERZORDER|SWP_FRAMECHANGED);
+        log_info("Window fullscreen: on monitor={},{} {}x{}", area.left, area.top, area.right-area.left, area.bottom-area.top);
+    } else {
+        if (saved==fullscreen_windows.end()) return;
+        const auto state=saved->second;
+        fullscreen_windows.erase(saved);
+        // Keep the current visibility: the window may have been hidden to the tray while it was fullscreen.
+        const LONG_PTR visible=GetWindowLongPtrW(hwnd,GWL_STYLE)&WS_VISIBLE;
+        SetWindowLongPtrW(hwnd,GWL_STYLE,(state.style&~static_cast<LONG_PTR>(WS_VISIBLE))|visible);
+        if (visible) SetWindowPlacement(hwnd,&state.placement);
+        else { auto placement=state.placement; placement.showCmd=SW_HIDE; SetWindowPlacement(hwnd,&placement); }
+        SetWindowPos(hwnd,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOOWNERZORDER|SWP_FRAMECHANGED);
+        log_info("Window fullscreen: off");
+    }
+}
 }

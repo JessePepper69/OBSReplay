@@ -80,7 +80,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Clips folder | Done | Write access is tested before applying. |
 | Sort clips into app folders | Done | Best-effort label from the foreground window. |
 | Save sound | Done | |
-| Start at Windows login | Done | Current-user `Run` entry. |
+| **Start with Windows** | Done | One switch, in guided setup and in Settings, App. Current-user `Run` entry. |
 | Configurable hotkeys with conflict detection | Done | |
 | Animations switch | Done | |
 | Six color themes | Done | Applied to every window. |
@@ -93,10 +93,15 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Clip list | Done | Every replay and edited export, with no limit, from confirmed saves. Videos already in the clips folder are added at launch. |
 | **Replays** and **Edited exports** tabs | Done | On **Capture** (latest 8) and **Clips** (24 per page). |
 | App filter and paging on **Clips** | Done | |
+| Date filter on **Clips** | Done | One menu: Any time, Today, Last 7 days, Last 30 days, This year. |
+| Day headings on **Clips** | Done | Today, Yesterday, then the date with a short age ("3d ago", "2w ago", "1m ago", "1y ago"). A date from another year shows its year. |
+| Select several clips | Done | A check box on each card, Shift+click or Ctrl+click. Cards that are not selected go pale. A bar offers **Select all**, **Copy**, **Delete** and **Clear selection**. Opening a clip keeps the selection. Escape clears it. |
+| Copy clips to the clipboard | Done | As files, from the clip menu or the selection bar. They paste into a chat or a folder. |
+| Drag a clip out of the window | Done | Drops the file on a chat or a folder. A drag from a selected card carries the selection. |
 | Search on **Clips** | Done | File name, game and saved date: as shown on the card, or by weekday, month name, year, local numeric date or `2026-11-15`. |
-| Clip menu | Done | One button per card, or a right-click: play, edit, rename, open, show in folder, delete. |
+| Clip menu | Done | One button per card, or a right-click: play, edit, rename, select, copy, open, show in folder, delete. |
 | Rename a clip | Done | Renames the file in its folder and keeps its extension. |
-| Thumbnails and clip length | Done | Decoded in the page from the clip file. |
+| Thumbnails and clip length | Done | Decoded in the page from the clip file once, then kept on disk as a small low-quality JPEG. |
 | In-app viewer with timeline, filmstrip and waveform | Done | The waveform needs FFmpeg. |
 | **Show in folder**, **Open file**, **Delete** | Done | Delete asks for confirmation and removes the file. |
 | Remove missing files from the list | Done | Checked every second, 200 clips per pass in rotation. |
@@ -109,7 +114,10 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Split, remove, restore, undo, redo | Done | Edit decisions live in the page. |
 | Preview quality **Full**, **Half**, **Quarter** | Done | Half and Quarter build a proxy file with FFmpeg. |
 | Per-track volume in preview | Done | Uses audio stems copied from the clip. |
+| Pick the audio tracks to export | Done | A check box per track in **Audio tracks**. All ticked exports the tracks as recorded. A smaller choice leads with a mix of the ticked tracks, then each ticked track. None ticked exports no sound. An unticked track is silent in preview. |
 | Export quality 1 to 10 with size estimate | Done | 10 keeps the original video where the file allows it. |
+| **Max size** export: 10, 25, 50, 100 or 500 MB | Done | 1 MB is 1,000,000 bytes. The file is measured after encoding and encoded again at a lower bitrate if it is over, up to three more times. It never reports a file over the limit. The video is always H.264, so it plays everywhere. A size the edit cannot meet is shown as unavailable. |
+| **Copy** the exported file | Done | Puts the file on the clipboard from the result row. |
 | Frame-exact cuts | Done | |
 | Named exports in `Edited Exports` | Done | Never overwrites a file. |
 | Delete original after exporting | Done | Opt-in checkbox in the export dialog, unticked each time. |
@@ -126,6 +134,8 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Show/hide hotkey | Done | |
 | Tray notifications for saves and errors while hidden | Done | |
 | Volume mixer shows OBSReplay name and icon | Done | |
+| NVIDIA overlay notice | Done | When `NVIDIA Overlay.exe` runs, guided setup shows a notice and the app shows a toast: the overlay also uses Alt+Z. Dismissing either hides both for good. |
+| Fullscreen video on any monitor | Done | The viewer fills the monitor the window is on. |
 | Embedded third-party notices | Done | Opened from Help. |
 | Self-install and uninstall | Done | The exe copies itself to `%LOCALAPPDATA%\Programs\OBSReplay` on first run. Uninstall from Settings or Windows **Installed apps**. |
 | Updates from GitHub Releases | Done | Daily check, release notes, one-click install, **Skip this version**. |

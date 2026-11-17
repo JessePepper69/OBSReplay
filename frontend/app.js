@@ -143,11 +143,6 @@
     updateAuto.className = "check-row";
     updateAuto.innerHTML = '<span><strong>Check for updates automatically</strong><small>Once a day. Nothing installs until you choose Update now.</small></span><input type="checkbox" id="update-auto" checked>';
     groups.app.append(updateRow, updateAuto);
-    const startup = document.createElement("label");
-    startup.className = "check-row";
-    startup.id = "setup-startup-row";
-    startup.innerHTML = '<span><strong>Start with Windows</strong><small>Keep replay controls available after you sign in.</small></span><input type="checkbox" id="setup-start-at-login" checked>';
-    groups.capture.append(startup);
     const explanation = $("apply-explanation");
     explanation.textContent = "Capture and audio changes restart OBS. The replay buffer starts again from empty.";
     groups.debug.innerHTML = "<div class=\"debug-usage entrance-item\" id=\"debug-usage\"><div class=\"debug-usage-head\"><strong>Resource use</strong></div><table class=\"usage-table\"><thead><tr><th scope=\"col\"><span class=\"sr-only\">Measure</span></th><th scope=\"col\">OBSReplay</th><th scope=\"col\">OBS Studio</th><th scope=\"col\">Both</th></tr></thead><tbody><tr data-usage=\"cpu\"><th scope=\"row\">CPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"memory\"><th scope=\"row\">Memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu\"><th scope=\"row\">GPU</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_encode\"><th scope=\"row\">GPU video encoder</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"gpu_memory\"><th scope=\"row\">GPU memory</th><td>—</td><td>—</td><td>—</td></tr><tr data-usage=\"processes\"><th scope=\"row\">Processes</th><td>—</td><td>—</td><td>—</td></tr></tbody></table><div class=\"hero-cells usage-cells\"><div><span>OBS frame rate</span><strong id=\"debug-fps\">—</strong></div><div><span>Frame render time</span><strong id=\"debug-render\">—</strong></div><div><span>Missed frames</span><strong id=\"debug-missed\">—</strong></div><div><span>Skipped frames</span><strong id=\"debug-skipped\">—</strong></div><div><span id=\"debug-disk-label\">Clips drive</span><strong id=\"debug-disk\">—</strong></div></div></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Version</strong><small id=\"debug-version\">—</small></div><button type=\"button\" id=\"debug-copy\">Copy</button></div><div class=\"setting-row entrance-item\"><div class=\"setting-copy\"><strong>Session log</strong><small id=\"debug-export-status\">Everything OBSReplay did since it opened. Export it and attach the file when you report a problem.</small></div><div class=\"inline-actions\"><button type=\"button\" id=\"debug-open-logs\">Open logs folder</button><button type=\"button\" id=\"debug-export\">Export log…</button></div></div><div class=\"debug-log-row entrance-item\"><strong id=\"debug-log-title\">Latest log lines</strong><pre class=\"debug-log\" id=\"debug-log\" tabindex=\"0\" aria-labelledby=\"debug-log-title\"></pre></div>";
@@ -176,9 +171,6 @@
     const setupHint = document.createElement("p");
     setupHint.textContent = "Pick your settings, then Set up and start.";
     setupCopy.append(setupTitle, setupHint);
-    startup.classList.add("setup-startup");
-    startup.querySelector("small").remove();
-    setupCopy.append(startup);
     const webviewHelp = $("setup-intro").querySelector('[data-help="webview2"]');
     if (webviewHelp) $("help-links").append(webviewHelp);
     const guided = document.createElement("button");
@@ -305,7 +297,26 @@
     if (!value) return "";
     const numeric = Number(value);
     const date = new Date(Number.isFinite(numeric) ? numeric * (numeric < 1e12 ? 1000 : 1) : value);
-    return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
+    if (Number.isNaN(date.getTime())) return String(value);
+    // A clip from another year shows its year.
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" }).format(date);
+  }
+  const clipDate = value => { const date = new Date(value); return value && !Number.isNaN(date.getTime()) ? date : null; };
+  const startOfDay = date => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  // Whole days between a clip's day and today, by the calendar: a clip saved late yesterday is 1 day old.
+  const daysAgo = date => Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+  const formatClock = value => { const date = clipDate(value); return date ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date) : ""; };
+  // Day headings on the Clips page: Today, Yesterday, then the date (with its year when it is not this year),
+  // and a short age beside it: 3d ago, 2w ago, 1m ago, 1y ago.
+  function dayHeading(date) {
+    const days = daysAgo(date);
+    if (days <= 0) return { title: "Today", age: "" };
+    if (days === 1) return { title: "Yesterday", age: "" };
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    const title = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) }).format(date);
+    const age = days < 7 ? `${days}d ago` : days < 30 ? `${Math.floor(days / 7)}w ago` : days < 365 ? `${Math.floor(days / 30)}m ago` : `${Math.floor(days / 365)}y ago`;
+    return { title, age };
   }
   function setOptions(id, items, prefix = []) {
     const select = $(id);
@@ -364,7 +375,6 @@
     // Real settings show their theme in this window; the placeholder defaults used before the first state do not.
     if (state.snapshot) Theme.preview($("theme").value);
     showPathEnds();
-    $("setup-start-at-login").checked = $("start_at_login").checked;
     updateCodecs();
     updateDependencies();
   }
@@ -451,6 +461,7 @@
     showPathEnds();
     scheduleFade();
     renderFeedback();
+    syncSelection();
   }
   // Errors with one obvious remedy get a button that applies it and tries again, so nobody has to hunt for the setting.
   const errorFixes = [
@@ -498,7 +509,7 @@
     else if (state.tab === "settings" && state.dirty) $("footer-status").textContent = "Unapplied changes";
     else if (state.tab === "setup") $("footer-status").textContent = setupFooterText();
     else $("footer-status").textContent = snapshot?.message || (configured() ? "Settings saved" : "Set up replay capture to get started");
-    for (const element of document.querySelectorAll("[data-action], [data-help], #footer-hide, #hide-window, #quit-app, #reset-integration, #refresh-devices, #pick-obs, #pick-folder, #setup-start-at-login")) element.disabled = !state.native || pending;
+    for (const element of document.querySelectorAll("[data-action], [data-help], #footer-hide, #hide-window, #quit-app, #reset-integration, #refresh-devices, #pick-obs, #pick-folder")) element.disabled = !state.native || pending;
     for (const element of $("settings-form").elements) if (element.id !== "apply-settings") element.disabled = !state.native || pending;
     if (state.native && !pending) updateDependencies();
     const canControl = Boolean(snapshot?.connected && snapshot?.owned);
@@ -509,6 +520,7 @@
     $("toggle-capture").disabled = !state.native || pending || !configured() || Boolean(snapshot?.connected && !snapshot?.owned) || Boolean(needsAttention && !snapshot?.replay_active);
     renderSetup();
     syncDropdowns();
+    syncSelection();
     scheduleFade();
   }
   function renderCapture() {
@@ -547,7 +559,6 @@
     $("capture-folder").textContent = value.clips_dir || "Choose a destination in Settings.";
     $("connection-actions").hidden = Boolean(snapshot.connected && snapshot.owned);
     $("setup-intro").hidden = configured() || category !== "capture";
-    $("setup-startup-row").hidden = configured();
     $("help-status").textContent = snapshot.status ? `${snapshot.status}${snapshot.message ? `: ${snapshot.message}` : ""}` : $("connection-label").textContent;
   }
   const icons = {
@@ -555,6 +566,9 @@
     open: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 4H16v4.5M16 4l-6.5 6.5M14 11.5v3a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 4 14.5v-7A1.5 1.5 0 0 1 5.5 6h3"/></svg>',
     folder: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3l1.6 2h6.4A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>',
     more: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h.01M10 10h.01M15 10h.01"/></svg>',
+    copy: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.500 4h-6A1.500 1.500 0 0 0 4 5.500v6A1.500 1.500 0 0 0 5.500 13H7"/></svg>',
+    select: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="3.5" width="13" height="13" rx="3.5"/><path d="m6.800 10.300 2.200 2.200 4.300-4.700"/></svg>',
+    check: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m2.500 6.200 2.300 2.300 4.700-5"/></svg>',
     play: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4.5 9 5.5-9 5.5z"/></svg>',
     rename: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 16 .7-3.3L13.3 4a1.6 1.6 0 0 1 2.2 0l.5.5a1.6 1.6 0 0 1 0 2.2L7.3 15.3zM11.8 5.6l2.6 2.6"/></svg>',
     trash: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 6V4.5h4V6M6 6l.6 9a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4L14 6M8.5 9v4.5M11.5 9v4.5"/></svg>'
@@ -568,9 +582,10 @@
     dispatch("delete_clip", { path: clip.path });
   }
   // Clip details as separate pieces (app, saved time, size) so they align and wrap cleanly.
-  function fillMeta(container, clip, size = true) {
+  function fillMeta(container, clip, size = true, timeOnly = false) {
     container.replaceChildren();
-    for (const [text, name] of [[clip.app ? gameName(clip.app) : "", "clip-app"], [formatTime(clip.saved_at), ""], [size ? formatBytes(clip.bytes) : "", ""]]) {
+    // Under a day heading the card shows the time alone; the day is in the heading.
+    for (const [text, name] of [[clip.app ? gameName(clip.app) : "", "clip-app"], [timeOnly ? formatClock(clip.saved_at) || formatTime(clip.saved_at) : formatTime(clip.saved_at), ""], [size ? formatBytes(clip.bytes) : "", ""]]) {
       if (!text) continue;
       const piece = document.createElement("span");
       if (name) piece.className = name;
@@ -624,13 +639,16 @@
       ["Play", icons.play, () => watchReplay(clip)],
       ["Edit clip", icons.edit, () => openEditor(clip)],
       ["Rename", icons.rename, () => renameClip(clip)],
+      card.classList.contains("compact") ? undefined : [selection.has(clip.path) ? "Deselect" : "Select", icons.select, () => toggleSelected(clip.path)],
       null,
+      ["Copy", icons.copy, () => copyClips([clip.path])],
       ["Open in video player", icons.open, () => dispatch("open_clip", { path: clip.path })],
       ["Show in folder", icons.folder, () => dispatch("reveal_clip", { path: clip.path })],
       null,
       ["Delete", icons.trash, event => deleteClip(clip, !event.shiftKey), true]
     ];
     for (const row of rows) {
+      if (row === undefined) continue;
       if (!row) { const rule = document.createElement("hr"); rule.setAttribute("role", "separator"); element.append(rule); continue; }
       const [label, icon, run, danger] = row;
       const item = document.createElement("button");
@@ -746,15 +764,30 @@
       const { clip, image } = entry.target.replayThumbnail;
       const key = clipKey(clip);
       if (thumbnailCache.has(key)) paintThumbnail(image, thumbnailCache.get(key), true);
-      else {
+      // The picture saved on disk shows at once. Only a clip without one is decoded from its video.
+      else storedThumbnail(clip).then(stored => {
+        if (stored) {
+          thumbnailCache.set(key, stored.data);
+          if (stored.length > 0) clipLengths.set(key, stored.length);
+          paintThumbnail(image, stored.data, true);
+          return;
+        }
         const job = thumbnailJobs.get(key) || { clip, targets: [] };
         job.targets = job.targets.filter(target => target.isConnected);
         job.targets.push(image);
         thumbnailJobs.set(key, job);
-      }
+        drainThumbnails();
+      });
     }
-    drainThumbnails();
   }, { root: $("main"), rootMargin: "100px" });
+  async function storedThumbnail(clip) {
+    if (typeof api()?.thumbnail_read !== "function") return null;
+    try {
+      const text = await api().thumbnail_read(clip.path);
+      const stored = text ? JSON.parse(text) : null;
+      return stored && typeof stored.data === "string" && stored.data.startsWith("data:image/jpeg;base64,") ? stored : null;
+    } catch { return null; }
+  }
   async function takeThumbnail(clip) {
     const url = await nativeCall("media_url", clip.path);
     if (document.hidden || $("replay-player").open) throw new DOMException("Preview deferred", "AbortError");
@@ -784,7 +817,8 @@
           const scale = Math.min(320 / video.videoWidth, 180 / video.videoHeight);
           const width = video.videoWidth * scale, height = video.videoHeight * scale;
           context.drawImage(video, (320 - width) / 2, (180 - height) / 2, width, height);
-          done(canvas.toDataURL("image/jpeg", .78));
+          // Cards are small, so the picture is too: low JPEG quality keeps each file near 10 KB on disk.
+          done(canvas.toDataURL("image/jpeg", .6));
         } catch { done(null); }
       };
       video.onloadeddata = () => {
@@ -811,7 +845,8 @@
           const stillKnown = state.snapshot?.clips?.some(clip => clipKey(clip) === key);
           if (stillKnown) {
             thumbnailCache.set(key, data);
-            while (thumbnailCache.size > 120) thumbnailCache.delete(thumbnailCache.keys().next().value);
+            while (thumbnailCache.size > 300) thumbnailCache.delete(thumbnailCache.keys().next().value);
+            if (data && typeof api()?.thumbnail_write === "function") Promise.resolve(api().thumbnail_write(job.clip.path, data, clipLengths.get(key) || 0)).catch(() => {});
             for (const image of job.targets) paintThumbnail(image, data);
           }
           thumbnailJobs.delete(key);
@@ -856,15 +891,82 @@
     });
     if (!alreadyOpen) animateDialog($("replay-player"), true);
   }
-  function clipRow(clip, compact = false) {
+  // Selection on the Clips page. Selecting a clip puts the page in select mode: the other cards go pale and a bar
+  // offers Copy and Delete. Opening a clip keeps the selection; only Clear selection or Escape ends it.
+  const selection = new Set();
+  function syncSelection() {
+    const clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : [];
+    const listed = new Set(clips.map(clip => clip.path));
+    for (const path of [...selection]) if (!listed.has(path)) selection.delete(path);
+    document.documentElement.toggleAttribute("data-selecting", selection.size > 0);
+    for (const card of document.querySelectorAll(".clip-card")) {
+      const chosen = selection.has(card.dataset.path);
+      card.classList.toggle("selected", chosen);
+      card.querySelector(".clip-select")?.setAttribute("aria-checked", String(chosen));
+    }
+    // The bar belongs to the Clips page; a selection made there waits while another page is open.
+    const bar = $("selection-bar"), shown = selection.size > 0 && state.tab === "clips";
+    if (bar.hidden === shown) bar.hidden = !shown;
+    $("selection-count").textContent = `${selection.size} selected`;
+    const everything = clipView.shown.length > 0 && clipView.shown.every(clip => selection.has(clip.path));
+    $("selection-all").disabled = everything;
+    $("selection-all").textContent = clipView.shown.length > 1 ? `Select all ${clipView.shown.length}` : "Select all";
+    for (const id of ["selection-copy", "selection-delete"]) $(id).disabled = !state.native || busy();
+  }
+  function toggleSelected(path) {
+    if (selection.has(path)) selection.delete(path);
+    else selection.add(path);
+    syncSelection();
+  }
+  function clearSelection() { if (!selection.size) return; selection.clear(); syncSelection(); }
+  async function copyClips(paths) {
+    if (!paths.length) return;
+    try {
+      const count = Number(await nativeCall("copy_clips", JSON.stringify(paths))) || paths.length;
+      showToast(count === 1 ? "Clip copied. Paste it into a chat or a folder." : `${count} clips copied. Paste them into a chat or a folder.`);
+    } catch (error) { showError(error); }
+  }
+  async function deleteSelected() {
+    const paths = [...selection];
+    if (!paths.length || busy()) return;
+    const one = paths.length === 1;
+    if (!await confirmAction(one ? "Delete 1 clip?" : `Delete ${paths.length} clips?`, `Permanently delete ${one ? "this clip" : `these ${paths.length} clips`} from your computer? This cannot be undone.`, one ? "Delete clip" : `Delete ${paths.length} clips`, true)) return;
+    if (playerClip && paths.includes(playerClip.path)) { ReplayViewer.release(); playerClip = null; closePlayer(); }
+    selection.clear();
+    syncSelection();
+    dispatch("delete_clips", { paths });
+  }
+  // Dragging a card out of the window hands the file to whatever it is dropped on (a chat, a folder). A drag that
+  // starts on a selected card carries the whole selection. The native side takes over once the pointer has moved.
+  function watchForDrag(row, clip) {
+    row.addEventListener("pointerdown", down => {
+      if (down.button !== 0 || down.shiftKey || down.ctrlKey || down.target.closest(".clip-more,.clip-select") || typeof api()?.drag_clips !== "function") return;
+      const moved = event => {
+        if (Math.hypot(event.clientX - down.clientX, event.clientY - down.clientY) < 8) return;
+        stop();
+        const paths = selection.has(clip.path) ? [...selection] : [clip.path];
+        // The button never sees this press end, so the click that would open the viewer does not happen.
+        Promise.resolve(api().drag_clips(JSON.stringify(paths))).catch(() => {});
+      };
+      const stop = () => { window.removeEventListener("pointermove", moved, true); window.removeEventListener("pointerup", stop, true); window.removeEventListener("pointercancel", stop, true); };
+      window.addEventListener("pointermove", moved, true);
+      window.addEventListener("pointerup", stop, true);
+      window.addEventListener("pointercancel", stop, true);
+    });
+  }
+  function clipRow(clip, compact = false, timeOnly = false) {
     const row = document.createElement("div");
-    row.className = "clip-card";
+    row.className = compact ? "clip-card compact" : selection.has(clip.path) ? "clip-card selected" : "clip-card";
+    if (!compact) row.dataset.path = clip.path;
     const preview = document.createElement("button");
     preview.type = "button"; preview.className = "clip-preview";
     preview.setAttribute("aria-label", `Watch ${clip.name || "replay"}`);
-    preview.addEventListener("click", () => watchReplay(clip));
+    // Shift+click or Ctrl+click selects or deselects; a plain click plays the clip and leaves the selection alone.
+    preview.addEventListener("click", event => { if (!compact && (event.shiftKey || event.ctrlKey)) toggleSelected(clip.path); else watchReplay(clip); });
+    // A press with Shift or Ctrl must not select text across the page or leave a keyboard focus ring on the card.
+    if (!compact) row.addEventListener("mousedown", event => { if (event.shiftKey || event.ctrlKey) event.preventDefault(); });
     const thumbnail = document.createElement("span"); thumbnail.className = "clip-thumbnail";
-    const image = document.createElement("img"); image.alt = ""; image.hidden = true;
+    const image = document.createElement("img"); image.alt = ""; image.hidden = true; image.draggable = false;
     const play = document.createElement("span"); play.className = "clip-play";
     play.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>';
     thumbnail.append(image, play);
@@ -879,7 +981,7 @@
     name.textContent = clip.name || clip.path?.split(/[\\/]/).pop() || "Saved replay";
     const meta = document.createElement("span");
     meta.className = "clip-meta";
-    fillMeta(meta, clip, false);
+    fillMeta(meta, clip, false, timeOnly);
     const foot = document.createElement("div");
     foot.className = "clip-foot";
     const more = document.createElement("button");
@@ -891,9 +993,18 @@
     more.innerHTML = icons.more;
     more.addEventListener("click", event => { if (clipMenu?.trigger === more) closeClipMenu(); else openClipMenu(clip, row, more, null, event.detail === 0); });
     row.addEventListener("contextmenu", event => { event.preventDefault(); openClipMenu(clip, row, more, { x: event.clientX, y: event.clientY }); });
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "clip-select";
+    pick.setAttribute("role", "checkbox");
+    pick.setAttribute("aria-checked", String(selection.has(clip.path)));
+    pick.setAttribute("aria-label", `Select ${name.textContent}`);
+    pick.innerHTML = icons.check;
+    pick.addEventListener("click", () => toggleSelected(clip.path));
+    watchForDrag(row, clip);
     preview.append(thumbnail);
     foot.append(meta, name);
-    row.append(preview, foot, more);
+    row.append(preview, foot, ...(compact ? [] : [pick]), more);
     return row;
   }
   function renderClips() {
@@ -921,7 +1032,15 @@
   } catch {}
   // Clips page: one game at a time if wanted, 24 clips a page.
   const pageSize = 24;
-  const clipView = { app: null, page: 0, query: "" };
+  // `shown` is what the Clips page lists after search and filters, across all its pages.
+  const clipView = { app: null, page: 0, query: "", when: "", shown: [] };
+  // Date filter: one choice of how far back to look.
+  function filterByDate(items) {
+    if (!clipView.when) return items;
+    const today = startOfDay(new Date());
+    const from = clipView.when === "today" ? today : clipView.when === "week" ? new Date(today.getTime() - 6 * 86400000) : clipView.when === "month" ? new Date(today.getTime() - 29 * 86400000) : new Date(today.getFullYear(), 0, 1);
+    return items.filter(clip => { const date = clipDate(clip.saved_at); return date && date >= from; });
+  }
   // Search matches every typed word against the file name, the game and the saved date. The date is searchable
   // as the card shows it and also in full: weekday, month name, year, the local numeric date and 2026-11-15.
   const searchDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -935,6 +1054,14 @@
     const words = clipView.query.split(/\s+/).filter(Boolean);
     if (!words.length) return items;
     return items.filter(clip => { const text = `${clip.name || ""} ${clip.app ? gameName(clip.app) : ""} ${formatTime(clip.saved_at)} ${searchDates(clip.saved_at)}`.toLowerCase(); return words.every(word => text.includes(word)); });
+  }
+  const whenLabels = { today: "today", week: "the last 7 days", month: "the last 30 days", year: "this year" };
+  function setClipWhen(value) {
+    clipView.when = value in whenLabels ? value : "";
+    clipView.page = 0;
+    if ($("clips-when").value !== clipView.when) $("clips-when").value = clipView.when;
+    syncDropdowns();
+    renderClipLists();
   }
   function setClipSearch(value) {
     const query = value.trim().toLowerCase();
@@ -1020,38 +1147,66 @@
     for (let [list, container, limit, compact] of [["clips", $("clips-list"), pageSize, false], ["latest", $("latest-content"), 8, true]]) {
       const tab = clipTabs[list];
       let items = groups[tab], start = 0;
-      const searching = !compact && Boolean(clipView.query) && items.length > 0;
+      const searching = !compact && Boolean(clipView.query || clipView.when) && items.length > 0;
       if (!compact) {
         const all = items.length;
-        items = renderClipFilters(searchClips(items), items);
+        const dated = filterByDate(items);
+        items = renderClipFilters(searchClips(dated), dated);
+        clipView.shown = items;
         const pages = Math.max(1, Math.ceil(items.length / pageSize));
         clipView.page = Math.min(Math.max(0, clipView.page), pages - 1);
         start = clipView.page * pageSize;
         const last = Math.min(items.length, start + pageSize);
         for (const pager of [$("clips-pager-top"), $("clips-pager-bottom")]) renderPager(pager, clipView.page, pages, start + 1, last, items.length);
         $("clips-toolbar").hidden = !all;
-        $("clips-search-status").textContent = clipView.query ? `${items.length} ${items.length === 1 ? "clip matches" : "clips match"}` : "";
+        $("clips-search-status").textContent = clipView.query || clipView.when ? `${items.length} ${items.length === 1 ? "clip matches" : "clips match"}` : "";
         limit = pageSize;
       }
       container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
       container.replaceChildren();
       container.className = items.length ? "clips-grid" : "clips-list";
-      if (items.length) for (const clip of items.slice(start, start + limit)) container.append(clipRow(clip, compact));
+      if (items.length) {
+        // The Clips page groups cards under day headings. Latest on Capture is a plain row of cards.
+        let day = null;
+        // How many clips each day has in the whole filtered list, not only on this page.
+        const perDay = new Map();
+        if (!compact) for (const clip of items) { const date = clipDate(clip.saved_at), key = date ? startOfDay(date).getTime() : null; perDay.set(key, (perDay.get(key) || 0) + 1); }
+        for (const clip of items.slice(start, start + limit)) {
+          const date = compact ? null : clipDate(clip.saved_at);
+          const key = date ? startOfDay(date).getTime() : null;
+          if (!compact && key !== day) {
+            day = key;
+            const heading = document.createElement("h2");
+            heading.className = "clips-day";
+            const { title, age } = date ? dayHeading(date) : { title: "Undated", age: "" };
+            if (title === "Today") heading.dataset.today = "";
+            heading.append(title);
+            if (age) { const small = document.createElement("span"); small.className = "day-age"; small.textContent = age; heading.append(small); }
+            const count = document.createElement("span");
+            count.className = "day-count";
+            count.textContent = perDay.get(key) === 1 ? "1 clip" : `${perDay.get(key)} clips`;
+            heading.append(count);
+            container.append(heading);
+          }
+          container.append(clipRow(clip, compact, Boolean(date)));
+        }
+      }
       else {
         const empty = document.createElement("div");
         empty.className = "clips-empty";
-        const title = document.createElement("h2"); title.textContent = searching ? `No ${tab === "edits" ? "edited exports" : "replays"} match “${$("clips-search").value.trim()}”` : emptyCopy[tab].title;
-        const description = document.createElement("p"); description.textContent = searching ? "Search looks at the file name, the game and the saved date." : tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
+        const title = document.createElement("h2"); title.textContent = !searching ? emptyCopy[tab].title : clipView.query ? `No ${tab === "edits" ? "edited exports" : "replays"} match “${$("clips-search").value.trim()}”` : `No ${tab === "edits" ? "edited exports" : "replays"} from ${whenLabels[clipView.when]}`;
+        const description = document.createElement("p"); description.textContent = searching ? (clipView.query ? "Search looks at the file name, the game and the saved date." : "Choose Any time to see every clip.") : tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
         empty.append(title, description);
         if (searching) {
           const clear = document.createElement("button");
-          clear.type = "button"; clear.textContent = "Clear search";
-          clear.addEventListener("click", () => { $("clips-search").value = ""; setClipSearch(""); $("clips-search").focus(); });
+          clear.type = "button"; clear.textContent = clipView.query && clipView.when ? "Clear search and date" : clipView.query ? "Clear search" : "Show any time";
+          clear.addEventListener("click", () => { $("clips-search").value = ""; clipView.query = ""; $("clips-search-clear").hidden = true; setClipWhen(""); $("clips-search").focus(); });
           empty.append(clear);
         }
         container.append(empty);
       }
     }
+    syncSelection();
     syncTabIndicators();
     scheduleFade();
   }
@@ -1483,7 +1638,6 @@
     for (const [id, field] of setupBindings) $(id).addEventListener("input", () => {
       const control = $(id), target = $(field);
       if (control.type === "checkbox") target.checked = control.checked; else target.value = control.value;
-      if (field === "start_at_login") $("setup-start-at-login").checked = control.checked;
       markDirty();
       syncSetupControls();
       syncDropdowns();
@@ -1700,14 +1854,15 @@
   const updateReady = () => typeof api()?.update_state === "function";
   const megabyteCount = bytes => (bytes / 1024 ** 2).toFixed(1);
   const longDate = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" }).format(date); };
-  function showToast(text, actionLabel = "", action = null) {
+  function showToast(text, actionLabel = "", action = null, { sticky = false, onClose = null } = {}) {
     clearTimeout(update.toastTimer);
+    update.toastClose = onClose;
     $("toast-text").textContent = text;
     $("toast-action").hidden = !actionLabel;
     $("toast-action").textContent = actionLabel;
     update.toastAction = action;
     $("app-toast").hidden = false;
-    update.toastTimer = setTimeout(() => { $("app-toast").hidden = true; }, 9000);
+    if (!sticky) update.toastTimer = setTimeout(() => { $("app-toast").hidden = true; }, 9000);
   }
   // Release notes are Markdown written on GitHub. They are drawn as plain elements: text is never read as HTML,
   // and only links to github.com are links.
@@ -1912,7 +2067,7 @@
       Promise.resolve(api().update_check()).then(readUpdate).catch(showError);
     });
     $("update-auto").addEventListener("change", () => { if (updateReady()) Promise.resolve(api().update_enabled($("update-auto").checked)).then(readUpdate).catch(showError); });
-    $("toast-close").addEventListener("click", () => { $("app-toast").hidden = true; });
+    $("toast-close").addEventListener("click", () => { $("app-toast").hidden = true; update.toastClose?.(); update.toastClose = null; });
     $("toast-action").addEventListener("click", () => { $("app-toast").hidden = true; update.toastAction?.(); });
     // Sent by the native side when the update state changed; "open" comes from the tray menu's update row.
     window.addEventListener("obsreplay:update", async event => { const info = await readUpdate(); if (event.detail === "open" && info?.available) openUpdate("offer"); });
@@ -1921,6 +2076,45 @@
   }
 
   arrangeSettings();
+  $("clips-when").addEventListener("change", () => setClipWhen($("clips-when").value));
+  $("selection-all").addEventListener("click", () => { for (const clip of clipView.shown) selection.add(clip.path); syncSelection(); });
+  $("selection-copy").addEventListener("click", () => copyClips([...selection]));
+  $("selection-delete").addEventListener("click", deleteSelected);
+  $("selection-clear").addEventListener("click", clearSelection);
+  // Escape leaves select mode, unless it is closing something else first (a dialog, a menu, a dropdown, the search).
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Escape" || event.defaultPrevented || !selection.size || state.tab !== "clips" || document.querySelector("dialog[open]") || clipMenu || openDropdown) return;
+    if (event.target === $("clips-search") && $("clips-search").value) return;
+    event.preventDefault();
+    clearSelection();
+  });
+  // NVIDIA's overlay (ShadowPlay) answers Alt+Z as well. When it runs, guided setup shows a notice and the app shows
+  // a toast. Dismissing either hides both for good.
+  const overlayKey = "obsreplay.overlayDismissed";
+  const overlay = { running: false, toasted: false };
+  const overlayDismissed = () => { try { return localStorage.getItem(overlayKey) === "1"; } catch { return false; } };
+  function dismissOverlay() { try { localStorage.setItem(overlayKey, "1"); } catch {} renderOverlay(); }
+  function renderOverlay() {
+    const wanted = overlay.running && !overlayDismissed();
+    $("setup-overlay").hidden = !wanted;
+    // The toast is about Alt+Z: with both shortcuts moved off it there is nothing to warn about.
+    const clash = [settings().save_hotkey, settings().show_hotkey].includes("Alt+Z");
+    if (!wanted || !clash || overlay.toasted || !presented || !state.initialRoute || state.tab === "setup" || document.hidden || document.querySelector("dialog[open]") || !$("app-toast").hidden) return;
+    overlay.toasted = true;
+    showToast("NVIDIA overlay is running and also uses Alt+Z. Turn it off in the NVIDIA app, or change your shortcut.", "Change shortcut", () => {
+      showTab("settings"); showCategory("app");
+      document.querySelector('[data-record="save_hotkey"]')?.focus();
+    }, { sticky: true, onClose: dismissOverlay });
+  }
+  async function checkOverlay() {
+    if (typeof api()?.overlay_running !== "function" || overlayDismissed()) { renderOverlay(); return; }
+    try { overlay.running = Boolean(await api().overlay_running()); } catch { overlay.running = false; }
+    renderOverlay();
+  }
+  $("setup-overlay-dismiss").addEventListener("click", dismissOverlay);
+  window.addEventListener("obsreplay:reopen", () => { overlay.toasted = false; checkOverlay(); });
+  setTimeout(checkOverlay, 1200);
+  setInterval(renderOverlay, 2000);
   bindUpdate();
   $("disk-storage").addEventListener("click", () => dispatch("help", { topic: "storage" }));
   $("disk-dismiss").addEventListener("click", () => {
@@ -2056,8 +2250,6 @@
   $("settings-form").addEventListener("input", markDirty);
   $("settings-form").addEventListener("change", markDirty);
   $("encoder").addEventListener("change", () => updateCodecs(true));
-  $("setup-start-at-login").addEventListener("input", () => { $("start_at_login").checked = $("setup-start-at-login").checked; markDirty(); });
-  $("start_at_login").addEventListener("input", () => { $("setup-start-at-login").checked = $("start_at_login").checked; });
   $("settings-form").addEventListener("submit", event => {
     event.preventDefault();
     const value = formValue();
@@ -2174,6 +2366,7 @@
   // Sent just before the window hides to the tray: the last frame painted is the cascade's starting state,
   // so reopening never flashes the old page before animating.
   window.addEventListener("obsreplay:hiding", () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     cancelEntrance();
     if (!presented || !motionEnabled()) return;
     prepareEntrance();
@@ -2193,6 +2386,7 @@
     clipTabs.clips = tab;
     clipView.app = null;
     clipView.query = ""; $("clips-search").value = ""; $("clips-search-clear").hidden = true;
+    clipView.when = ""; $("clips-when").value = ""; syncDropdowns();
     clipView.page = Math.max(0, Math.floor((state.snapshot.clips.filter(item => Boolean(item.edited) === Boolean(clip.edited)).findIndex(item => item.path === path)) / pageSize));
     try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
     renderClipLists();

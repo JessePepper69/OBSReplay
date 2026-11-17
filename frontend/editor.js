@@ -14,7 +14,7 @@
     pieces: [], selected: new Set(), anchor: null, nextId: 1,
     history: [], future: [], baseline: "", exportedSignature: "",
     view: { start: 0, end: 1 }, hover: null, drag: null,
-    skipRemoved: true, mediaReady: false, closing: false, quality: 10,
+    skipRemoved: true, mediaReady: false, closing: false, quality: 10, sizeLimit: 0,
     exportStatus: "idle", lastExport: null, waveform: null, waveRate: 100, waveRequested: false,
     thumbs: [], thumbsRequested: false, motion: true,
     timecode: "duration", scale: 1, master: 0.5, masterMuted: false, tracks: [], tracksFromProbe: false, savedTrackLevels: {},
@@ -81,7 +81,8 @@
   }
 
   // ---------- Edit model ----------
-  const signature = () => JSON.stringify(keptSegments().map(([start, end]) => [Math.round(start * 1000), Math.round(end * 1000)]));
+  // The kept sections plus any audio track left out of the export: both change what the exported file holds.
+  const signature = () => JSON.stringify([keptSegments().map(([start, end]) => [Math.round(start * 1000), Math.round(end * 1000)]), state.tracks.filter(track => !track.include).map(track => track.index)]);
   const keptSegments = () => {
     const segments = [];
     for (const piece of state.pieces) {
@@ -276,17 +277,23 @@
     $("mute-master").setAttribute("aria-label", state.masterMuted ? "Unmute" : "Mute");
     for (const track of state.tracks) {
       const level = track.muted ? 0 : track.level;
-      if (track.audio) track.audio.volume = Math.min(1, master * level);
+      // A track left out of the export is silent here too, so what you hear is what gets exported.
+      if (track.audio) track.audio.volume = track.include ? Math.min(1, master * level) : 0;
       const row = document.querySelector(`.track-row[data-track="${track.index}"]`);
       if (!row) continue;
-      row.querySelector("input").value = String(track.level);
-      row.querySelector("input").style.setProperty("--fill", `${level * 100}%`);
+      const slider = row.querySelector('input[type="range"]');
+      slider.value = String(track.level);
+      slider.style.setProperty("--fill", `${level * 100}%`);
       row.querySelector("output").textContent = `${Math.round(level * 100)}%`;
+      row.querySelector('input[type="checkbox"]').checked = track.include;
+      row.classList.toggle("excluded", !track.include);
       const button = row.querySelector("button");
-      button.classList.toggle("muted", level === 0);
+      button.classList.toggle("muted", level === 0 || !track.include);
       button.setAttribute("aria-pressed", String(track.muted));
     }
-    video.muted = state.stems.length > 0 || master === 0;
+    $("tracks-note").hidden = !state.tracks.length || state.tracks.some(track => track.include);
+    // Until the separate tracks play, the clip's own sound plays; it is silenced when no track is exported.
+    video.muted = state.stems.length > 0 || master === 0 || (state.tracks.length > 0 && !state.tracks.some(track => track.include));
     video.volume = master;
   }
   function playLoop() {
@@ -652,14 +659,76 @@
     value = Math.min(10, Math.max(1, Math.round(Number(value) || 8)));
     state.quality = value;
     $("quality").value = String(value);
-    $("quality-value").textContent = String(value);
-    $("quality-label").textContent = QUALITY_NAMES[value - 1];
-    $("quality").setAttribute("aria-valuetext", `${value} of 10, ${QUALITY_NAMES[value - 1]}`);
+    renderQuality();
+  }
+  // While a Max size is picked it replaces the quality choice: the slider shows no level until it is moved again.
+  function renderQuality(fit = null) {
+    const value = state.quality, bySize = state.sizeLimit > 0;
+    document.querySelector(".quality-control").classList.toggle("by-size", bySize);
+    $("quality-value").textContent = bySize ? "–" : String(value);
+    $("quality-label").textContent = !bySize ? QUALITY_NAMES[value - 1] : !fit ? `Fit to ${state.sizeLimit} MB` : !fit.possible ? "Too long" : fit.original ? "Already fits" : `Fit to ${state.sizeLimit} MB`;
+    $("quality").setAttribute("aria-valuetext", bySize ? `Set by Max size, ${state.sizeLimit} MB` : `${value} of 10, ${QUALITY_NAMES[value - 1]}`);
     [...$("quality-steps").children].forEach((step, index) => {
-      step.className = index + 1 === value ? "current" : index < value ? "on" : "";
+      step.className = bySize ? "" : index + 1 === value ? "current" : index < value ? "on" : "";
     });
   }
   for (let i = 0; i < 10; i++) { const step = document.createElement("span"); step.style.height = `${6 + i * 1.6}px`; $("quality-steps").append(step); }
+
+  // ---------- Max size ----------
+  // A Max size exports a file no bigger than that many megabytes (1 MB = 1,000,000 bytes). These numbers mirror
+  // native limit_plan, limit_height and original_bytes, so the page can say before exporting whether a size works.
+  const SIZE_LIMITS = [10, 25, 50, 100, 500];
+  const containerBytes = (seconds, streams) => 64 * 1024 + 16 * seconds * (Math.max(state.fps, 1) + 47 * streams);
+  function limitHeight(kbps, hevc) {
+    const probe = state.native?.probe || {}, height = Number(probe.height) || 0, width = Number(probe.width) || 0;
+    if (height <= 0) return 0;
+    const fps = Math.max(1, Number(probe.fps) || 30), aspect = width > 0 ? width / height : 16 / 9, needed = hevc ? 0.03 : 0.045;
+    const steps = [height, ...[2160, 1440, 1080, 720, 540, 480, 360].filter(step => step < height)];
+    for (const step of steps) if (kbps * 1000 / (aspect * step * step * fps) >= needed) return step;
+    return steps[steps.length - 1];
+  }
+  // What a Max size does with this edit: possible or not, whether the original video already fits, and the picture height.
+  function sizePlan(mb, seconds = keptLength(), streams = exportAudio().streams) {
+    const plans = state.native?.quality_plans || [];
+    if (!(seconds > 0) || !plans.length) return null;
+    const usable = (mb * 1e6 * 0.97 - containerBytes(seconds, streams)) * 8 / 1000 / Math.max(seconds, 0.1);
+    const audio = usable < 2000 ? 64 : usable < 6000 ? 96 : 128;
+    const video = Math.trunc(usable - streams * audio * 1.05);
+    const top = plans[9];
+    // A Max size is for sharing, so its video is H.264. The original is kept only when it is H.264 and already fits.
+    const original = Boolean(top?.original) && top.codec === "H.264" && seconds * (top.video_kbps + top.audio_kbps * streams) * 125 + containerBytes(seconds, streams) <= mb * 1e6 * 0.9;
+    const codec = "H.264";
+    return { possible: video >= 500, original, codec: original ? top.codec : codec, height: original ? top.height : limitHeight(Math.trunc(video * seconds / (seconds + 1)), codec === "HEVC") };
+  }
+  for (const mb of SIZE_LIMITS) {
+    const button = document.createElement("button");
+    button.type = "button"; button.dataset.mb = String(mb); button.textContent = String(mb);
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => {
+      if (button.getAttribute("aria-disabled") === "true") { flash(button.dataset.reason); return; }
+      chooseSizeLimit(state.sizeLimit === mb ? 0 : mb);
+    });
+    $("size-limits").insertBefore(button, $("size-limits").lastElementChild);
+  }
+  function chooseSizeLimit(mb) {
+    state.sizeLimit = mb;
+    savePref("size_limit", mb);
+    announce(mb ? `Max size ${mb} MB` : `Quality ${state.quality}, ${QUALITY_NAMES[state.quality - 1]}`);
+    renderExport();
+  }
+  function renderSizeLimits(length) {
+    const ready = state.mediaReady && state.native?.probe?.status === "ready" && state.native?.ffmpeg?.status === "ready";
+    for (const button of $("size-limits").querySelectorAll("button")) {
+      const mb = Number(button.dataset.mb), plan = ready ? sizePlan(mb, length) : null;
+      const blocked = Boolean(plan && !plan.possible);
+      button.setAttribute("aria-pressed", String(state.sizeLimit === mb));
+      button.setAttribute("aria-disabled", String(blocked || !ready));
+      button.dataset.reason = blocked ? `Too long for ${mb} MB. Cut the video shorter or pick a bigger size.` : "Loading clip";
+      button.setAttribute("aria-label", blocked ? `${mb} MB, too long for this size` : `${mb} MB`);
+      button.dataset.tipTitle = blocked ? `Too long for ${mb} MB` : `Up to ${mb} MB`;
+      button.dataset.tip = blocked ? "Cut the video shorter or pick a bigger size." : plan?.original ? "This edit already fits, so the original video is kept." : `Makes the file ${mb} MB or smaller, for sites with an upload limit.`;
+    }
+  }
 
   function renderExport() {
     const native = state.native;
@@ -699,18 +768,23 @@
     if (sourceMissing) $("stage-message").textContent = state.originalDeleted ? "The original was deleted after exporting." : "The original replay was moved or deleted.";
     const probeReady = native?.probe?.status === "ready";
     const length = keptLength();
-    const exportDisabledReason = !state.mediaReady ? "Loading clip" : tool.status === "checking" ? "Looking for FFmpeg…" : !probeReady ? "Analyzing clip…" : length < 0.1 ? "Nothing to export" : "";
+    const fit = state.sizeLimit && probeReady && tool.status === "ready" ? sizePlan(state.sizeLimit, length) : null;
+    renderQuality(fit);
+    renderSizeLimits(length);
+    const exportDisabledReason = !state.mediaReady ? "Loading clip" : tool.status === "checking" ? "Looking for FFmpeg…" : !probeReady ? "Analyzing clip…" : length < 0.1 ? "Nothing to export" : fit && !fit.possible ? `Too long for ${state.sizeLimit} MB` : "";
     $("quality").disabled = !state.mediaReady;
     $("export").disabled = Boolean(exportDisabledReason);
     $("export").title = exportDisabledReason || "Export the kept sections  Ctrl+E";
-    $("export-format").textContent = tool.status !== "ready" ? exportDisabledReason || "MP4" : exportEstimate(length);
+    $("export-format").textContent = tool.status !== "ready" || (fit && !fit.possible) ? exportDisabledReason || "MP4" : exportEstimate(length, fit);
     if (mode === "running") {
       const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
       const percent = Math.round(progress * 100);
-      $("progress-title").textContent = progress > 0 ? `Exporting… ${percent}%` : "Starting export…";
+      // A size limit that needs another encode says so, so a second progress run makes sense.
+      const pass = Number(job.attempt) || 1;
+      $("progress-title").textContent = job.size_limit && pass > 1 ? `Making it fit: ${["second", "third", "fourth"][pass - 2] || "another"} pass…${progress > 0 ? ` ${percent}%` : ""}` : progress > 0 ? `Exporting… ${percent}%` : "Starting export…";
       const speed = Number(job.speed) > 0 ? `${Number(job.speed).toFixed(1)}× speed` : "";
       const eta = Number(job.eta) > 0 ? `about ${job.eta < 60 ? `${Math.max(1, Math.ceil(job.eta))} s` : formatTime(Math.ceil(job.eta), false)} left` : "";
-      $("progress-detail").textContent = [`${formatLength(Number(job.total) || length)} video`, job.encoder, speed, eta].filter(Boolean).join(" · ");
+      $("progress-detail").textContent = [`${formatLength(Number(job.total) || length)} video`, job.size_limit ? `up to ${job.size_limit} MB` : "", job.encoder, speed, eta].filter(Boolean).join(" · ");
       $("progress-fill").style.width = `${percent}%`;
       $("progress-bar").setAttribute("aria-valuenow", String(percent));
       $("export-progress").classList.toggle("indeterminate", progress <= 0);
@@ -721,19 +795,28 @@
       $("result-mark").innerHTML = failed ? '<svg viewBox="0 0 20 20"><path d="M10 5.5v5.5M10 14.2v.3"/></svg>' : '<svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg>';
       const last = state.lastExport || {};
       $("result-title").textContent = failed ? "Export failed" : `Exported ${last.name || "video"}`;
-      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), formatLength(last.duration), last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.original_deleted ? "Original deleted" : "", last.note].filter(Boolean).join(" · ");
-      $("result-reveal").hidden = failed; $("result-open").hidden = failed;
+      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), formatLength(last.duration), last.size_limit ? `Under ${last.size_limit} MB` : "", last.audio_streams === 0 ? "No sound" : "", last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.original_deleted ? "Original deleted" : "", last.note].filter(Boolean).join(" · ");
+      $("result-reveal").hidden = failed; $("result-open").hidden = failed; $("result-copy").hidden = failed;
       $("result-dismiss").textContent = failed ? "Dismiss" : "Done";
     }
   }
 
-  // Estimated size and format of the export at the selected quality, from the native quality plans.
-  function exportEstimate(length) {
+  // Estimated size and format of the export at the selected quality, from the native quality plans. A Max size
+  // reads as a ceiling instead of an estimate.
+  function exportEstimate(length, fit = null) {
+    if (fit) return `Up to ${state.sizeLimit} MB · ${fit.original ? `original ${fit.codec}` : `${fit.codec}${fit.height ? ` ${fit.height}p` : ""}`}`;
     const plan = state.native?.quality_plans?.[state.quality - 1];
     if (!plan || !(length > 0)) return "MP4";
-    const tracks = Number(state.native?.probe?.audio_tracks) || 0;
-    const bytes = length * (plan.video_kbps + plan.audio_kbps * tracks) * 1000 / 8 * 1.01;
+    const bytes = length * (plan.video_kbps + plan.audio_kbps * exportAudio().streams) * 1000 / 8 * 1.01;
     return `≈ ${formatBytes(bytes)} · ${plan.original ? `original ${plan.codec}` : `${plan.codec}${plan.height ? ` ${plan.height}p` : ""}`}`;
+  }
+  // The audio the export carries, mirroring native start_export: every listed track ticked keeps the recorded
+  // tracks (tracks: null); otherwise the ticked tracks, led by a mix of them when there are two or more.
+  function exportAudio() {
+    const recorded = Number(state.native?.probe?.audio_tracks) || 0;
+    const ticked = state.tracks.filter(track => track.include).map(track => track.index);
+    if (!state.tracks.length || ticked.length === state.tracks.length) return { tracks: null, streams: recorded };
+    return { tracks: ticked, streams: ticked.length + (ticked.length >= 2 ? 1 : 0) };
   }
 
   // Export first asks for a file name; an empty field keeps the default name.
@@ -752,9 +835,10 @@
     if (!state.mediaReady || state.exportStatus === "running") return;
     const segments = keptSegments();
     try {
-      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, name, delete_original: deleteOriginal }));
+      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, size_limit: state.sizeLimit, tracks: exportAudio().tracks, name, delete_original: deleteOriginal }));
       state.exportStatus = "running";
       state.exportSignature = signature();
+      clearTimeout(copiedTimer); $("result-copy").textContent = "Copy";
       announce("Export started");
       renderControls(); schedulePoll(0);
     } catch (error) {
@@ -779,18 +863,20 @@
     if (prefs.track_volumes && typeof prefs.track_volumes === "object") state.savedTrackLevels = { ...prefs.track_volumes };
     if (typeof prefs.preview_cuts === "boolean") { state.skipRemoved = prefs.preview_cuts; $("skip-removed").checked = prefs.preview_cuts; }
     if (PREVIEW_LEVELS.some(level => level.id === prefs.preview_quality)) state.previewLevel = prefs.preview_quality;
+    if (SIZE_LIMITS.includes(prefs.size_limit)) state.sizeLimit = prefs.size_limit;
     renderScale(); renderPreviewLevel(); applyVolumes();
   }
-  // Per-track sliders use the names stored in the recording. When the first track is a mix of the
+  // Per-track rows use the names stored in the recording. When the first track is a mix of the
   // others (OBS: Mix, Desktop, Microphone), only the individual tracks are listed. Mirrors native.
+  // Each row's box decides whether that track goes into the export; all are ticked to start with.
   function setTracks(count, names = []) {
     const first = String(names[0] || "").toLowerCase();
     const from = count >= 3 || (count === 2 && first === "mix") ? 1 : 0;
     state.tracks = [];
-    if (count >= 2) for (let index = from; index < count && state.tracks.length < 6; index++) {
+    for (let index = from; index < count && state.tracks.length < 6; index++) {
       const name = String(names[index] || "").trim() || `Track ${index + 1}`;
       const saved = Number(state.savedTrackLevels[name]);
-      state.tracks.push({ index, name, level: Number.isFinite(saved) && saved >= 0 && saved <= 1 ? saved : 1, muted: false, audio: null });
+      state.tracks.push({ index, name, level: Number.isFinite(saved) && saved >= 0 && saved <= 1 ? saved : 1, muted: false, include: true, audio: null });
     }
     renderTracks();
   }
@@ -800,13 +886,26 @@
     if (!state.tracks.length) {
       const empty = document.createElement("p");
       empty.className = "tracks-empty";
-      empty.textContent = state.tracksFromProbe ? "This recording has a single audio track. Use the main volume." : "Reading the recording's audio tracks…";
+      empty.textContent = state.tracksFromProbe ? "This recording has no sound." : "Reading the recording's audio tracks…";
       list.append(empty);
+      applyVolumes();
       return;
     }
     for (const track of state.tracks) {
       const row = document.createElement("div");
       row.className = "track-row"; row.dataset.track = String(track.index);
+      const include = document.createElement("label");
+      include.className = "check";
+      const box = document.createElement("input");
+      box.type = "checkbox"; box.checked = track.include;
+      box.addEventListener("change", () => {
+        track.include = box.checked;
+        applyVolumes(); changed();
+        announce(`${track.name} ${track.include ? "goes into" : "left out of"} the export`);
+      });
+      const name = document.createElement("span");
+      name.textContent = track.name;
+      include.append(box, name);
       const mute = document.createElement("button");
       mute.type = "button"; mute.className = "icon-button mute";
       mute.setAttribute("aria-label", `Mute ${track.name}`);
@@ -814,10 +913,9 @@
       mute.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z"/><path class="volume-wave" d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9"/><path class="volume-off" d="m13.5 8 4 4m0-4-4 4"/></svg>';
       mute.addEventListener("click", () => { track.muted = !track.muted; applyVolumes(); });
       const id = `track-volume-${track.index}`;
-      const label = document.createElement("label");
-      label.htmlFor = id; label.textContent = track.name; label.title = track.name;
       const slider = document.createElement("input");
       slider.type = "range"; slider.id = id; slider.min = "0"; slider.max = "1"; slider.step = "0.05";
+      slider.setAttribute("aria-label", `${track.name} volume`);
       slider.addEventListener("input", () => { track.level = Number(slider.value); track.muted = false; applyVolumes(); });
       slider.addEventListener("change", () => {
         state.savedTrackLevels[track.name] = track.level;
@@ -825,7 +923,7 @@
       });
       const value = document.createElement("output");
       value.htmlFor = id;
-      row.append(mute, label, slider, value);
+      row.append(include, mute, slider, value);
       list.append(row);
     }
     applyVolumes();
@@ -1146,7 +1244,8 @@
     savePref("preview_cuts", state.skipRemoved);
     announce(state.skipRemoved ? "Preview skips removed sections" : "Preview plays the full clip");
   });
-  $("quality").addEventListener("input", () => { setQuality($("quality").value); renderExport(); });
+  // Picking a quality again ends a Max size choice.
+  $("quality").addEventListener("input", () => { if (state.sizeLimit) { state.sizeLimit = 0; savePref("size_limit", 0); } setQuality($("quality").value); renderExport(); });
   $("quality").addEventListener("change", () => savePref("quality", state.quality));
   $("scale-button").addEventListener("click", () => openMenu($("scale-button"), [0.75, 1, 1.25, 1.5].map(value => ({ value, label: `${Math.round(value * 100)}%` })), state.scale, value => {
     state.scale = value; renderScale(); savePref("scale", value);
@@ -1168,6 +1267,17 @@
   $("cancel-export").addEventListener("click", () => nativeCall("cancel_export").catch(() => {}));
   $("result-reveal").addEventListener("click", () => nativeCall("reveal_output", true).catch(error => flash(errorText(error))));
   $("result-open").addEventListener("click", () => nativeCall("play_output").catch(error => flash(errorText(error))));
+  // Copy puts the exported file itself on the clipboard; the button reads "Copied" for a moment.
+  let copiedTimer = 0;
+  $("result-copy").addEventListener("click", async () => {
+    try {
+      await nativeCall("copy_output");
+      $("result-copy").textContent = "Copied";
+      announce("Copied. Paste it into Discord, a chat or a folder.");
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => { $("result-copy").textContent = "Copy"; }, 1800);
+    } catch (error) { flash(errorText(error)); }
+  });
   $("result-dismiss").addEventListener("click", () => { state.exportStatus = "idle"; renderControls(); });
   $("ffmpeg-locate").addEventListener("click", async () => {
     try { if (await nativeCall("pick_ffmpeg")) schedulePoll(100); } catch (error) { flash(errorText(error)); }
@@ -1208,7 +1318,7 @@
     if (state.exportStatus === "running") {
       if (!await confirm("Cancel export and close?", "The export in progress will stop and its partial file will be deleted.", "Cancel export and close")) return;
     } else if (dirty) {
-      if (!await confirm("Close without exporting?", "Your cuts haven't been exported. Closing the editor discards them. The original replay is never changed.", "Discard edits")) return;
+      if (!await confirm("Close without exporting?", "Your edits haven't been exported. Closing the editor discards them. The original replay is never changed.", "Discard edits")) return;
     }
     state.closing = true;
     video.pause(); video.removeAttribute("src"); video.load();

@@ -67,4 +67,14 @@ std::string random_secret();
 std::string sha256_base64(const std::string& input);
 std::string now_iso();
 void save_feedback();
+// True while a process with this executable name (for example L"NVIDIA Overlay.exe") is running.
+bool process_running(const wchar_t* executable);
+// Puts existing files on the clipboard as files, the way Explorer's Copy does, so they paste into a chat or a folder.
+// Returns how many files went on. Throws when none exist or the clipboard is busy.
+std::size_t copy_files_to_clipboard(const std::vector<fs::path>& files);
+// Starts a drag of existing files out of the window (an HWND), as Explorer does. Call it on the window's thread
+// while the left mouse button is held; it returns when the drop or the cancel has happened.
+void drag_files(void* hwnd, const std::vector<fs::path>& files);
+// Makes a window (an HWND) cover the monitor it is on, or puts it back where it was.
+void set_window_fullscreen(void* hwnd, bool enabled);
 }

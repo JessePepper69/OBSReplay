@@ -37,11 +37,11 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 
 | File | Responsibility |
 | --- | --- |
-| [`main.cpp`](../src/main.cpp) | Entry point, single instance, main window, tray icon and menu, global hotkeys, show/hide sequence, main-window bridge. |
+| [`main.cpp`](../src/main.cpp) | Entry point, single instance, main window, tray icon and menu, global hotkeys, show/hide sequence, main-window bridge, clip thumbnails on disk. |
 | [`controller.cpp`](../src/controller.cpp), [`controller.hpp`](../src/controller.hpp) | `Controller`: state snapshot, action queue, worker thread, OBS session logic, clip history. |
 | [`integration.cpp`](../src/integration.cpp), [`integration.hpp`](../src/integration.hpp) | `Integration`: writes and removes the OBS profile, scene collection and WebSocket settings; probes encoders; reads credentials. |
 | [`obs_socket.cpp`](../src/obs_socket.cpp), [`obs_socket.hpp`](../src/obs_socket.hpp) | `ObsSocket`: obs-websocket v5 client on WinHTTP. |
-| [`platform.cpp`](../src/platform.cpp), [`platform.hpp`](../src/platform.hpp) | Paths, settings load/validate/save, atomic file writes, OBS discovery and launch/close, monitors, audio devices, process runner, login startup, help links, theme grounds. |
+| [`platform.cpp`](../src/platform.cpp), [`platform.hpp`](../src/platform.hpp) | Paths, settings load/validate/save, atomic file writes, OBS discovery and launch/close, monitors, audio devices, process runner, login startup, help links, theme grounds, files to the clipboard, file drag-out, window fullscreen, running-process check. |
 | [`media.cpp`](../src/media.cpp), [`media.hpp`](../src/media.hpp) | `ClipMedia`: serves clip files and generated preview files to a WebView2 view with range support. |
 | [`editor.cpp`](../src/editor.cpp), [`editor.hpp`](../src/editor.hpp) | `EditorHost`: editor windows, FFmpeg detection, probe, waveform, preview proxies, export, editor bridge. |
 | [`updater.cpp`](../src/updater.cpp), [`updater.hpp`](../src/updater.hpp) | `Updater`: asks GitHub for the latest release, downloads and verifies it, starts it as the installer. |
@@ -96,6 +96,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 - The view allows navigation to `saucer://embedded/index.html` and blocks every other URL and every new window.
 - The view denies all permission requests, disables the context menu and disables WebView2 zoom control.
 - The close event calls `Desktop::hide` and blocks the close.
+- The view's `fullscreen` event calls `set_window_fullscreen` (`platform.cpp`) and blocks saucer's own handling. saucer 8.0.5 swaps the monitor's x and y, which moves the window off every screen on a monitor that is not at 0,0. `set_window_fullscreen` saves the placement and style, removes the frame styles and covers `rcMonitor` of the window's monitor; leaving fullscreen puts both back. The page leaves fullscreen before the window hides to the tray.
 
 ### Tray
 
@@ -269,6 +270,11 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `update_cancel` | none | nothing | Stop a download. |
 | `update_seen` | none | nothing | The "Updated to" toast was shown. |
 | `open_link` | `url` | `true` or an error | Open a `https://github.com/` address in the default browser. |
+| `thumbnail_read` | `path` | JSON string or `""` | The stored picture of a listed clip: `{data, length}`. `data` is a JPEG data URL, `length` the clip length in seconds (0 when unknown). |
+| `thumbnail_write` | `path`, `data`, `length` | bool | Store the picture of a listed clip. `data` must be a JPEG data URL of at most 96 KiB. |
+| `overlay_running` | none | bool | A process named `NVIDIA Overlay.exe` is running. |
+| `copy_clips` | JSON array of paths | number of files, or an error | Put listed clips on the clipboard as files (`CF_HDROP`, preferred effect copy). At most 500. |
+| `drag_clips` | JSON array of paths | nothing | Start an OLE drag of listed clips out of the window. The page calls it while the left button is held and the pointer has moved 8 px. The drag runs after the call returns, through `app->post`, because it has its own message loop. Does nothing in headless mode. |
 | `hide` | none | nothing | Hide to tray. |
 | `hotkey_recording` | `enabled` bool | nothing | Suspend or restore global hotkeys while the page records a shortcut. |
 | `ui_ready` | none | nothing | First frame is ready; reveal the window. |
@@ -291,13 +297,14 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `editor_waveform` | none | base64 string | Audio peaks, 100 per second. Empty until the waveform is ready. |
 | `media_url` | `path` string | URL string or error | URL of this editor's clip. Any other path is refused. |
 | `preview_urls` | none | JSON string | `{video, level, stems:[{track, url}]}` for the generated preview files. `video` is empty at level `full`. |
-| `start_export` | JSON string `{segments:[[start,end],...], quality, name?}` | `true` or error | Validate and start an export. |
+| `start_export` | JSON string `{segments:[[start,end],...], quality, name?, size_limit?, tracks?}` | `true` or error | Validate and start an export. `size_limit` is 0 or 10, 25, 50, 100, 500 (MB). `tracks` is an array of recorded track numbers to keep, or null for every track. |
 | `cancel_export` | none | nothing | Cancel the running export. |
 | `pick_ffmpeg` | none | `true`, `false` on cancel, or error | Native file dialog, then FFmpeg detection with that file. |
 | `ffmpeg_help` | none | nothing | Open the FFmpeg download page. |
 | `install_ffmpeg` | none | `true` or an error | Start `winget install --id Gyan.FFmpeg` on a worker thread. `editor_state` reports progress in `ffmpeg.install` (`stage`: `preparing`, `downloading`, `installing`, `verifying` or empty; `error`; `available`: winget found). On success the host adopts the new `ffmpeg.exe` and every open editor continues its analysis. |
 | `reveal_output` | `reveal` bool | `true` or error | Show the last export in Explorer (`true`) or open it (`false`). |
 | `play_output` | none | `true` or error | **Play video**: show the main window and send it `obsreplay:play` with the export's path. The page opens **Clips**, **Edited exports** and plays the file in the viewer. |
+| `copy_output` | none | `true` or error | **Copy**: put the last export on the clipboard as a file (`copy_files_to_clipboard`). |
 | `close_editor` | none | nothing | Cancel any export and close the window. |
 | `editor_dirty` | `value` bool | nothing | Tell native whether unexported cuts exist. |
 | `save_pref` | `key` string, `value` JSON string | `true` or error | Validate and store an editor preference. See [editor preferences](#editor-preferences). |
@@ -368,6 +375,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `open_clip` | `{path}` | Open a clip from history in the default app. |
 | `reveal_clip` | `{path}` | Select a clip from history in Explorer. |
 | `delete_clip` | `{path}` | Delete a clip file from history and drop it from the list. |
+| `delete_clips` | `{paths}` | Delete several listed clip files (at most 5000). A file that is already gone counts as deleted. Reports how many could not be deleted. |
 | `rename_clip` | `{path, name}` | Rename a clip file from the list in its folder. Keeps the extension, the place in the list and the saved time. Refuses a name another file has. |
 | `help` | `{topic}` | Open a fixed URL for `obs`, `webview2`, `ffmpeg` or `capture`, open Windows storage settings for `storage`, or write and open the notices file for `notices`. |
 
@@ -588,11 +596,12 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 | `updates.json` | `Updater` | `enabled`, `skipped`, `checked_at`, the latest release seen, `updated_from`. |
 | `updates\` | `Updater` | A downloaded update. Emptied 10 seconds after each launch. |
 | `THIRD-PARTY-NOTICES.txt` | `open_help("notices")` | Notices extracted from the exe. |
+| `thumbnails\` | `main.cpp` | One `<key>.json` per clip: `{data, length}`. The key is a SHA-256 of the clip's size, creation time and write time, so a renamed or moved clip keeps its picture and a file whose content changes gets a new one. A thread looks every 10 seconds and, whenever the list of clip paths has changed, removes the pictures no listed clip uses: a deleted clip's picture goes within 10 seconds. |
 | `WebView2\` | WebView2 | Browser profile, in isolated runs only. |
 
 - `atomic_write` writes a temporary file, flushes it, and renames it over the target.
 - Unreadable settings fall back to defaults with an error. The original file stays on disk.
-- The page keeps four `localStorage` keys: `obsreplay.theme`, `obsreplay.clipTabs`, `obsreplay.viewerVolume`, `obsreplay.diskDismissed`.
+- The page keeps five `localStorage` keys: `obsreplay.theme`, `obsreplay.clipTabs`, `obsreplay.viewerVolume`, `obsreplay.diskDismissed`, `obsreplay.overlayDismissed`.
 
 ### Temporary files
 
@@ -624,7 +633,9 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 - Each clip card has one menu, opened by its button or a right-click: **Play**, **Edit clip**, **Rename**, **Open in video player**, **Show in folder**, **Delete**. **Delete** is last and red. A click asks first. Shift+click deletes at once.
 - **Clips** search matches every typed word against the file name, the game and the saved date. The date is matched as the card shows it and as weekday, month name, year, local numeric date and `2026-11-15`.
 - `formatBytes` shows a size in the largest unit that keeps the number at 1 or more: KB, MB, GB or TB.
-- Clip list thumbnails come from `takeThumbnail` in `app.js`: a muted `<video>` draws one frame to a 320 × 180 canvas.
+- Clip list thumbnails come from `takeThumbnail` in `app.js`: a muted `<video>` draws one frame to a 320 × 180 canvas, saved as a JPEG at quality 0.6 (about 10 KB). The page asks `thumbnail_read` first and decodes the video only when nothing is stored, then stores the result with `thumbnail_write`.
+- The Clips page keeps a selection (a set of paths) apart from the list. `clipView.shown` is the list after the date filter, search and game filter, across all pages; **Select all** works on it. A path that leaves the clip list leaves the selection.
+- The date filter (`clipView.when`) keeps clips saved today, in the last 7 or 30 days, or this calendar year. Day headings come from each clip's `saved_at`.
 
 ## Clip editor
 
@@ -673,7 +684,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 | `probe` | `status` (`pending`, `ready`, `failed`, `unavailable`), `duration`, `fps`, `width`, `height`, `codec`, `pix_fmt`, `bitrate`, `kbps`, `audio_tracks`, `audio_names`. |
 | `waveform` | `status` (`pending`, `ready`, `failed`, `none`, `unavailable`), `rate` (100). |
 | `preview` | `status` (`pending`, `building`, `original`, `ready`, `failed`, `unavailable`), `level`, `stage`, `progress`, `engine`. |
-| `export` | `status` (`idle`, `running`, `done`, `failed`, `canceled`) plus progress or result fields. |
+| `export` | `status` (`idle`, `running`, `done`, `failed`, `canceled`) plus progress or result fields. While running it carries `size_limit` and `attempt`; when done, `size_limit`, `attempts` and `audio_streams`. |
 | `prefs` | Editor preferences without `ffmpeg_path`. |
 | `quality_plans` | Ten entries: `video_kbps`, `audio_kbps`, `codec`, `height`, `original`. The page uses them for the size estimate. |
 | `revision` | Change counter. |
@@ -693,6 +704,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 | `scale` | `0.75`, `1.0`, `1.25`, `1.5`. Applied as the WebView2 `ZoomFactor`. |
 | `preview_cuts` | Boolean. Preview playback skips removed sections. |
 | `preview_quality` | `full`, `half`, `quarter`. Also switches the preview. |
+| `size_limit` | `0` or `10`, `25`, `50`, `100`, `500`. The chosen **Max size**. |
 
 ### Export
 
@@ -709,7 +721,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 3. At quality 10 when `smart_cut_possible`: run `smart_export`. If it fails, record a note and continue with step 4.
 4. Otherwise run `encode_export`.
 5. Rename `<name>.mp4.part` to `<name>.mp4` without overwriting.
-6. Add the file to history with `Controller::add_clip`. Explorer is not opened. The editor offers **Play video** and **Show in folder**.
+6. Add the file to history with `Controller::add_clip`. Explorer is not opened. The editor offers **Show in folder**, **Play video** and **Copy**.
 
 Cancel or window close terminates FFmpeg and deletes the partial file. FFmpeg children run hidden inside a kill-on-close job object.
 
@@ -745,6 +757,29 @@ Conditions: source codec H.264 or HEVC, pixel format `yuv420p`, at least one cle
 - A `concat` filter joins video and every audio track. The code writes the filter graph to a file and passes it with `-/filter_complex` (FFmpeg 7 or newer) or `-filter_complex_script`.
 - Attempt order: CUDA decode with `scale_cuda` and NVENC, CPU decode with NVENC, `libx264` preset `faster`.
 - Audio is AAC. Track titles from the source are written to the new tracks.
+
+### Max size
+
+A size limit replaces the quality choice until the user moves the slider again. `fit_export` in `editor.cpp` runs it.
+
+- Limits are 10, 25, 50, 100 and 500 MB, with 1 MB as 1,000,000 bytes.
+- Budget: 97% of the limit, less an estimate of what MP4 adds (`container_bytes`), less the audio of every exported stream (64, 96 or 128 kbps by budget, counted at 105%). The rest is the video bitrate (`limit_plan`).
+- Under 500 kbps of video the limit counts as impossible for that length. The page shows the size as unavailable and `start_export` refuses it.
+- `limit_height` lowers the height through 1440, 1080, 720, 540, 480 and 360 until the bitrate gives at least 0.03 bits per pixel for HEVC or 0.045 for H.264.
+- The video bitrate is never more than the source needs as H.264: its own bitrate, or 1.35 times it for an HEVC or AV1 source. A large limit on a small clip therefore does not grow the file to the limit.
+- Rate control caps the video: `maxrate` and `bufsize` equal the video bitrate scaled by length ÷ (length + 1 s), for NVENC and x264.
+- When the source is H.264 and its original video is estimated at 90% of the limit or less, the smart cut runs first.
+- Every result is measured. A file over the limit is encoded again with the bitrate cut by the overshoot plus 15%, at most three more times. After that the export fails and the file is deleted. No file over the limit is ever reported as done.
+- The output is always H.264 (`h264_nvenc`, or `libx264` without NVENC), whatever the source codec. A size limit is for sharing, and H.264 plays everywhere. An HEVC or AV1 source is therefore always re-encoded.
+
+### Audio tracks in an export
+
+- The **Audio tracks** panel lists each recorded track with a check box and a volume slider. A clip with one track is listed too.
+- Every listed track ticked: the export keeps its tracks as recorded, OBS's Mix included.
+- Two or more ticked, but not all: the first track is a mix of the ticked tracks (`amix`, `normalize=0`, titled "Mix"), followed by each ticked track with its name. Most players play only the first track, so it carries exactly the choice.
+- One ticked: that track alone. None ticked: no audio, and the result line says "No sound".
+- The choice applies to the smart cut, the re-encode and the size limit, and the size budget counts only exported streams.
+- An unticked track is silent in preview. The choice counts as an unexported edit.
 
 ### Export naming
 
@@ -790,7 +825,7 @@ An editor window gets the saved theme from the native side twice. A script injec
 
 - `project(OBSReplay VERSION x.y.z)` in `CMakeLists.txt` is the one place the version is set. The version resource and the notices file read it.
 - `cmake/build_info.cmake` runs on every build. It writes `build/generated/build_info.hpp` with the version, the full Git commit and a flag for uncommitted changes to tracked files. It rewrites the file only when the content changes.
-- `app_version()` returns `1.0.0+abc1234`. A build from changed files ends in `.dirty`. Release builds come from a clean commit.
+- `app_version()` returns `1.0.2+abc1234`. A build from changed files ends in `.dirty`. Release builds come from a clean commit.
 
 ### Log file
 

@@ -884,6 +884,25 @@ struct Controller::Impl {
                 log_info("Clip deleted: file={}", quoted_value(path));
                 message("Replay deleted.");
             } else open_path(file, action.name == "reveal_clip");
+        } else if (action.name == "delete_clips") {
+            // Several clips at once, from the selection on the Clips page. Each must be in the list.
+            const auto requested = action.payload.value("paths", Json::array());
+            if (!requested.is_array() || requested.empty() || requested.size() > 5000) throw std::runtime_error("Choose the clips to delete.");
+            std::set<std::string> listed;
+            { std::lock_guard lock(mutex); for (const auto& clip : state.at("clips")) listed.insert(clip.value("path", "")); }
+            std::size_t deleted = 0, kept = 0;
+            for (const auto& item : requested) {
+                const auto path = item.is_string() ? item.get<std::string>() : std::string{};
+                const auto file = from_string(path);
+                std::error_code error;
+                if (!listed.contains(path) || !media_file(file)) { ++kept; continue; }
+                // A file that is already gone counts as deleted: the list drops it below.
+                if (!fs::exists(file, error) || (fs::remove(file, error) && !error)) { ++deleted; log_info("Clip deleted: file={}", quoted_value(path)); }
+                else ++kept;
+            }
+            reconcile_clips();
+            if (kept) throw std::runtime_error((deleted ? std::to_string(deleted) + " deleted. " : std::string{}) + std::to_string(kept) + (kept == 1 ? " clip" : " clips") + " could not be deleted. Close them in other apps and check your folder permissions.");
+            message(deleted == 1 ? "1 clip deleted." : std::to_string(deleted) + " clips deleted.");
         } else if (action.name == "rename_clip") {
             // Renames the file in its folder and keeps its extension, its place in the list and its saved time.
             const auto path = action.payload.value("path", "");
@@ -1065,7 +1084,7 @@ std::expected<bool, std::string> Controller::remove_clip(const std::string& path
 }
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "rename_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "delete_clips", "rename_clip", "help", "refresh_options"};
     if (!allowed.contains(action)) { log_warn("Action refused: action={} reason=unknown", quoted_value(action)); return std::unexpected("Unknown controller action."); }
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;

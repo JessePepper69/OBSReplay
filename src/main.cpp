@@ -21,6 +21,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
+#include <filesystem>
+#include <set>
+#include <thread>
+#include <vector>
 #include <cwctype>
 #include <optional>
 #include <string>
@@ -55,6 +60,59 @@ struct Binding {
     UINT key = 0;
     bool operator==(const Binding&) const = default;
 };
+
+// Clip thumbnails kept on disk, so the Clips page shows pictures at once instead of decoding every video again.
+// One small file per clip in <data>\thumbnails, named from the clip's size, creation time and write time. A renamed
+// or moved clip keeps its picture, and a clip whose content changes gets a new name, so a new picture is made.
+// Pictures of clips that are deleted, or left behind by a change, are removed by the sweep below.
+std::filesystem::path thumbnail_folder() { return replay::paths().data/L"thumbnails"; }
+std::optional<std::filesystem::path> thumbnail_file(const std::string& clip) {
+    WIN32_FILE_ATTRIBUTE_DATA details{};
+    const auto path=replay::from_string(clip);
+    if (!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&details) || (details.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)) return std::nullopt;
+    auto key=replay::sha256_base64(std::to_string(details.nFileSizeHigh)+":"+std::to_string(details.nFileSizeLow)+"|"+std::to_string(details.ftCreationTime.dwHighDateTime)+":"+std::to_string(details.ftCreationTime.dwLowDateTime)+"|"+std::to_string(details.ftLastWriteTime.dwHighDateTime)+":"+std::to_string(details.ftLastWriteTime.dwLowDateTime));
+    for (auto& c : key) if (c=='/' || c=='+' || c=='=') c='_';
+    return thumbnail_folder()/replay::from_string(key+".json");
+}
+// `{"data":"data:image/jpeg;base64,...","length":seconds}` or an empty string when nothing is stored.
+std::string thumbnail_read(const std::string& clip) {
+    try {
+        const auto file=thumbnail_file(clip);
+        if (!file || !std::filesystem::is_regular_file(*file)) return {};
+        return replay::read_text(*file);
+    } catch (...) { return {}; }
+}
+bool thumbnail_write(const std::string& clip,const std::string& data,double length) {
+    // A 320x180 JPEG at low quality is 5 to 20 KB; anything far larger is not one of ours.
+    if (!data.starts_with("data:image/jpeg;base64,") || data.size()>96*1024) return false;
+    try {
+        const auto file=thumbnail_file(clip);
+        if (!file) return false;
+        replay::atomic_write(*file,Json{{"data",data},{"length",std::isfinite(length) && length>0 ? length : 0.0}}.dump());
+        return true;
+    } catch (...) { return false; }
+}
+// Removes pictures of clips that are no longer listed. `clips` is the list from the controller snapshot.
+void thumbnail_sweep(const Json& clips) {
+    try {
+        std::error_code error;
+        if (!std::filesystem::is_directory(thumbnail_folder(),error)) return;
+        std::set<std::wstring> wanted;
+        for (const auto& clip : clips) if (const auto file=thumbnail_file(clip.value("path",std::string{}))) wanted.insert(file->filename().wstring());
+        std::size_t removed=0;
+        for (const auto& entry : std::filesystem::directory_iterator(thumbnail_folder(),error))
+            if (!wanted.contains(entry.path().filename().wstring()) && std::filesystem::remove(entry.path(),error)) ++removed;
+        if (removed) replay::log_info("Thumbnails swept: removed={} kept={}",removed,wanted.size());
+    } catch (...) {}
+}
+// The clips in a JSON array of paths that the controller lists, as files.
+std::vector<std::filesystem::path> listed_clips(const replay::Controller& controller,const std::string& paths) {
+    std::vector<std::filesystem::path> files;
+    const auto list=Json::parse(paths,nullptr,false);
+    if (list.is_array()) for (const auto& item : list)
+        if (item.is_string() && files.size()<500 && controller.knows_clip(item.get<std::string>())) files.push_back(replay::from_string(item.get<std::string>()));
+    return files;
+}
 
 std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t");
@@ -208,6 +266,7 @@ struct Desktop {
     std::string hotkey_error;
     std::string last_error;
     std::string last_clip;
+    std::size_t last_clip_count = 0;
     bool observed_state = false;
     bool recording_hotkey = false;
     std::chrono::steady_clock::time_point recording_started{};
@@ -334,15 +393,19 @@ struct Desktop {
             if (state.value("quit",false)) { app->post([app=app] { app->quit(); });return; }
             const auto error=state.value("error",std::string{});
             std::string clip;
-            if (state.contains("clips") && state["clips"].is_array() && !state["clips"].empty()) clip=state["clips"][0].value("path",std::string{});
-            if (observed_state && (!window->visible() || window->minimized())) {
+            const std::size_t clip_count=state.contains("clips") && state["clips"].is_array() ? state["clips"].size() : 0;
+            if (clip_count) clip=state["clips"][0].value("path",std::string{});
+            // While the controller starts it loads the clip list and finds clips already in the folder; none of that
+            // is a new save. A newest clip that changes because one was deleted is not a save either: the list must grow.
+            const bool starting=state.value("operation",std::string{})=="initializing";
+            if (observed_state && !starting && (!window->visible() || window->minimized())) {
                 if (!error.empty() && error!=last_error) notify(error);
-                else if (!clip.empty() && clip!=last_clip) notify("Replay saved: "+replay::path_string(replay::from_string(clip).filename()));
+                else if (!clip.empty() && clip!=last_clip && clip_count>last_clip_count) notify("Replay saved: "+replay::path_string(replay::from_string(clip).filename()));
             }
             // A new replay or error reaches an open window at once: the page is told to read the state now
             // and does not wait for its own one-second timer, which Windows may slow down for a window without focus.
             if (observed_state && first_frame_ready && reveal_requested && (clip!=last_clip || error!=last_error)) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:state'))");
-            last_error=error;last_clip=clip;observed_state=true;
+            last_error=error;last_clip=clip;last_clip_count=clip_count;if (!starting) observed_state=true;
             if (recording_hotkey) {
                 if (std::chrono::steady_clock::now()-recording_started<std::chrono::seconds(45)) return;
                 recording_hotkey=false;
@@ -549,6 +612,38 @@ coco::stray start(saucer::application* app) {
         return !navigation.new_window() && url.scheme()=="saucer" && url.host()=="embedded" && url.path()==std::filesystem::path("/index.html") ? saucer::policy::allow : saucer::policy::block;
     });
     view.on<saucer::webview::event::permission>([](const std::shared_ptr<saucer::permission::request>& request) { request->accept(false);return saucer::status::handled; });
+    // Fullscreen video is handled here and saucer's own handling is blocked: saucer 8.0.5 swaps the monitor's x and y,
+    // which on any monitor that is not at 0,0 moves the window off every screen with no way back.
+    view.on<saucer::webview::event::fullscreen>([&](bool enabled) { replay::set_window_fullscreen(desktop.hwnd,enabled);return saucer::policy::block; });
+    view.expose("thumbnail_read",[&](std::string path) { return controller.knows_clip(path) ? thumbnail_read(path) : std::string{}; });
+    view.expose("thumbnail_write",[&](std::string path,std::string data,double length) { return controller.knows_clip(path) && thumbnail_write(path,data,length); });
+    view.expose("overlay_running",[] { return replay::process_running(L"NVIDIA Overlay.exe"); });
+    view.expose("copy_clips",[&](std::string paths) -> std::expected<int,std::string> {
+        try { return static_cast<int>(replay::copy_files_to_clipboard(listed_clips(controller,paths))); }
+        catch (const std::exception& e) { return std::unexpected(e.what()); }
+    });
+    // The drag runs after this call has returned to the page: it has its own message loop, which must not run
+    // inside a WebView2 callback. The mouse button is still held, so the drag carries on from the page's gesture.
+    view.expose("drag_clips",[&,app](std::string paths) {
+        auto files=listed_clips(controller,paths);
+        if (!files.empty() && !replay::headless_mode()) app->post([&,files=std::move(files)] { replay::drag_files(desktop.hwnd,files); });
+    });
+    // Pictures follow the clip list: shortly after launch, and then whenever a clip is deleted, renamed or added,
+    // the pictures no listed clip uses are removed. It runs away from the window thread and looks every 10 seconds.
+    std::thread([&controller] {
+        std::string swept;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            try {
+                const auto clips=Json::parse(controller.snapshot()).value("clips",Json::array());
+                std::string listed;
+                for (const auto& clip : clips) listed+=clip.value("path",std::string{})+"\n";
+                if (listed==swept) continue;
+                thumbnail_sweep(clips);
+                swept=std::move(listed);
+            } catch (...) {}
+        }
+    }).detach();
     view.expose("snapshot",[&] { return desktop.snapshot(); });
     view.expose("media_url",[&](std::string path) { return media.url(path); });
     view.expose("open_editor",[&](std::string path) { return editors.open(path); });

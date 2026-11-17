@@ -48,7 +48,7 @@
           <div class="mixer" role="group" aria-label="Volume">
             <button type="button" class="icon-button mute" id="mute-master" aria-label="Mute" aria-pressed="false" data-tip="Mute or unmute" data-tip-keys="M"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z"/><path class="volume-wave" d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9"/><path class="volume-off" d="m13.5 8 4 4m0-4-4 4"/></svg></button>
             <input type="range" id="volume-master" min="0" max="1" step="0.05" value="0.5" aria-label="Volume" data-tip="Volume">
-            <button type="button" class="icon-button" id="tracks-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tracks-panel" aria-label="Track volumes" data-tip-title="Track volumes" data-tip="Set each audio track's level separately, like game audio and microphone."><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5v13M10 3.5v13M15 3.5v13"/><path d="M3 12h4M8 7h4M13 10.5h4"/></svg></button>
+            <button type="button" class="icon-button" id="tracks-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tracks-panel" aria-label="Audio tracks" data-tip-title="Audio tracks" data-tip="Choose which tracks go into the export, like game audio and microphone, and how loud each plays here."><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5v13M10 3.5v13M15 3.5v13"/><path d="M3 12h4M8 7h4M13 10.5h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -84,15 +84,14 @@
       <div class="export-idle" id="export-idle">
         <div class="quality-control">
           <label for="quality">Quality</label>
-          <div class="quality-column">
-            <div class="quality-slider" data-tip-title="Quality" data-tip="10 · Original keeps your recording's video untouched and still cuts on the exact frame, so it exports in seconds. 1–9 re-compress the whole video to make the file smaller (lower = smaller), which takes longer.">
-              <div class="quality-steps" id="quality-steps" aria-hidden="true"></div>
-              <input type="range" id="quality" min="1" max="10" step="1" value="10" aria-describedby="quality-label quality-hint">
-            </div>
-            <span class="quality-hint" id="quality-hint">Click/Drag to select quality level</span>
+          <div class="quality-slider" data-tip-title="Quality" data-tip="10 · Original keeps your recording's video untouched and still cuts on the exact frame, so it exports in seconds. 1–9 re-compress the whole video to make the file smaller (lower = smaller), which takes longer.">
+            <div class="quality-steps" id="quality-steps" aria-hidden="true"></div>
+            <input type="range" id="quality" min="1" max="10" step="1" value="10" aria-describedby="quality-label">
           </div>
           <output id="quality-value" for="quality">10</output>
           <span class="quality-label" id="quality-label">Original</span>
+          <span class="size-label" id="size-label">Max size</span>
+          <div class="size-limits" id="size-limits" role="group" aria-labelledby="size-label"><span class="size-unit" aria-hidden="true">MB</span></div>
         </div>
         <div class="export-actions">
           <small id="export-format">MP4</small>
@@ -111,7 +110,7 @@
       <div class="export-result" id="export-result" hidden>
         <span class="result-mark" id="result-mark" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg></span>
         <div class="result-copy"><strong id="result-title">Video exported</strong><span id="result-text"></span></div>
-        <div class="notice-actions"><button type="button" id="result-reveal">Show in folder</button><button type="button" id="result-open">Play video</button><button type="button" id="result-dismiss">Done</button></div>
+        <div class="notice-actions"><button type="button" id="result-reveal">Show in folder</button><button type="button" id="result-open">Play video</button><button type="button" id="result-copy" data-tip="Copy the video file, then paste it into Discord, a chat or a folder.">Copy</button><button type="button" id="result-dismiss">Done</button></div>
       </div>
     </footer>
   </div>
@@ -148,8 +147,9 @@
   <dialog id="export-dialog" aria-labelledby="export-title"><form method="dialog" id="export-form"><h2 id="export-title">Name your export</h2><p>Leave it empty to use the name shown.</p><div class="name-input"><input id="export-name" type="text" maxlength="120" spellcheck="false" autocomplete="off" aria-labelledby="export-title"><span aria-hidden="true">.mp4</span></div><div class="dialog-actions"><label class="check"><input type="checkbox" id="export-delete"><span>Delete original clip after exporting</span></label><button type="button" id="export-cancel">Cancel</button><button type="submit" class="primary" id="export-confirm">Export video</button></div></form></dialog>
   <div class="menu" id="menu" role="listbox" hidden></div>
   <section class="tracks-panel" id="tracks-panel" role="dialog" aria-labelledby="tracks-title" hidden>
-    <div class="tracks-heading"><h2 id="tracks-title">Track volumes</h2><p>Changes what you hear while editing. Exports keep every track as recorded.</p></div>
+    <div class="tracks-heading"><h2 id="tracks-title">Audio tracks</h2><p>Ticked tracks go into the export. Volume only changes what you hear here.</p></div>
     <div class="tracks-list" id="tracks-list"></div>
+    <p class="tracks-note" id="tracks-note" hidden>Nothing ticked, so the video exports without sound.</p>
   </section>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text"><form method="dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button value="cancel">Keep editing</button><button value="confirm" class="danger" id="confirm-action">Close</button></div></form></dialog>
 </body>

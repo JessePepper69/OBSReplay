@@ -45,9 +45,11 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Updates:** OBSReplay checks GitHub once a day. A new version shows its changes and installs with one click, or you skip it.
 - **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
 - **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
-- **Clips library:** Browse every clip you saved, with a thumbnail, its length and its size. Search by name, game or date. Filter by game. Each card has a menu to play, edit, rename, open or delete the clip.
+- **Clips library:** Browse every clip you saved, grouped by day, with a thumbnail, its length and its size. Search by name, game or date. Filter by game or by how recent. Each card has a menu to play, edit, rename, copy, open or delete the clip.
+- **Select, copy and drag:** Select several clips to copy or delete them together. Copy a clip and paste it into a chat, or drag its card straight out of the window.
 - **Replay viewer:** Watch a clip in the app with a timeline, a waveform and frame-by-frame steps.
-- **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name.
+- **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name, and which audio tracks go in.
+- **Max size export:** Choose 10, 25, 50, 100 or 500 MB and the export comes out under it, as H.264 that plays everywhere. Copy the result straight to the clipboard.
 - **Quality presets:** Choose from Very low to Very high. No bitrate numbers to learn.
 - **Hardware encoding:** Uses your NVIDIA, AMD or Intel GPU with H.264, HEVC or AV1.
 - **Separate audio tracks:** Game audio and your microphone are saved as two tracks, so you can mute either one later.

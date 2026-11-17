@@ -276,9 +276,6 @@ summary:focus-visible { outline-offset:-3px; }
 .setup-intro>button { flex:none; }
 .setup-intro strong { font-size:15px;font-weight:650; }
 .setup-intro p { font-size:13px;margin-top:3px;color:var(--dim); }
-.setup-startup.setting-row { min-height:0;padding:10px 0 0;border:0;gap:12px; }
-.setup-startup .setting-copy strong { font-size:13px;font-weight:500;color:var(--muted); }
-.setup-startup .switch-control,.setup-startup .switch-control input { min-height:28px;height:28px; }
 
 /* Clips: cards in a grid. The thumbnail's outline lights and sweeps while the pointer is on the card. */
 .clips-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(204px,1fr));gap:28px 16px;padding-bottom:20px; }
@@ -327,6 +324,44 @@ button.clip-more:hover:not(:disabled),button.clip-more[aria-expanded="true"] { b
 .clip-menu button[data-danger],.clip-menu button[data-danger] svg,.clip-menu button[data-danger]:hover,.clip-menu button[data-danger]:focus,.clip-menu button[data-danger]:hover svg,.clip-menu button[data-danger]:focus svg { color:var(--red); }
 .clip-menu button[data-danger]:hover:not(:disabled),.clip-menu button[data-danger]:focus { background:color-mix(in srgb,var(--red) 16%,transparent); }
 .clip-menu hr { height:1px;margin:5px 6px;border:0;background:var(--line-strong); }
+/* Day headings span the grid as a divider: a marker, the day, a short age, a rule to the far edge, then the count.
+   Today's marker is the accent colour; older days use a quiet one. */
+.clips-day { grid-column:1 / -1;display:flex;align-items:center;gap:12px;margin:0 0 -10px;font-size:16px;font-weight:700;letter-spacing:-.01em;color:var(--text); }
+.clips-day:not(:first-child) { margin-top:14px; }
+.clips-day::before { content:"";flex:none;width:4px;height:18px;border-radius:2px;background:var(--line-hover); }
+.clips-day[data-today]::before { background:var(--ui-accent-text); }
+.clips-day::after { content:"";order:1;flex:1;height:1px;background:var(--line-strong); }
+.clips-day .day-age { font-size:13px;font-weight:500;letter-spacing:0;color:var(--dim);font-variant-numeric:tabular-nums; }
+.clips-day .day-count { order:2;font-size:13px;font-weight:500;letter-spacing:0;color:var(--dim);font-variant-numeric:tabular-nums; }
+/* Selecting: a check box on the thumbnail's top left corner, shown with the pointer or focus and always in select mode.
+   In select mode the cards that are not selected go pale, so the chosen ones stand out. */
+button.clip-select { position:absolute;top:8px;left:8px;width:24px;min-width:24px;height:24px;padding:0;border:0;border-radius:7px;background:var(--ov-bg);box-shadow:inset 0 0 0 1.5px var(--ov-muted);color:transparent;opacity:0;translate:0 2px;transition:opacity 140ms ease-out,translate 240ms var(--ease),background-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+button.clip-select:hover:not(:disabled) { background:var(--ov-hover);box-shadow:inset 0 0 0 1.5px var(--ov-text); }
+button.clip-select:active:not(:disabled) { scale:.92; }
+.clip-select svg { width:14px;height:14px;stroke-width:2.2; }
+.clip-card:hover .clip-select,.clip-card:has(:focus-visible) .clip-select,.clip-card.menu-open .clip-select,html[data-selecting] .clip-select { opacity:1;translate:0 -3px; }
+html[data-selecting] #clips-list .clip-card:not(:hover) .clip-select { translate:0 0; }
+button.clip-select[aria-checked="true"],button.clip-select[aria-checked="true"]:hover:not(:disabled) { background:var(--ui-accent);box-shadow:none;color:var(--on-accent); }
+/* In select mode a card that is not selected loses all its colour, picture and text alike, and fades back.
+   A selected card keeps its colour and grows a little; it has no edge of its own. */
+#clips-list .clip-card { transition:scale 240ms var(--ease),filter 240ms var(--ease); }
+html[data-selecting] #clips-list .clip-card:not(.selected) { filter:grayscale(1) opacity(.5); }
+html[data-selecting] #clips-list .clip-card:not(.selected):hover,html[data-selecting] #clips-list .clip-card:not(.selected):has(:focus-visible) { filter:grayscale(1) opacity(.8); }
+html[data-selecting] #clips-list .clip-card.selected { scale:1.04;z-index:1; }
+/* Shift+click would otherwise select the text between two cards. */
+#clips-list { user-select:none; }
+html[data-motion="off"] #clips-list .clip-card { transition:none; }
+/* The bar for the selection floats over the foot of the page, on the dropdown list's surface. */
+.selection-bar { position:fixed;z-index:29;left:50%;bottom:78px;translate:-50% 0;display:flex;align-items:center;gap:8px;max-width:calc(100% - 32px);padding:7px 7px 7px 16px;border:1px solid var(--line-strong);border-radius:14px;background:var(--surface);box-shadow:0 16px 38px rgba(0,0,0,.38);animation:rise 240ms var(--ease) both; }
+.selection-bar[hidden] { display:none; }
+.selection-bar strong { margin-right:8px;font-size:13px;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums; }
+.selection-bar button { height:32px;padding:0 12px;white-space:nowrap; }
+html[data-motion="off"] .selection-bar { animation:none; }
+/* A toast shown while clips are selected sits above the bar. */
+html[data-selecting] .toast { bottom:136px; }
+.clips-toolbar .dropdown { width:auto;flex:none; }
+.clips-toolbar .dropdown-button { height:32px;min-width:128px;font-size:13px; }
+.overlay-notice { margin-bottom:14px; }
 .clips-empty { padding:36px 0; }
 .clips-empty h2 { margin-bottom:6px;font-size:18px; }
 .clips-empty p { max-width:62ch;font-size:14px;color:var(--dim); }
@@ -334,7 +369,11 @@ button.clip-more:hover:not(:disabled),button.clip-more[aria-expanded="true"] { b
 
 .clips-toolbar { display:flex;align-items:center;gap:12px 14px;flex-wrap:wrap;margin:-4px 0 18px; }
 /* Search: the field's edge is on the wrapper, so the icon and the clear button sit inside it. */
-.search-field { display:flex;align-items:center;gap:8px;flex:0 1 250px;min-width:170px;height:32px;padding:0 4px 0 10px;border:1px solid var(--line-strong);border-radius:var(--r-control);background:var(--well);color:var(--dim);cursor:text;transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+.search-field { display:flex;align-items:center;gap:8px;flex:none;width:132px;height:32px;padding:0 4px 0 10px;border:1px solid var(--line-strong);border-radius:var(--r-control);background:var(--well);color:var(--dim);cursor:text;transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+.search-field { transition:width 220ms var(--ease),border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+/* It opens to its full width while it has the keyboard or holds text. */
+.search-field:focus-within,.search-field:has(input:not(:placeholder-shown)) { width:270px; }
+html[data-motion="off"] .search-field { transition:none; }
 .search-field:hover { border-color:var(--line-hover); }
 .search-field:focus-within { border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent-text) 22%,transparent); }
 .search-field>svg { width:15px;height:15px; }

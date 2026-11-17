@@ -50,6 +50,60 @@ The app changed after the results below were recorded. Where a result below disa
 | A settings file without `settings_version` gets `replay_enabled` turned on once, and the result is saved | Passed |
 | Release compile and JavaScript syntax check | Passed |
 
+### Second check of 2026-11-17: Clips page and editor
+
+`build/ui-work/shots.mjs` runs `build/Release/OBSReplay.exe` headless, isolated and muted (port 9462) against 20 clips with saved dates from today to two years back. A copy of `ping.exe` named `NVIDIA Overlay.exe` stands in for the NVIDIA overlay. Screenshots are in `build/ui-shots`.
+
+| Check | Result |
+|---|---|
+| Day headings: Today, Yesterday, dates with "3d ago", "1w ago", "1m ago", "1y ago", and the year on older dates | Passed |
+| Cards under a heading show the time alone | Passed |
+| Date filter: Today, Last 7 days, Last 30 days, Any time | Passed |
+| Select mode: check boxes, Shift+click to select and again to deselect, fully grey unselected cards, selected cards at 104% with no edge, the bar | Passed |
+| The search field is 132px wide at rest and 270px while focused or holding text | Passed |
+| The selection survives opening a clip and changing the filter; Escape clears it | Passed |
+| Delete of two selected clips asks first, removes both files and leaves 18 listed | Passed |
+| Clip menu rows include **Select** and **Copy** | Passed |
+| Thumbnails stored on disk (one per distinct file), read back with the clip length, refused for a file outside the list | Passed |
+| A renamed clip keeps its picture; a deleted clip's picture is removed within seconds | Passed |
+| Each day heading counts its clips | Passed |
+| After a page reload thumbnails and lengths show from disk | Passed |
+| Overlay notice in setup and toast in the app while `NVIDIA Overlay.exe` runs | Passed |
+| One **Start with Windows** switch in Settings | Passed |
+| Total | 38 of 38 |
+
+Editor (`build/edtest`, run by a second engineer the same day):
+
+| Check | Result |
+|---|---|
+| Max size 10 MB, first 30 s | 9,047,337 bytes, H.264 540p, 1 encode, 1.8 s |
+| Max size 25 MB, first 60 s | 21,607,574 bytes, H.264 720p, 1 encode, 4.1 s |
+| Max size 50 MB, full 118 s | 45,370,165 bytes, H.264 720p, 1 encode, 7.6 s |
+| Max size 100 MB, full 118 s | 90,689,838 bytes, H.264 1080p, 1 encode, 13.4 s |
+| Max size 500 MB, full 118 s (HEVC source, 206 MB) | 249,271,225 bytes, H.264 1080p, 1 encode, 13.7 s. The bitrate stops at what the source needs |
+| Max size 10 MB, full 118 s | Shown as unavailable; `start_export` refuses it |
+| Retry: an edit estimated to fit came out at 208 MB against 100 MB | Second pass gave 49,708,424 bytes |
+| Cancel during a Max size export | No file left |
+| Every Max size export above | H.264 video |
+| Audio track choice across smart cut, re-encode and Max size (stream layout and tone content) | 13 of 13 |
+| Editor suite `build/editor-check/check.mjs`, updated for the current pages | Main 118 of 118, no-FFmpeg 7 of 7 |
+
+Live run of version 1.0.2 on the development PC, started as `dist\OBSReplay.exe --portable` beside an installed 1.0.1 and a running OBS session:
+
+| Check | Result |
+|---|---|
+| Connects to the running OBSReplay session of OBS; status **Capturing**, capture ready, no error | Passed |
+| Both shortcuts register | Passed |
+| A 1.0.1 settings file gains `settings_version` 2 with **Start replay capture automatically** on | Passed |
+| All 29 videos in the clips folder are listed | Passed |
+| The profile update waits because OBS is open (session log: "OBS profile update waits: OBS is open") | Passed |
+| The update check reports 1.0.1 as the latest release and offers nothing | Passed |
+| The installed copy stays at 1.0.1 (`--portable` installs nothing) | Passed |
+
+The live run read state only. It did not stop capture, save a replay or play a clip.
+
+Not exercised in the second check: fullscreen on a second monitor, copy to the clipboard, and dragging a clip out of the window. These need real mouse input or would overwrite the user's clipboard. The Max size failure after four encodes and the x264 Max size path were read in code only; NVENC always fit on the test machine.
+
 Not exercised: the profile update at launch, Start and Stop against a live OBS, the new buffer memory figure inside OBS, sizes of 1 GB and above in the page, and the display fix button. These need a live OBS session or real hardware changes.
 
 ## How to run checks
