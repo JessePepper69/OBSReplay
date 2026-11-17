@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled", "theme"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 18, mic_enabled: true, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: false, sort_by_app: false, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: false, animations_enabled: true, theme: "original" };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 18, mic_enabled: true, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: true, sort_by_app: true, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: true, animations_enabled: true, theme: "original" };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -294,8 +294,12 @@
   function formatBytes(bytes) {
     const value = Number(bytes);
     if (!Number.isFinite(value) || value < 0) return "";
-    if (value < 1024 * 1024) return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / 1024)} KB`;
-    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / (1024 * 1024))} MB`;
+    // The largest unit that keeps the number at 1 or more: 1,638 MB reads 1.6 GB. A value that would round
+    // up to 1,024 moves to the next unit too.
+    const units = ["KB", "MB", "GB", "TB"];
+    let amount = value / 1024, unit = 0;
+    while (unit < units.length - 1 && Math.round(amount * 10) / 10 >= 1024) { amount /= 1024; unit++; }
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(amount)} ${units[unit]}`;
   }
   function formatTime(value) {
     if (!value) return "";
@@ -454,7 +458,7 @@
     { match: /selected microphone is disconnected/, label: "Use default microphone", apply() { $("mic_device").value = "default"; } },
     { match: /No speakers or headphones are active/, label: "Turn off desktop audio", apply() { $("desktop_device").value = "off"; } },
     { match: /selected desktop audio device is disconnected/, label: "Use default device", apply() { $("desktop_device").value = "default"; } },
-    { match: /selected monitor is disconnected/, label: "Use main display", apply() { $("monitor_id").value = $("monitor_id").options[0]?.value || ""; } }
+    { match: /selected (monitor|display) is disconnected/, label: "Use main display", apply() { $("monitor_id").value = $("monitor_id").options[0]?.value || ""; } }
   ];
   const errorFix = text => errorFixes.find(fix => fix.match.test(text || "")) || null;
   function applyErrorFix(text) {
@@ -486,8 +490,8 @@
     $("footer-hide").hidden = state.tab === "settings" || state.tab === "setup";
     const pending = busy();
     for (const button of document.querySelectorAll("#replay-player .viewer-actions button")) button.disabled = !state.native || pending;
-    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : snapshot?.compression_update ? "Apply improved compression" : configured() ? "Apply changes" : "Set up and start";
-    $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair() && !snapshot?.compression_update);
+    $("apply-settings").textContent = pending && ["setup", "apply"].includes(state.pending?.action || snapshot?.operation) ? "Applying…" : needsRepair() ? "Repair OBS setup" : configured() ? "Apply changes" : "Set up and start";
+    $("apply-settings").disabled = !state.native || pending || (!state.dirty && configured() && !needsRepair());
     $("discard-settings").disabled = !state.dirty || pending;
     if (!state.native) $("footer-status").textContent = "Not connected. Reopen OBSReplay.";
     else if (pending) $("footer-status").textContent = snapshot?.message || "Working…";
@@ -918,11 +922,19 @@
   // Clips page: one game at a time if wanted, 24 clips a page.
   const pageSize = 24;
   const clipView = { app: null, page: 0, query: "" };
-  // Search matches every typed word against the file name, the game and the saved time.
+  // Search matches every typed word against the file name, the game and the saved date. The date is searchable
+  // as the card shows it and also in full: weekday, month name, year, the local numeric date and 2026-11-15.
+  const searchDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  function searchDates(saved) {
+    const date = new Date(saved);
+    if (!saved || Number.isNaN(date.getTime())) return "";
+    const two = number => String(number).padStart(2, "0");
+    return `${searchDate.format(date)} ${date.toLocaleDateString()} ${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+  }
   function searchClips(items) {
     const words = clipView.query.split(/\s+/).filter(Boolean);
     if (!words.length) return items;
-    return items.filter(clip => { const text = `${clip.name || ""} ${clip.app ? gameName(clip.app) : ""} ${formatTime(clip.saved_at)}`.toLowerCase(); return words.every(word => text.includes(word)); });
+    return items.filter(clip => { const text = `${clip.name || ""} ${clip.app ? gameName(clip.app) : ""} ${formatTime(clip.saved_at)} ${searchDates(clip.saved_at)}`.toLowerCase(); return words.every(word => text.includes(word)); });
   }
   function setClipSearch(value) {
     const query = value.trim().toLowerCase();

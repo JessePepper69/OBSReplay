@@ -45,7 +45,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Updates:** OBSReplay checks GitHub once a day. A new version shows its changes and installs with one click, or you skip it.
 - **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
 - **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
-- **Clips library:** Browse every clip with a thumbnail, its length and its size. Filter by game. Delete a clip from its card.
+- **Clips library:** Browse every clip you saved, with a thumbnail, its length and its size. Search by name, game or date. Filter by game. Each card has a menu to play, edit, rename, open or delete the clip.
 - **Replay viewer:** Watch a clip in the app with a timeline, a waveform and frame-by-frame steps.
 - **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name.
 - **Quality presets:** Choose from Very low to Very high. No bitrate numbers to learn.
@@ -55,7 +55,7 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Start with Windows:** Capture is running after you sign in. Nothing to open.
 - **Tray menu:** Save a replay, start or stop capture, or close the app from the tray.
 - **Debug tab:** See how much CPU, memory and GPU OBSReplay and OBS use. Export a log of the session for a bug report.
-- **Themes:** Navy, Mono, Light, Rose, Amethyst and Ember.
+- **Themes:** Original, Mono, Light, Rose, Amethyst and Ember.
 
 ![Clip editor: a clip with one section removed](docs/images/editor.png)
 

@@ -453,7 +453,7 @@ Step 3, Start:
 - Arrow, Home and End keys move between tabs.
 - The app remembers the selected tab.
 - Latest shows up to eight cards of the selected tab, newest first.
-- Clips shows that tab's full recent history, up to 50 each.
+- Clips shows every clip of that tab, 24 per page.
 - Each tab has its own empty state.
 - **View all** opens Clips on the tab selected in Latest.
 
@@ -461,7 +461,7 @@ Step 3, Start:
 
 - The toolbar shows whenever the selected tab has clips.
 - Search field: 32px high, a search icon inside its left edge, placeholder "Search clips", a clear button once it has text.
-- Search matches every typed word against the file name, the game and the saved time. It filters as you type and keeps the field focused.
+- Search matches every typed word against the file name, the game and the saved date. The date matches as the card shows it, or as weekday, month name, year, local numeric date or `2026-11-15`. It filters as you type and keeps the field focused.
 - Ctrl+F on the Clips page focuses the field. Escape clears it.
 - While a search runs, chips keep their order and show how many matches each game has. A game with none is disabled.
 - No matches: the title "No replays match “text”", one line saying what search looks at, and **Clear search**.
@@ -622,11 +622,11 @@ Layout from top to bottom:
 - **Apply** submits full settings values.
 - Failed edits are retained.
 - Repair forces the existing setup operation even without dirty changes.
-- Capture and audio **Apply** explains the automatic OBS restart and buffer preservation.
-- Pending status follows these stages: save, close, configuration, reopen.
+- Capture and audio **Apply** explains the automatic OBS restart and that the replay buffer starts again from empty.
+- Pending status follows these stages: pause capture, close, configuration, reopen.
 - Success confirms that capture resumed.
 - App-only changes keep capture running.
-- A pending compression upgrade enables **Apply** without dirty edits.
+- A profile update from a new app version shows nothing here. It is applied at launch while OBS is closed.
 - Quality labels are Very high, High, Balanced, Low and Very low.
 - Encoder parameters stay out of the quality control.
 - Setting row: minimum height 68px, padding 13px 20px, 1px `--line` divider.

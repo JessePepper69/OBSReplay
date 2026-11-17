@@ -219,12 +219,14 @@ fs::path winget_path() {
     } catch (...) { return {}; }
 }
 
+// Version of the settings file. A file without it was written by 1.0.1 or earlier.
+constexpr int settings_version = 2;
 Json default_settings(const Paths&) {
     return Json{{"obs_path", path_string(find_obs())}, {"clips_dir", path_string(folder(FOLDERID_Videos) / L"OBSReplay")},
         {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
         {"encoder","auto"},{"codec","h264"},{"quality",18},{"mic_enabled",true},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
-        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",false},{"animations_enabled",true},{"theme","original"}};
+        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",true},{"animations_enabled",true},{"theme","original"},{"settings_version",settings_version}};
 }
 
 ThemeGround theme_ground(const std::string& id) {
@@ -293,8 +295,13 @@ Json load_settings(const Paths& p) {
         auto settings=default_settings(p);
         auto stored=Json::parse(read_text(target));
         if (!stored.is_object()) throw std::runtime_error("Invalid settings format");
+        const bool before_versions = !stored.contains("settings_version");
         settings.update(stored);
+        // Up to 1.0.1, Start and Stop capture overwrote "Start replay capture automatically", so the saved value was
+        // the last button pressed and not a choice. It is turned on once; from here only the user changes it.
+        if (before_versions) { settings["replay_enabled"] = true; settings["settings_version"] = settings_version; }
         validate_settings(settings);
+        if (before_versions) try { save_settings(p, settings); } catch (...) {}
         return settings;
     } catch (...) {
         throw std::runtime_error("Saved settings are unreadable. The original settings.json is preserved in " + path_string(p.data) + ". Choose valid settings and Apply to recover.");

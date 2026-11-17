@@ -4,6 +4,7 @@ This file records what has been tested in OBSReplay, how each check ran, the res
 
 ## Contents
 
+- [Changes since the release verification](#changes-since-the-release-verification)
 - [How to run checks](#how-to-run-checks)
 - [Release artefact](#release-artefact)
 - [Clip editor](#clip-editor)
@@ -18,7 +19,38 @@ This file records what has been tested in OBSReplay, how each check ran, the res
 - [Test hygiene](#test-hygiene)
 - [Known limits and untested areas](#known-limits-and-untested-areas)
 
-All results belong to the release verification dated 2026-11-06. The source records no per-check dates.
+All results belong to the release verification dated 2026-11-06, except [Changes since the release verification](#changes-since-the-release-verification). The source records no per-check dates.
+
+## Changes since the release verification
+
+The app changed after the results below were recorded. Where a result below disagrees with this list, this list is the current behaviour.
+
+| Recorded below | Current behaviour |
+|---|---|
+| Apply saves the current replay before it restarts OBS ("the buffer save", "pre-restart backups", "backs up any verified active scene") | Apply stops the buffer and restarts OBS without saving. The buffer starts again from empty, and the UI says so |
+| Capture lists five recent replays | Capture lists the latest eight |
+| Saved replays are MKV in the older capture checks | Profiles write MP4. Existing MKV clips still play |
+| A profile update shows as **Apply improved compression** and waits for a click ("compression-upgrade action", "detect the old compression policy") | A profile update is applied at launch while OBS is closed. The page shows no button for it |
+| Clip history holds 50 replays and 50 exports | The clip list has no limit |
+| `replay_enabled` follows Start and Stop | `replay_enabled` is the **Start replay capture automatically** setting. Start and Stop leave it alone |
+| Replay buffer memory is capped at 2048 MB | The memory ceiling scales with length, quality, resolution and frame rate, up to 75% of installed memory |
+
+### Check of 2026-11-17
+
+`build/fix-check/check.mjs` runs `build/Release/OBSReplay.exe` headless, isolated and muted (port 9461) against 130 hard-linked copies of a sample clip in two game folders.
+
+| Check | Result |
+|---|---|
+| All 130 clips are listed from the clips folder, and `clips.json` keeps all 130 | Passed |
+| **Replays** tab count and pager show 130 | Passed |
+| Search by file name, by game, by year, by full month name, by `2026-11`, and by game with year | Passed |
+| A search with no match reports none | Passed |
+| A 29 MB clip still shows its size in MB | Passed |
+| A clip deleted outside the app leaves the list | Passed |
+| A settings file without `settings_version` gets `replay_enabled` turned on once, and the result is saved | Passed |
+| Release compile and JavaScript syntax check | Passed |
+
+Not exercised: the profile update at launch, Start and Stop against a live OBS, the new buffer memory figure inside OBS, sizes of 1 GB and above in the page, and the display fix button. These need a live OBS session or real hardware changes.
 
 ## How to run checks
 
@@ -39,7 +71,7 @@ Checks run the real `OBSReplay.exe` with its embedded WebView2 in a headless, is
 - OBS configuration in an isolated run still refers to the current Windows user's installed OBS.
 - List debug targets at `http://127.0.0.1:<port>/json/list`. Main-window and `editor.html` pages appear as separate targets.
 - Add `--mute-audio` to `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` to keep playback checks silent.
-- Seed `settings.json` in the data folder with `save_sound: false`, `replay_enabled: false` and `start_at_login: false`. The app merges the file over its defaults.
+- Seed `settings.json` in the data folder with `save_sound: false`, `replay_enabled: false`, `start_at_login: false` and `settings_version: 2`. The app merges the file over its defaults. Without `settings_version` the app treats the file as one from 1.0.1 and turns `replay_enabled` on.
 - Do not move the user's mouse or send desktop keyboard input.
 - Keep disposable clips, data folders and evidence under the ignored `build/` folder.
 

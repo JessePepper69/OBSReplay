@@ -19,7 +19,7 @@ namespace replay {
 namespace {
 constexpr auto product = "OBSReplay";
 constexpr auto owner_type = "OBSReplay.integration.v1";
-constexpr int compression_policy = 2;
+constexpr int compression_policy = 3;
 const fs::path profile_relative = fs::path("basic") / "profiles" / product;
 const fs::path scene_relative = fs::path("basic") / "scenes" / "OBSReplay.json";
 const fs::path scene_marker_relative = fs::path("basic") / "scenes" / "OBSReplay.owner";
@@ -188,20 +188,30 @@ std::pair<int, int> output_size(const Json& settings, int width, int height) {
     return {out_width, out_height};
 }
 
+std::size_t quality_level(const Json& settings) {
+    const int quality = settings["quality"].get<int>();
+    return quality == 16 ? 0 : quality == 18 ? 1 : quality == 20 ? 2 : quality == 24 ? 3 : 4;
+}
+
+// Highest video bitrate expected for these settings: the 1080p60 ceiling of the quality preset, scaled by
+// pixel count and frame rate, with half as much again for H.264. NVIDIA encodes with exactly this limit.
+long bitrate_ceiling(const Json& settings, int width, int height) {
+    constexpr std::array max_kbps{24000, 16000, 10000, 7000, 4000};
+    const auto [out_width, out_height] = output_size(settings, width, height);
+    const double scale = (static_cast<double>(out_width) * out_height / (1920.0 * 1080)) * (settings["fps"].get<int>() / 60.0);
+    return std::clamp(std::lround(max_kbps[quality_level(settings)] * scale * (settings["codec"] == "h264" ? 1.5 : 1.0)), 1000L, 500000L);
+}
+
 Json encoder_settings(const Json& settings, int width = 1920, int height = 1080) {
     const std::string brand = settings["encoder"], codec = settings["codec"];
-    const int quality = settings["quality"].get<int>();
-    const std::size_t level = quality == 16 ? 0 : quality == 18 ? 1 : quality == 20 ? 2 : quality == 24 ? 3 : 4;
+    const std::size_t level = quality_level(settings);
     constexpr std::array cpu_quality{18, 20, 22, 25, 28};
     constexpr std::array gpu_quality{20, 22, 24, 27, 30};
     if (brand == "cpu") return {{"rate_control", "CRF"}, {"crf", cpu_quality[level]}, {"preset", "veryfast"}, {"profile", "high"}, {"keyint_sec", 2}};
     Json value = {{"rate_control", "CQP"}, {"cqp", gpu_quality[level]}, {"keyint_sec", 2}};
     if (brand == "nvidia") {
         constexpr std::array target_quality{22, 24, 26, 29, 32};
-        constexpr std::array max_kbps{24000, 16000, 10000, 7000, 4000};
-        const auto [out_width, out_height] = output_size(settings, width, height);
-        const double scale = (static_cast<double>(out_width) * out_height / (1920.0 * 1080)) * (settings["fps"].get<int>() / 60.0);
-        const auto limit = std::clamp(std::lround(max_kbps[level] * scale * (codec == "h264" ? 1.5 : 1.0)), 1000L, 500000L);
+        const auto limit = bitrate_ceiling(settings, width, height);
         value.erase("cqp");
         value.update({{"rate_control", "CQVBR"}, {"target_quality", target_quality[level]}, {"max_bitrate", limit}, {"bitrate", 0},
                       {"preset", "p5"}, {"tune", "hq"}, {"multipass", "qres"}, {"adaptive_quantization", true},
@@ -212,10 +222,21 @@ Json encoder_settings(const Json& settings, int width = 1920, int height = 1080)
     return value;
 }
 
-int memory_limit(int seconds) {
+// Memory the replay buffer may use, in MB. It is a ceiling, not a reservation: OBS holds only what the encoder
+// produced. It is sized so the chosen length fits at the chosen quality: length times the highest expected
+// bitrate (video plus every audio track), with a quarter on top. Encoders without a bitrate limit (AMD, Intel
+// and CPU use constant quality) get twice the video figure. It is never below the figure used before version 3
+// of the profile (8 MB per second, at most a tenth of installed memory, 256 to 2048 MB), so no setting gets less
+// room than it had. The one bound is 75% of installed memory, the most OBS's own settings accept.
+int memory_limit(const Json& settings, int width, int height) {
+    const long long seconds = settings["clip_seconds"].get<int>();
+    const long long video = bitrate_ceiling(settings, width, height) * (settings["encoder"] == "nvidia" ? 1 : 2);
+    const long long audio = 160 * (settings["separate_tracks"].get<bool>() ? 3 : 1);
     MEMORYSTATUSEX memory{sizeof(memory)};
-    const int available = GlobalMemoryStatusEx(&memory) ? static_cast<int>(memory.ullTotalPhys / (1024 * 1024 * 10)) : 1024;
-    return std::clamp(std::min(seconds * 8, available), 256, 2048);
+    const long long installed = GlobalMemoryStatusEx(&memory) ? static_cast<long long>(memory.ullTotalPhys / (1024 * 1024)) : 8192;
+    const long long before = std::clamp(std::min(seconds * 8, installed / 10), 256LL, 2048LL);
+    const long long wanted = std::max(before, seconds * (video + audio) / 8 / 1024 * 5 / 4);
+    return static_cast<int>(std::clamp(wanted, 256LL, std::max(256LL, installed * 3 / 4)));
 }
 
 std::string profile_ini(const Json& s, int width, int height) {
@@ -230,7 +251,7 @@ std::string profile_ini(const Json& s, int width, int height) {
         << "\n[AdvOut]\nEncoder=" << id << "\nAudioEncoder=ffmpeg_aac\nRecType=Standard\nRecFilePath=" << folder
         << "\nRecFormat2=mp4\nRecMuxerCustom=movflags=+faststart\nRecUseRescale=false\nRecRescaleFilter=0\nRecEncoder=" << id
         << "\nRecAudioEncoder=ffmpeg_aac\nRecTracks=" << (s["separate_tracks"].get<bool>() ? 7 : 1)
-        << "\nRecRB=true\nRecRBTime=" << s["clip_seconds"].get<int>() << "\nRecRBSize=" << memory_limit(s["clip_seconds"])
+        << "\nRecRB=true\nRecRBTime=" << s["clip_seconds"].get<int>() << "\nRecRBSize=" << memory_limit(s, width, height)
         << "\nTrack1Bitrate=160\nTrack2Bitrate=160\nTrack3Bitrate=160\nTrack1Name=Mix\nTrack2Name=Desktop\nTrack3Name=Microphone\n"
         << "\n[Video]\nBaseCX=" << width << "\nBaseCY=" << height << "\nOutputCX=" << out_width << "\nOutputCY=" << out_height
         << "\nFPSType=1\nFPSInt=" << s["fps"].get<int>() << "\nScaleType=bicubic\nColorFormat=NV12\nColorSpace=709\nColorRange=Partial\n"

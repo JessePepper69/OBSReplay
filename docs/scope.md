@@ -35,7 +35,8 @@ Hardware coverage and test evidence live in [validation](validation.md).
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Three-step guided setup (**OBS Studio**, **Capture**, **Start**) | Done | Opens on first run while no integration exists. |
+| Three-step guided setup (**Install**, **Capture**, **Start**) | Done | Opens on first run while no integration exists. |
+| Install FFmpeg through winget | Done | `Gyan.FFmpeg`, from setup step 1 or the editor. **Locate ffmpeg.exe…** accepts an existing copy. |
 | Detect installed OBS | Done | Registry key, then `Program Files\obs-studio`. Re-checks every 3 s while no supported OBS is known. |
 | Install or update OBS through winget | Done | `OBSProject.OBSStudio`. Windows shows its own permission prompt. |
 | Download page and **Locate obs64.exe…** | Done | The located file must be `obs64.exe` version 31 or newer. |
@@ -44,6 +45,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Authenticated local WebSocket control | Done | Changes to shared OBS WebSocket settings are recorded and backed up. |
 | Skip the OBS first-run wizard | Done | Writes `FirstRun=true` to `user.ini`. |
 | Launch OBS in the tray and start the buffer | Done | One step from the **Start** page. |
+| Profile updates from a new app version | Done | Applied at launch while OBS is closed. No button, and no restart of a running OBS. |
 | Rollback on failure | Done | Staged file changes restore in reverse order. |
 | Reset integration | Done | Needs OBS closed. Removes owned files, restores shared values that still match. Clips stay. |
 
@@ -57,7 +59,9 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Reconnect and **Open OBS** | Done | Reconnect never repeats a save. |
 | Capture readiness checks | Done | Verifies scene, sources, display and audio devices before start and save. |
 | Stop capture when the selected display disconnects | Done | Prevents recording another display. |
-| Resume capture at login | Done | Runs when `replay_enabled` is `true` and the integration exists. |
+| Start capture at launch | Done | Runs when **Start replay capture automatically** (`replay_enabled`) is on and the integration exists. Stopping capture does not turn the setting off. |
+| Replay buffer memory sized to the settings | Done | Scales with replay length, quality, resolution and frame rate, up to 75% of installed memory. |
+| Low disk space warning | Done | On **Capture** when the clips drive has 5% or less free. |
 
 ## Settings
 
@@ -86,16 +90,16 @@ Hardware coverage and test evidence live in [validation](validation.md).
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Recent clip history | Done | Up to 50 replays and 50 edited exports, from confirmed saves. |
+| Clip list | Done | Every replay and edited export, with no limit, from confirmed saves. Videos already in the clips folder are added at launch. |
 | **Replays** and **Edited exports** tabs | Done | On **Capture** (latest 8) and **Clips** (24 per page). |
 | App filter and paging on **Clips** | Done | |
-| Search on **Clips** | Done | File name, game and saved time. |
+| Search on **Clips** | Done | File name, game and saved date: as shown on the card, or by weekday, month name, year, local numeric date or `2026-11-15`. |
 | Clip menu | Done | One button per card, or a right-click: play, edit, rename, open, show in folder, delete. |
 | Rename a clip | Done | Renames the file in its folder and keeps its extension. |
 | Thumbnails and clip length | Done | Decoded in the page from the clip file. |
 | In-app viewer with timeline, filmstrip and waveform | Done | The waveform needs FFmpeg. |
 | **Show in folder**, **Open file**, **Delete** | Done | Delete asks for confirmation and removes the file. |
-| Remove missing files from history | Done | Checked every second. |
+| Remove missing files from the list | Done | Checked every second, 200 clips per pass in rotation. |
 
 ## Clip editor
 
@@ -123,6 +127,9 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Tray notifications for saves and errors while hidden | Done | |
 | Volume mixer shows OBSReplay name and icon | Done | |
 | Embedded third-party notices | Done | Opened from Help. |
+| Self-install and uninstall | Done | The exe copies itself to `%LOCALAPPDATA%\Programs\OBSReplay` on first run. Uninstall from Settings or Windows **Installed apps**. |
+| Updates from GitHub Releases | Done | Daily check, release notes, one-click install, **Skip this version**. |
+| **Debug** tab | Done | Resource use of OBSReplay and OBS, version, session log and log export. |
 
 ## Out of scope
 
@@ -135,7 +142,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Editing a personal OBS profile or an active session | Out |
 | Arbitrary shell commands or URLs from the page | Out |
 | Bundled OBS, WebView2 or FFmpeg | Out |
-| Installer | Out |
+| A separate installer package | Out |
 | Streaming and full-length recording controls | Out |
 | Claims of AMD, Intel or anti-cheat compatibility without test evidence | Out |
 

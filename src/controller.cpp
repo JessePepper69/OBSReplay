@@ -52,16 +52,10 @@ bool media_file(const fs::path& path) {
     std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
     return extension == L".mp4" || extension == L".mkv" || extension == L".mov" || extension == L".flv" || extension == L".ts";
 }
-// Recent history keeps up to 50 recorded replays and 50 edited exports (newest first), so exports never push
-// recordings out of the Replays list.
-constexpr std::size_t history_per_kind = 50;
-void trim_history(Json& list) {
-    std::size_t replays = 0, edits = 0;
-    for (auto it = list.begin(); it != list.end();) {
-        auto& count = it->value("edited", false) ? edits : replays;
-        if (++count > history_per_kind) it = list.erase(it); else ++it;
-    }
-}
+// The clip list has no size limit: every replay and export the app saved stays listed while its file exists.
+// The once-a-second check for deleted files looks at this many clips per pass, in rotation, so a large library
+// does not mean thousands of file checks every second.
+constexpr std::size_t reconcile_batch = 200;
 bool capture_changed(const Json& before, const Json& after) {
     for (const auto key : {"obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks"})
         if (before.at(key) != after.at(key)) return true;
@@ -84,6 +78,7 @@ struct Controller::Impl {
     std::optional<Save> pending_save;
     Clock::time_point next_connect{}, next_refresh{}, next_detect{}, next_disk{};
     unsigned failures{};
+    std::size_t reconcile_at{};  // where the next periodic check of the clip list starts
     bool refresh_needed{};
     Json stats;                                 // guarded by mutex
     mutable std::atomic<int64_t> stats_wanted{}; // steady-clock ms of the last request for stats
@@ -112,7 +107,9 @@ struct Controller::Impl {
             const auto count = [&](const char* key) { return options.contains(key) && options[key].is_array() ? options[key].size() : 0; };
             log_debug("Options: monitors={} audio_inputs={} audio_outputs={} encoders={}", count("monitors"), count("audio_inputs"), count("audio_outputs"), count("encoders"));
         }
-        const auto clips_before = before.value("clips", Json::array()).size(), clips_after = after.value("clips", Json::array()).size();
+        // Sizes are read in place: the clip list can be long, and this runs on every change of state.
+        const auto listed = [](const Json& s) { const auto found = s.find("clips"); return found != s.end() && found->is_array() ? found->size() : std::size_t{}; };
+        const auto clips_before = listed(before), clips_after = listed(after);
         if (clips_before != clips_after) log_info("Clips: listed={} was={}", clips_after, clips_before);
         const auto message = after.value("message", std::string{});
         if (!message.empty() && message != before.value("message", std::string{})) log_info("Message: {}", quoted_value(message));
@@ -276,20 +273,23 @@ struct Controller::Impl {
         update([&](Json& s) { s["disk"] = disk; });
     }
 
-    void reconcile_clips() {
+    // Drops clips whose file is gone. `everything` checks the whole list (startup, and right after a delete or
+    // rename); the periodic pass checks the next reconcile_batch clips and carries on from there next time.
+    void reconcile_clips(bool everything = true) {
         Json clips;
         { std::lock_guard lock(mutex); clips = state.at("clips"); }
-        const auto old_size = clips.size();
+        const auto count = clips.size();
+        if (!count) return;
+        std::size_t first = 0, checks = count;
+        if (!everything && count > reconcile_batch) { first = reconcile_at % count; checks = reconcile_batch; reconcile_at = (first + checks) % count; }
         std::set<std::string> missing;
-        for (auto it = clips.begin(); it != clips.end();) {
+        for (std::size_t i = 0; i != checks; ++i) {
+            const auto path = clips[(first + i) % count].at("path").get<std::string>();
             std::error_code error;
-            const bool exists = fs::is_regular_file(from_string(it->at("path").get<std::string>()), error);
-            if ((!error && !exists) || error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory) {
-                missing.insert(it->at("path").get<std::string>());
-                it = clips.erase(it);
-            } else ++it;
+            const bool exists = fs::is_regular_file(from_string(path), error);
+            if ((!error && !exists) || error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory) missing.insert(path);
         }
-        if (clips.size() == old_size) return;
+        if (missing.empty()) return;
         update([&](Json& s) {
             // Remove only the missing files; clips added meanwhile (edited exports) stay.
             auto& list = s["clips"];
@@ -343,7 +343,6 @@ struct Controller::Impl {
             if (!found) return;
             std::stable_sort(clips.begin(), clips.end(), [](const Json& a, const Json& b) { return a.value("saved_at", "") > b.value("saved_at", ""); });
             Json merged = clips;
-            trim_history(merged);
             update([&](Json& s) { s["clips"] = merged; });
             atomic_write(paths.data / L"clips.json", merged.dump(2));
         } catch (...) {}
@@ -368,7 +367,6 @@ struct Controller::Impl {
                 Json clips = Json::array();
                 std::set<std::wstring> seen;
                 if (stored.is_array()) for (const auto& clip : stored) {
-                    if (clips.size() >= history_per_kind * 2) break;
                     if (!clip.is_object() || !clip.contains("path") || !clip["path"].is_string()) continue;
                     const auto file = tidy_path(from_string(clip["path"].get<std::string>()));
                     // A history written before paths were tidied can hold one file under two spellings; the first entry stays.
@@ -376,7 +374,6 @@ struct Controller::Impl {
                     clips.push_back({{"path", path_string(file)}, {"name", path_string(file.filename())}, {"app", clip.value("app", "")}, {"bytes", clip.value("bytes", uint64_t{})}, {"saved_at", clip.value("saved_at", "")}});
                     if (clip.value("edited", false)) clips.back()["edited"] = true;
                 }
-                trim_history(clips);
                 update([&](Json& s) { s["clips"] = clips; });
             }
         } catch (...) { fail("Recent clip history could not be read. Your recordings are still in the clips folder."); }
@@ -386,6 +383,21 @@ struct Controller::Impl {
         try { const auto options = integration.options(value); update([&](Json& s) { s["options"] = options; }); }
         catch (const std::exception& e) { fail(e.what()); }
         if (stopping.load()) return;
+        // A newer app can need the OBS profile written again (for example a new replay buffer memory limit).
+        // That happens here, before OBS is opened, so nobody has to press anything and no buffer is lost.
+        // While OBS is already open the profile is left alone: it is rewritten at the next launch that finds OBS
+        // closed, or with the next Apply of a capture setting.
+        if (configured && integration.needs_update()) {
+            try {
+                if (obs_running()) log_info("OBS profile update waits: OBS is open");
+                else {
+                    value = integration.prepare(value);
+                    set_settings(value);
+                    log_info("OBS profile updated at launch");
+                }
+            } catch (const std::exception& e) { log_warn("OBS profile update at launch failed: error={}", quoted_value(e.what())); }
+            update([&](Json& s) { s["compression_update"] = integration.needs_update(); });
+        }
         if (configured && value.value("replay_enabled", false)) {
             message("Starting your saved replay configuration…");
             try { start(); } catch (const std::exception& e) { fail(e.what()); }
@@ -546,12 +558,8 @@ struct Controller::Impl {
         if (!flag("owned")) throw std::runtime_error("OBS is using another profile or scene collection. Select both the OBSReplay profile and OBSReplay collection in OBS, then reconnect.");
     }
 
-    void persist_intent(bool desired) {
-        auto value = settings();
-        value["replay_enabled"] = desired;
-        store_settings(value);
-    }
-
+    // Start and stop act on this session only. Whether capture starts by itself at launch is the
+    // "Start replay capture automatically" setting (replay_enabled), which only the user changes, through Apply or setup.
     void start() {
         ensure_connection(true);
         require_owned();
@@ -562,7 +570,6 @@ struct Controller::Impl {
             const auto status = socket.request("GetReplayBufferStatus");
             if (status.value("outputActive", false)) {
                 update([](Json& s) { s["replay_active"] = true; });
-                persist_intent(true);
                 message("Replay capture is running. New history builds from now.");
                 return;
             }
@@ -574,7 +581,6 @@ struct Controller::Impl {
         if (!obs_running()) {
             socket.close();
             update([](Json& s) { s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["obs_running"] = false; });
-            persist_intent(false);
             message("Replay capture is stopped.");
             return;
         }
@@ -586,7 +592,6 @@ struct Controller::Impl {
             const auto status = socket.request("GetReplayBufferStatus");
             if (!status.value("outputActive", false)) {
                 update([](Json& s) { s["replay_active"] = false; });
-                persist_intent(false);
                 message("Capture stopped. Unsaved replay history was discarded.");
                 return;
             }
@@ -627,7 +632,6 @@ struct Controller::Impl {
                 if (path_key(from_string(it->value("path", ""))) == path_key(final)) it = list.erase(it); else ++it;
             }
             list.insert(list.begin(), Json{{"path", text}, {"name", path_string(final.filename())}, {"app", app}, {"bytes", bytes}, {"saved_at", now_iso()}});
-            trim_history(list);
             clips = list;
         });
         try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
@@ -664,13 +668,11 @@ struct Controller::Impl {
         }
     }
 
-    void save(const std::string& app, bool before_settings_change = false) {
+    void save(const std::string& app) {
         ensure_connection(false);
         require_owned();
         if (!flag("replay_active")) throw std::runtime_error("Start replay capture before saving a replay.");
-        if (before_settings_change) {
-            if (!scene_issue().empty()) throw std::runtime_error("The current replay could not be backed up because the capture scene changed. Save it in OBS or stop capture before applying settings. OBS was left running.");
-        } else require_capture_ready();
+        require_capture_ready();
         const auto value = settings();
         events();
         if (!flag("owned")) throw std::runtime_error("OBS changed profiles before the save. Reconnect to check its current session.");
@@ -703,7 +705,9 @@ struct Controller::Impl {
         Json value = payload.empty() ? previous : payload.contains("settings") ? payload.at("settings") : payload;
         validate_settings(value);
         const bool was_configured = integration.configured();
-        const bool prepare = setup || !was_configured || integration.needs_update() || capture_changed(previous, value);
+        // A pending profile update (see initialize) does not force a restart here: an Apply of app settings must not
+        // close OBS. A capture change rewrites the whole profile anyway, which brings it up to date.
+        const bool prepare = setup || !was_configured || capture_changed(previous, value);
         const bool startup_changed = previous.value("start_at_login", false) != value.value("start_at_login", false);
         bool startup_applied{};
         bool restart{}, resume{};
@@ -795,7 +799,8 @@ struct Controller::Impl {
         integration.reset();
         socket.close();
         update([](Json& s) { s["integration"] = false; s["compression_update"] = false; s["connected"] = false; s["owned"] = false; s["replay_active"] = false; s["capture_ready"] = false; s["capture_issue"] = ""; });
-        value["replay_enabled"] = false;
+        // "Start replay capture automatically" is kept: without an integration nothing starts, and the next setup
+        // has no switch for it, so turning it off here would leave it off for good.
         value["start_at_login"] = false;
         set_login_startup(paths, false);
         store_settings(value);
@@ -803,7 +808,7 @@ struct Controller::Impl {
     }
 
     // Tray "Close OBSReplay and OBS": stop the buffer, close the OBSReplay session of OBS, then mark the state so the
-    // window quits. The saved "capture on" choice is kept, so capture resumes at the next launch.
+    // window quits. Settings are not changed: capture starts at the next launch when "Start replay capture automatically" is on.
     void shutdown() {
         if (obs_running()) {
             try { ensure_connection(false); } catch (...) {}
@@ -981,7 +986,7 @@ struct Controller::Impl {
             try {
                 events();
                 if (Clock::now() >= next_poll) {
-                    reconcile_clips();
+                    reconcile_clips(false);
                     if (Clock::now() >= next_disk) update_disk();
                     if (Clock::now() >= next_detect) { detect_obs(); next_detect = Clock::now() + std::chrono::seconds(3); }
                     background_connection();
@@ -1041,7 +1046,6 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
         auto& list = s["clips"];
         for (auto it = list.begin(); it != list.end();) { if (it->value("path", "") == text) it = list.erase(it); else ++it; }
         list.insert(list.begin(), Json{{"path", text}, {"name", path_string(file.filename())}, {"app", app}, {"bytes", error ? 0 : bytes}, {"saved_at", now_iso()}, {"edited", true}});
-        trim_history(list);
         clips = list;
     });
     try { atomic_write(impl_->paths.data / L"clips.json", clips.dump(2)); }

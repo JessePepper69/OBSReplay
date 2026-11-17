@@ -58,7 +58,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | `theme.js` | Theme list and `window.Theme`. Loaded in `<head>` without `defer`. |
 | `tooltip.js` | Custom tooltips from `title`, `data-tip`, `data-tip-title` and `data-tip-keys`, in both pages. |
 | `app.css` | Design tokens (Original theme), shared components, main window layout. |
-| `themes.css` | Token overrides for the six other themes. |
+| `themes.css` | Token overrides for the five other themes. |
 | `viewer.css`, `editor.css` | Viewer dialog and editor window styles. |
 | `fonts/InterVariable.woff2`, `fonts/OFL.txt` | Bundled Inter font and its license. |
 
@@ -104,7 +104,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 - `ignore_alt_menu` (main window and editors) drops `WM_SYSCOMMAND` `SC_KEYMENU` with no key. A lone Alt, such as the end of Alt+Z pressed while the window has focus, would otherwise start keyboard menu mode: nothing shows, and the next click is swallowed. Alt+Space still opens the system menu.
 - When the newest clip or the error changes while the window is open, `Desktop::reconcile` sends the page `obsreplay:state`. The page polls at once and does not wait for its one-second timer.
 - Right click opens the tray menu (`src/tray_menu.cpp`): a borderless popup drawn with GDI+ in the colours of the saved theme. Header: app icon, name, a state dot and one status line. Rows: **Save replay** (with the save shortcut), **Start capture** or **Stop capture**, **Open OBSReplay**, **Close OBSReplay** (OBS keeps running), **Close OBSReplay and OBS**. Rows that cannot run are dim. It closes on Escape, a click elsewhere or lost focus. Arrow keys and Enter work.
-- **Close OBSReplay and OBS** dispatches the `shutdown` action. The controller stops the replay buffer, closes the OBSReplay session of OBS through its main window, then sets `quit` in its state. `Desktop::reconcile` ends the app when it reads `quit`. OBS is left open, with a notification, when it runs a different session or is streaming or recording. The saved capture choice is kept, so capture resumes at the next launch.
+- **Close OBSReplay and OBS** dispatches the `shutdown` action. The controller stops the replay buffer, closes the OBSReplay session of OBS through its main window, then sets `quit` in its state. `Desktop::reconcile` ends the app when it reads `quit`. OBS is left open, with a notification, when it runs a different session or is streaming or recording. Settings are not changed. Capture starts at the next launch when **Start replay capture automatically** is on.
 - Quit asks for confirmation when `EditorHost::pending()` reports a running export or unexported cuts.
 - A 500 ms timer runs `Desktop::reconcile`. While the window is hidden or minimized, it shows a tray balloon for a new error or a new saved clip.
 
@@ -190,7 +190,7 @@ Uninstall asks for confirmation, then whether to delete settings. With `--quiet`
 2. **Compare.** The release tag (`v1.2.3`) against the version built into the app. A higher tag is an update.
 3. **Offer.** The page opens the update dialog with the release notes. The tray menu gains an **Update to 1.2.3** row.
 4. **Download.** On **Update now** the asset `OBSReplay.exe` goes to `<data>\updates\OBSReplay-1.2.3.exe`.
-5. **Verify.** Size and SHA-256 must match the asset's `size` and `digest`. The file's version resource must name the product `OBSReplay` and carry the tag's version.
+5. **Verify.** The size must match the asset's `size`. The SHA-256 must match the asset's `digest` when GitHub publishes one. The file's version resource must name the product `OBSReplay` and carry the tag's version.
 6. **Hand over.** The app writes `updated_from` to `updates.json` and starts the downloaded exe. That exe is the installer described in [Self-install](#self-install): it closes this copy, replaces the installed file and opens it.
 7. **First start.** The new version sees `updated_from`, shows "Updated to 1.2.3" once and deletes the download.
 
@@ -317,7 +317,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `settings` | object | Current settings. See [settings keys](#settings-keys). |
 | `options` | object | `monitors` (`id`, `label`, `width`, `height`, `primary`), `audio_inputs`, `audio_outputs` (`id`, `label`), `encoders` (`id`, `label`, `codecs`). |
 | `integration` | bool | The dedicated profile, scene collection and manifest exist with matching owner markers. |
-| `compression_update` | bool | The manifest's `compression_policy` is older than the code's. The next Apply rewrites the profile. |
+| `compression_update` | bool | The manifest's `compression_policy` differs from the code's: the OBS profile is waiting to be rewritten. The page does not show it. See [Profile updates](#profile-updates). |
 | `obs_found` | bool | `obs_path` is a file. |
 | `obs_version` | string | `major.minor.patch` from the exe version resource. |
 | `obs_supported` | bool | Major version is 31 or higher. |
@@ -356,24 +356,26 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `apply` | settings object | Validate, store, and when capture settings changed, rewrite the OBS profile. See [apply](#apply). |
 | `install_obs` | none | Run `winget install` (or `upgrade` when OBS exists) for `OBSProject.OBSStudio`, then re-detect. Reports `install_stage`. |
 | `locate_obs` | `{path}` | Accept an absolute `obs64.exe` of version 31 or newer and store it as `obs_path`. |
-| `start` | none | Launch OBS if closed, connect, verify ownership and readiness, send `StartReplayBuffer`, wait up to 5 s for confirmation, store `replay_enabled=true`. |
-| `stop` | none | Send `StopReplayBuffer`, wait up to 5 s, store `replay_enabled=false`. |
+| `start` | none | Launch OBS if closed, connect, verify ownership and readiness, send `StartReplayBuffer`, wait up to 5 s for confirmation. The `replay_enabled` setting is not changed. |
+| `stop` | none | Send `StopReplayBuffer`, wait up to 5 s. The `replay_enabled` setting is not changed. |
+| `shutdown` | none | Tray **Close OBSReplay and OBS**: stop the buffer, close the OBSReplay session of OBS, set `quit` in the state. |
 | `save` | none | Save the replay buffer. See [replay save](#replay-save). |
 | `reconnect` | none | Close the socket and connect again. Does not launch OBS. |
-| `reset` | none | With OBS closed: remove the integration, delete the login entry, set `replay_enabled` and `start_at_login` to `false`. |
+| `reset` | none | With OBS closed: remove the integration, delete the login entry, set `start_at_login` to `false`. `replay_enabled` is kept. |
 | `refresh_options` | none | Re-read monitors, audio devices and encoders. |
 | `open_folder` | none | Create and open `clips_dir`. |
 | `open_obs` | none | Launch the dedicated session, or restore the running OBS main window. |
 | `open_clip` | `{path}` | Open a clip from history in the default app. |
 | `reveal_clip` | `{path}` | Select a clip from history in Explorer. |
 | `delete_clip` | `{path}` | Delete a clip file from history and drop it from the list. |
-| `help` | `{topic}` | Open a fixed URL for `obs`, `webview2`, `ffmpeg` or `capture`, or write and open the notices file for `notices`. |
+| `rename_clip` | `{path, name}` | Rename a clip file from the list in its folder. Keeps the extension, the place in the list and the saved time. Refuses a name another file has. |
+| `help` | `{topic}` | Open a fixed URL for `obs`, `webview2`, `ffmpeg` or `capture`, open Windows storage settings for `storage`, or write and open the notices file for `notices`. |
 
 ### Worker loop
 
-- `initialize` loads settings, detects OBS, loads `clips.json`, reads options, then starts capture when `replay_enabled` is `true` and the integration exists.
+- `initialize` loads settings, detects OBS, loads `clips.json`, runs `reconcile_clips` and `discover_clips`, reads options, applies a pending [profile update](#profile-updates), then starts capture when `replay_enabled` is `true` and the integration exists.
 - The loop waits up to 100 ms for an action, runs it, then drains WebSocket events.
-- Once per second it runs `reconcile_clips` (drops history entries whose file is gone) and `background_connection`.
+- Once per second it runs `reconcile_clips(false)` (drops list entries whose file is gone, 200 clips per pass in rotation) and `background_connection`.
 - Every 3 s it runs `detect_obs` while no supported OBS is known.
 - `background_connection` connects when OBS runs and the integration exists. Failed attempts back off: 2 s plus 2 s per failure, capped at 15 s.
 - While connected, `refresh` runs every 5 s and after a profile or collection change event.
@@ -396,7 +398,9 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 
 ### Clip history
 
-- `clips.json` holds up to 50 replays and 50 edited exports. `trim_history` counts the two kinds apart.
+- `clips.json` holds every replay and edited export, newest first. The list has no size limit.
+- An entry leaves the list only when its file is gone. `reconcile_clips()` checks the whole list at startup, after a delete, and when a rename finds its file gone. The periodic `reconcile_clips(false)` checks `reconcile_batch` (200) entries per pass and continues from there on the next pass.
+- `discover_clips` runs at startup and when `clips_dir` changes. It adds videos in the clips folder that the list does not hold, up to two folders deep. The first folder is the app label, an `Edited Exports` folder marks an export, and the file's write time is the saved time. It then sorts the list by saved time.
 - Accepted extensions: `.mp4`, `.mkv`, `.mov`, `.flv`, `.ts`.
 - `remember_clip` adds a confirmed replay. `Controller::add_clip` adds an edited export with `edited: true`.
 - `Controller::knows_clip` gates every clip action, media URL and editor open.
@@ -436,7 +440,7 @@ Rules in `prepare`:
 | Setting | Profile effect |
 | --- | --- |
 | `clips_dir` | `RecFilePath`. File names use `%CCYY-%MM-%DD %hh-%mm-%ss` with prefix `Replay`. |
-| `clip_seconds` | `RecRBTime`. `RecRBSize` is `min(seconds × 8, total RAM in MB ÷ 10)` clamped to 256..2048 MB. |
+| `clip_seconds` | `RecRBTime`. `RecRBSize` (the most memory the buffer may use, in MB) comes from `memory_limit`: `seconds × (video kbps + audio kbps) ÷ 8 ÷ 1024 × 1.25`. Video kbps is `bitrate_ceiling` for these settings (see [Encoders](#encoders)), doubled for AMD, Intel and CPU because constant quality has no bitrate limit. Audio is 160 kbps per track. The result is never below the earlier figure (`min(seconds × 8, installed MB ÷ 10)`, 256 to 2048 MB) and at most 75% of installed memory, the most OBS's own settings accept. OBS holds only what the encoder produced, so the figure is a ceiling and not a reservation. |
 | `output_height` | `OutputCY`. `0` or a value above the display height uses the display height. Width keeps the aspect ratio, rounded to even. |
 | `fps` | `FPSInt`. |
 | `separate_tracks` | `RecTracks=7` (Mix, Desktop, Microphone) or `1`. Audio is AAC at 160 kbps per track, 48 kHz stereo. |
@@ -477,7 +481,16 @@ Rate control by `quality` (16, 18, 20, 24, 28):
 | `intel` | CQP, `TU4`, 2 B-frames | 20, 22, 24, 27, 30 |
 | `nvidia` | CQVBR, preset `p5`, tune `hq`, multipass `qres`, adaptive quantization, 2 B-frames | target quality 22, 24, 26, 29, 32 |
 
-- NVIDIA bitrate ceilings are 24000, 16000, 10000, 7000, 4000 kbps at 1080p60. The code scales them by pixel count and frame rate, multiplies by 1.5 for H.264, and clamps to 1000..500000 kbps.
+- `bitrate_ceiling` gives 24000, 16000, 10000, 7000, 4000 kbps at 1080p60 in quality order. The code scales them by pixel count and frame rate, multiplies by 1.5 for H.264, and clamps to 1000..500000 kbps. NVIDIA encodes with this value as `max_bitrate`. Every encoder uses it to size the replay buffer memory.
+
+### Profile updates
+
+A new app version can need the OBS profile written again, for example for a new buffer memory limit or new encoder values. `compression_policy` in `integration.cpp` (now 3) is the version of the profile. Raising it marks every existing profile as out of date.
+
+- `initialize` runs `Integration::prepare` with the saved settings when the profile is out of date and OBS is closed. This happens before OBS is opened, so the user does nothing and no buffer is lost.
+- While OBS is open the profile is left alone. It is rewritten at the next launch that finds OBS closed, or with the next Apply that changes a capture setting.
+- A failed rewrite (for example a disconnected microphone) is written to the session log and tried again at the next launch.
+- The page shows nothing for a pending update, and an Apply of app settings does not restart OBS for it.
 - Every encoder uses a 2 s keyframe interval.
 
 ### Launching and closing OBS
@@ -503,7 +516,7 @@ Rate control by `quality` (16, 18, 20, 24, 28):
 `Impl::apply(payload, setup)`:
 
 1. Validate the settings.
-2. Decide `prepare`: `true` for setup, a missing integration, a pending `compression_update`, or a change in any capture key (`obs_path`, `clips_dir`, `clip_seconds`, `capture`, `monitor_id`, `output_height`, `fps`, `encoder`, `codec`, `quality`, `mic_enabled`, `mic_device`, `desktop_device`, `noise`, `separate_tracks`).
+2. Decide `prepare`: `true` for setup, a missing integration, or a change in any capture key (`obs_path`, `clips_dir`, `clip_seconds`, `capture`, `monitor_id`, `output_height`, `fps`, `encoder`, `codec`, `quality`, `mic_enabled`, `mic_device`, `desktop_device`, `noise`, `separate_tracks`).
 3. Without `prepare`: update the login startup entry if it changed, store the settings and stop here. OBS keeps running.
 4. With `prepare` and an owned OBS session: refuse on an active stream or recording, stop the buffer, close OBS with `close_obs`. The buffer is not saved first; it starts again from empty.
 5. With `prepare` and any other OBS session: check `other_session_busy`, then `close_all_obs`.
@@ -540,8 +553,8 @@ On failure the controller restores the previous login entry and, after an owned-
 | `fps` | integer | `60` | `30`, `60`, `120`, `144`. |
 | `encoder` | string | `auto` | `auto`, `nvidia`, `amd`, `intel`, `cpu`. |
 | `codec` | string | `h264` | `h264`, `hevc`, `av1`. `cpu` requires `h264`. |
-| `quality` | integer | `20` | `16`, `18`, `20`, `24`, `28`. |
-| `mic_enabled` | bool | `false` | Boolean. |
+| `quality` | integer | `18` | `16`, `18`, `20`, `24`, `28`. |
+| `mic_enabled` | bool | `true` | Boolean. |
 | `mic_device` | string | `default` | `default` or a device id. |
 | `desktop_device` | string | `default` | `default`, `off` or a device id. |
 | `noise` | string | `off` | `off`, `rnnoise`, `speex`. |
@@ -551,7 +564,8 @@ On failure the controller restores the previous login entry and, after an owned-
 | `start_at_login` | bool | `true` | Boolean. |
 | `save_hotkey` | string | `Alt+Z` | `Ctrl`/`Alt`/`Shift` modifiers, then one of `A`-`Z`, `0`-`9`, `F1`-`F24`. Must differ from `show_hotkey`. |
 | `show_hotkey` | string | `Alt+X` | Same shape as `save_hotkey`. |
-| `replay_enabled` | bool | `false` | Boolean. The controller sets it on start and stop. |
+| `replay_enabled` | bool | `true` | Boolean. **Start replay capture automatically**: capture starts at launch. `start`, `stop` and `reset` do not change it. |
+| `settings_version` | integer | `2` | Not validated. A stored file without it was written by 1.0.1 or earlier: `load_settings` sets `replay_enabled` to `true` once, adds the version and saves. Up to 1.0.1, start and stop overwrote `replay_enabled`, so the stored value was not a choice. |
 | `animations_enabled` | bool | `true` | Optional. Boolean when present. |
 | `theme` | string | `original` | Optional. 1..32 characters of `a`-`z`, `0`-`9`, `-`. |
 
@@ -578,7 +592,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 
 - `atomic_write` writes a temporary file, flushes it, and renames it over the target.
 - Unreadable settings fall back to defaults with an error. The original file stays on disk.
-- The page keeps three `localStorage` keys: `obsreplay.theme`, `obsreplay.clipTabs`, `obsreplay.viewerVolume`.
+- The page keeps four `localStorage` keys: `obsreplay.theme`, `obsreplay.clipTabs`, `obsreplay.viewerVolume`, `obsreplay.diskDismissed`.
 
 ### Temporary files
 
@@ -607,7 +621,9 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 - The waveform comes from `EditorHost::waveform`: FFmpeg decodes the first audio track to 8 kHz mono, and the code keeps one peak (0..255) per 80 samples. One decode runs at a time. The last result is cached by path, size and write time.
 - Without FFmpeg the waveform lane stays flat.
 - `app.js` owns the clip actions: **Delete**, **Show in folder**, **Open file**, **Edit clip**.
-- Each clip card has the same actions on hover. **Delete** is last and red. A click asks first. Shift+click deletes at once.
+- Each clip card has one menu, opened by its button or a right-click: **Play**, **Edit clip**, **Rename**, **Open in video player**, **Show in folder**, **Delete**. **Delete** is last and red. A click asks first. Shift+click deletes at once.
+- **Clips** search matches every typed word against the file name, the game and the saved date. The date is matched as the card shows it and as weekday, month name, year, local numeric date and `2026-11-15`.
+- `formatBytes` shows a size in the largest unit that keeps the number at 1 or more: KB, MB, GB or TB.
 - Clip list thumbnails come from `takeThumbnail` in `app.js`: a muted `<video>` draws one frame to a 320 × 180 canvas.
 
 ## Clip editor
@@ -827,7 +843,7 @@ Run `./build.ps1` (default `Release`) or `./build.ps1 -Configuration Debug`. The
 | Language | C++23, extensions off. |
 | Runtime | Static MSVC runtime (`MultiThreaded`, `MultiThreadedDebug`). |
 | Dependencies | saucer `v8.0.5` (static, Git tag), nlohmann_json `v3.12.0` (tarball with SHA-256). `FETCHCONTENT_UPDATES_DISCONNECTED` is on. |
-| Target | `OBSReplay`, a `WIN32` executable from the eight `src/*.cpp` files and the generated `app.rc`. |
+| Target | `OBSReplay`, a `WIN32` executable from the thirteen `src/*.cpp` files and the generated `app.rc`. |
 | Compile options | `/W4 /utf-8 /permissive- /EHsc`; defines `UNICODE`, `_UNICODE`, `WIN32_LEAN_AND_MEAN`, `NOMINMAX`. |
 | Link | `saucer::saucer`, `saucer::private`, `saucer::embedded`, `nlohmann_json::nlohmann_json`, and the Windows libraries `comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi`. |
 | Link options | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO /OPT:REF /OPT:ICF`; interprocedural optimization in Release. |
