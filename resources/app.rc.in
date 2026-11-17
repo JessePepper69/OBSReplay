@@ -1,5 +1,5 @@
 #include <windows.h>
-1 RT_MANIFEST "@CMAKE_CURRENT_SOURCE_DIR@/resources/app.manifest"
+1 RT_MANIFEST "@CMAKE_CURRENT_BINARY_DIR@/app.manifest"
 1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/app.ico"
 101 RCDATA "@NOTICES_PATH@"
 103 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/resources/app.ico"

@@ -43,6 +43,8 @@ if(EXISTS "${inter_license}")
 endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "${notices}")
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" NOTICES_PATH)
+# The manifest carries the project version too, so it is generated like the resource script.
+configure_file(resources/app.manifest "${CMAKE_CURRENT_BINARY_DIR}/app.manifest" @ONLY)
 configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 
 # The version (above, in project()) and the Git commit go into every build: build_info.hpp, refreshed on each build.

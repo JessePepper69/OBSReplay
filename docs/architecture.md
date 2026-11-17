@@ -838,4 +838,4 @@ Run `./build.ps1` (default `Release`) or `./build.ps1 -Configuration Debug`. The
 - `view.embed(saucer::embedded::all())` registers the files. `view.serve("/index.html")` and `web.serve("/editor.html")` load them from `saucer://embedded/`.
 - A frontend change needs a rebuild. No npm step and no bundler exist.
 - CMake collects `LICENSE*` and `COPYING*` files from fetched dependencies, the WebView2 SDK license and `frontend/fonts/OFL.txt` into `THIRD-PARTY-NOTICES.txt`. `app.rc` embeds it as `RCDATA` 101.
-- `resources/app.manifest` is embedded through the resource script, so the linker manifest is off.
+- `resources/app.manifest` is embedded through the resource script, so the linker manifest is off. CMake fills in its version from `project()`.
