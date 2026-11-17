@@ -309,6 +309,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `editor_dirty` | `value` bool | nothing | Tell native whether unexported cuts exist. |
 | `save_pref` | `key` string, `value` JSON string | `true` or error | Validate and store an editor preference. See [editor preferences](#editor-preferences). |
 | `retry_analysis` | none | nothing | Run clip analysis again. |
+| `ui_log` | `level`, `text` | nothing | Add a line from the editor page to the session log, prefixed "Editor:": messages it showed, script errors and video errors. |
 | `theme_changed` | `id` string | nothing | Same as the main window, for this editor window. |
 
 ## Controller
@@ -757,6 +758,12 @@ Conditions: source codec H.264 or HEVC, pixel format `yuv420p`, at least one cle
 - A `concat` filter joins video and every audio track. The code writes the filter graph to a file and passes it with `-/filter_complex` (FFmpeg 7 or newer) or `-filter_complex_script`.
 - Attempt order: CUDA decode with `scale_cuda` and NVENC, CPU decode with NVENC, `libx264` preset `faster`.
 - Audio is AAC. Track titles from the source are written to the new tracks.
+
+### Preview of cuts
+
+- With **Preview cuts** on, `skipRemoved` in `editor.js` moves the playhead out of a removed section while the video plays, and when Play is pressed inside one.
+- The video element rounds a time it is given to microseconds, so a jump to a cut can read back just before the cut. The jump therefore lands 1 ms inside the kept section, a position within 1 ms of a section's end counts as past it, and a jump already under way is not asked for again. Without this a cut placed by dragging kept the video seeking on every frame and it never started.
+- A `play()` that a pause interrupts (`AbortError`) is not shown as an error.
 
 ### Max size
 

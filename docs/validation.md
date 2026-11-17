@@ -102,6 +102,8 @@ Live run of version 1.0.2 on the development PC, started as `dist\OBSReplay.exe 
 
 The live run read state only. It did not stop capture, save a replay or play a clip.
 
+Play from a removed section (`build/edtest/play-removed.mjs`, after 1.0.2): one press of Play starts playback from inside a removed section for cuts made at the playhead, for a cut dragged to an arbitrary time (three positions), and for a removed ending. Playback that runs into a removed section carries on past it, including one with a dragged cut. 9 of 9 passed. The dragged-cut cases failed on the 1.0.2 code: the video stayed seeking at the cut. The editor suite still passes 118 of 118.
+
 Not exercised in the second check: fullscreen on a second monitor, copy to the clipboard, and dragging a clip out of the window. These need real mouse input or would overwrite the user's clipboard. The Max size failure after four encodes and the x264 Max size path were read in code only; NVENC always fit on the test machine.
 
 Not exercised: the profile update at launch, Start and Stop against a live OBS, the new buffer memory figure inside OBS, sizes of 1 GB and above in the page, and the display fix button. These need a live OBS session or real hardware changes.

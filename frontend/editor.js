@@ -159,7 +159,7 @@
     for (const piece of targets) piece.removed = remove;
     const length = targets.reduce((sum, piece) => sum + piece.end - piece.start, 0);
     commit(`${targets.length === 1 ? "Section" : `${targets.length} sections`} ${remove ? "deleted" : "restored"} (${formatLength(length)})`);
-    if (remove && !video.paused) skipRemoved();
+    if (remove && !video.paused && !skipRemoved()) video.pause();
   }
   function trim(before) {
     if (!editable()) return;
@@ -235,19 +235,31 @@
     if (target !== undefined) seek(target);
   }
   function nextKeptAfter(time) { return state.pieces.find(piece => !piece.removed && piece.end > time + 0.01); }
+  // Moves the playhead out of a removed section while playing. Returns false when nothing is left to play.
+  // The video element rounds the time it is given, so a jump to a cut can read back a hair before it, still inside
+  // the removed section. Asking for the same jump again on every frame would keep the video seeking for ever and
+  // it would never start. So the jump lands a millisecond inside the kept section, a position within a millisecond
+  // of a section's end counts as past it, and a jump already under way is left to finish.
+  let skipTarget = null;
   function skipRemoved() {
-    if (!state.skipRemoved) return;
-    const piece = state.pieces[pieceIndexAt(currentTime())];
-    if (!piece?.removed) return;
+    if (!state.skipRemoved) return true;
+    const piece = state.pieces[pieceIndexAt(Math.min(state.duration, currentTime() + 0.001))];
+    if (!piece?.removed) { skipTarget = null; return true; }
     const next = nextKeptAfter(piece.end - 0.001);
-    if (next) video.currentTime = Math.max(next.start, piece.end);
-    else { video.pause(); video.currentTime = Math.max(0, piece.start - 0.001); }
+    if (!next) return false;
+    const target = Math.min(state.duration, Math.max(next.start, piece.end) + 0.001);
+    if (video.seeking && skipTarget !== null && Math.abs(skipTarget - target) < 0.0005) return true;
+    skipTarget = target;
+    video.currentTime = target;
+    return true;
   }
+  // "The play() request was interrupted" only says that a pause came first; it is not a problem to show.
+  const playFailed = error => { if (error?.name !== "AbortError") flash(errorText(error)); };
   async function playFromStart() {
     if (!state.mediaReady) return;
     const first = state.skipRemoved ? state.pieces.find(piece => !piece.removed) : state.pieces[0];
     video.currentTime = first ? first.start : 0;
-    try { await video.play(); } catch (error) { flash(errorText(error)); }
+    try { await video.play(); } catch (error) { playFailed(error); }
   }
   async function togglePlay() {
     if (!state.mediaReady) return;
@@ -258,7 +270,7 @@
       video.currentTime = first ? first.start : 0;
     }
     skipRemoved();
-    try { await video.play(); } catch (error) { flash(errorText(error)); }
+    try { await video.play(); } catch (error) { playFailed(error); }
   }
   function syncStems(force = false) {
     for (const { audio } of state.stems) {
@@ -299,7 +311,8 @@
   function playLoop() {
     playFrame = 0;
     if (video.paused) return;
-    skipRemoved();
+    // Playback ran into a removed section with nothing kept after it: stop at the end of what is kept.
+    if (!skipRemoved()) { const piece = state.pieces[pieceIndexAt(currentTime())]; video.pause(); if (piece) video.currentTime = Math.max(0, piece.start - 0.001); return; }
     syncStems();
     keepVisible(currentTime(), true);
     renderTime(); requestDraw();
@@ -602,7 +615,12 @@
 
   // ---------- Controls ----------
   let flashTimer = 0;
+  // Lines for the session log, so a problem in the editor can be read back afterwards.
+  const uiLog = (level, text) => { try { Promise.resolve(api()?.ui_log?.(level, String(text))).catch(() => {}); } catch {} };
+  window.addEventListener("error", event => uiLog("error", `Script error: ${event.message} at ${String(event.filename || "").split("/").pop()}:${event.lineno}`));
+  window.addEventListener("unhandledrejection", event => uiLog("error", `Unhandled rejection: ${event.reason?.message || event.reason}`));
   function flash(text) {
+    uiLog("info", `Message shown: ${text}`);
     $("toast").textContent = text;
     $("toast").hidden = false;
     clearTimeout(flashTimer);
@@ -1165,6 +1183,8 @@
     renderTime(); requestDraw();
   });
   video.addEventListener("ended", () => { renderTime(); requestDraw(); });
+  video.addEventListener("error", () => uiLog("error", `Video error: code=${video.error?.code} ${video.error?.message || ""} at ${video.currentTime.toFixed(3)}s`));
+  video.addEventListener("stalled", () => uiLog("warn", `Video stalled at ${video.currentTime.toFixed(3)}s`));
 
 
   // The filmstrip decodes from the seek-friendly preview when one is coming; otherwise from the clip.

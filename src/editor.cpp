@@ -1668,6 +1668,11 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             } catch (const std::exception&) { return std::unexpected("That preference couldn't be read."); }
         });
         web.expose("retry_analysis", [self] { self->start_analysis(); });
+        // Lines from the editor page for the session log: messages it showed, script errors and video errors.
+        web.expose("ui_log", [](std::string level, std::string text) {
+            if (text.size() > 2000) text.resize(2000);
+            log_write(level == "error" ? LogLevel::error : level == "warn" ? LogLevel::warn : level == "debug" ? LogLevel::debug : LogLevel::info, "Editor: " + text);
+        });
         web.embed(saucer::embedded::all());
         web.serve("/editor.html");
         self->last_seen = Impl::Session::now_ms();
