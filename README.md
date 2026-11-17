@@ -16,9 +16,6 @@ Alternative to Shadowplay & OBS Replay buffer to capture clips. Then watch, trim
 
 https://github.com/user-attachments/assets/bf2eb3b8-5c40-4355-a52d-ab684e762aa1
 
-> [!NOTE]
-> Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write the majority of your sotware in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
-
 ## Contents
 
 - [Why OBSReplay](#why-obsreplay)
@@ -144,6 +141,9 @@ To run a second copy with its own data folder, set `OBSREPLAY_DATA_DIR` to an ab
 Third-party notices are compiled into the executable. Open them from **Help**, **Software notices**.
 
 OBSReplay is not affiliated with the OBS Project.
+
+> [!NOTE]
+> Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write the majority of your sotware in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
 
 ## License
 
