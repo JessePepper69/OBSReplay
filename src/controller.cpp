@@ -26,8 +26,27 @@
 #include <thread>
 
 namespace replay {
+std::wstring clean_file_stem(const std::string& typed, const std::wstring& extension) {
+    std::wstring clean;
+    for (const wchar_t c : wide(typed)) if (c >= 32 && !wcschr(L"<>:\"/\\|?*", c)) clean += c;
+    const auto trim = [&] { while (!clean.empty() && (clean.back() == L' ' || clean.back() == L'.')) clean.pop_back(); while (!clean.empty() && clean.front() == L' ') clean.erase(clean.begin()); };
+    trim();
+    if (!extension.empty() && clean.size() >= extension.size() && _wcsicmp(clean.c_str() + clean.size() - extension.size(), extension.c_str()) == 0) { clean.resize(clean.size() - extension.size()); trim(); }
+    if (clean.size() > 120) { clean.resize(120); trim(); }
+    // Device names (CON, NUL, COM1...) cannot be file names.
+    std::wstring base = clean.substr(0, clean.find(L'.'));
+    for (auto& c : base) c = static_cast<wchar_t>(towupper(c));
+    if (base == L"CON" || base == L"PRN" || base == L"AUX" || base == L"NUL" || (base.size() == 4 && (base.starts_with(L"COM") || base.starts_with(L"LPT")) && iswdigit(base[3]))) clean.clear();
+    return clean;
+}
+
 namespace {
 using Clock = std::chrono::steady_clock;
+// One spelling per file. OBS reports a saved replay with forward slashes and a folder scan finds the same file with
+// backslashes, so every path is tidied before it is stored and compared without regard to letter case.
+fs::path tidy_path(fs::path path) { path = path.lexically_normal(); path.make_preferred(); return path; }
+std::wstring path_key(const fs::path& path) { auto key = tidy_path(path).wstring(); for (auto& c : key) c = static_cast<wchar_t>(towlower(c)); return key; }
+
 bool media_file(const fs::path& path) {
     auto extension = path.extension().wstring();
     std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
@@ -292,17 +311,17 @@ struct Controller::Impl {
             if (root.empty() || !root.is_absolute() || !fs::is_directory(root, error)) return;
             Json listed;
             { std::lock_guard lock(mutex); listed = state.at("clips"); }
-            std::set<std::string> known;
+            std::set<std::wstring> known;
             std::vector<Json> clips;
-            for (const auto& clip : listed) { known.insert(clip.value("path", "")); clips.push_back(clip); }
+            for (const auto& clip : listed) { known.insert(path_key(from_string(clip.value("path", "")))); clips.push_back(clip); }
             std::size_t seen = 0, found = 0;
             for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, error), end; !error && it != end; it.increment(error)) {
                 if (it.depth() > 2) { it.disable_recursion_pending(); continue; }
                 if (++seen > 20000) break;
                 std::error_code ignored;
                 if (!it->is_regular_file(ignored) || !media_file(it->path())) continue;
-                const auto text = path_string(it->path());
-                if (known.contains(text)) continue;
+                const auto text = path_string(tidy_path(it->path()));
+                if (!known.insert(path_key(it->path())).second) continue;
                 // The folder under the clips folder is the game; an "Edited Exports" folder marks an export.
                 const auto relative = it->path().lexically_relative(root);
                 bool edited = false;
@@ -347,11 +366,13 @@ struct Controller::Impl {
             if (fs::exists(history_path)) {
                 const auto stored = Json::parse(read_text(history_path));
                 Json clips = Json::array();
+                std::set<std::wstring> seen;
                 if (stored.is_array()) for (const auto& clip : stored) {
                     if (clips.size() >= history_per_kind * 2) break;
                     if (!clip.is_object() || !clip.contains("path") || !clip["path"].is_string()) continue;
-                    const auto file = from_string(clip["path"].get<std::string>());
-                    if (!file.is_absolute() || !media_file(file)) continue;
+                    const auto file = tidy_path(from_string(clip["path"].get<std::string>()));
+                    // A history written before paths were tidied can hold one file under two spellings; the first entry stays.
+                    if (!file.is_absolute() || !media_file(file) || !seen.insert(path_key(file)).second) continue;
                     clips.push_back({{"path", path_string(file)}, {"name", path_string(file.filename())}, {"app", clip.value("app", "")}, {"bytes", clip.value("bytes", uint64_t{})}, {"saved_at", clip.value("saved_at", "")}});
                     if (clip.value("edited", false)) clips.back()["edited"] = true;
                 }
@@ -573,7 +594,8 @@ struct Controller::Impl {
         throw std::runtime_error("OBS did not confirm that replay capture stopped. Check OBS before assuming recording has stopped.");
     }
 
-    void remember_clip(const fs::path& original, std::string app, bool sort, bool sound) {
+    void remember_clip(const fs::path& reported, std::string app, bool sort, bool sound) {
+        const auto original = tidy_path(reported);
         std::error_code error;
         if (!original.is_absolute() || !media_file(original) || !fs::is_regular_file(original, error))
             throw std::runtime_error("OBS reported a saved replay, but the video file is not available. Check the OBS output folder.");
@@ -602,7 +624,7 @@ struct Controller::Impl {
         update([&](Json& s) {
             auto& list = s["clips"];
             for (auto it = list.begin(); it != list.end();) {
-                if (it->value("path", "") == text) it = list.erase(it); else ++it;
+                if (path_key(from_string(it->value("path", ""))) == path_key(final)) it = list.erase(it); else ++it;
             }
             list.insert(list.begin(), Json{{"path", text}, {"name", path_string(final.filename())}, {"app", app}, {"bytes", bytes}, {"saved_at", now_iso()}});
             trim_history(list);
@@ -857,6 +879,37 @@ struct Controller::Impl {
                 log_info("Clip deleted: file={}", quoted_value(path));
                 message("Replay deleted.");
             } else open_path(file, action.name == "reveal_clip");
+        } else if (action.name == "rename_clip") {
+            // Renames the file in its folder and keeps its extension, its place in the list and its saved time.
+            const auto path = action.payload.value("path", "");
+            bool known{};
+            { std::lock_guard lock(mutex); for (const auto& clip : state.at("clips")) if (clip.value("path", "") == path) { known = true; break; } }
+            const auto file = from_string(path);
+            if (!known || !media_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
+            const auto stem = clean_file_stem(action.payload.value("name", ""), file.extension().wstring());
+            if (stem.empty()) throw std::runtime_error("Enter a name Windows allows for a file.");
+            const auto target = file.parent_path() / (stem + file.extension().wstring());
+            if (target.wstring() == file.wstring()) return;
+            std::error_code error;
+            if (!fs::is_regular_file(file, error)) {
+                reconcile_clips();
+                throw std::runtime_error("This clip is no longer available or cannot be renamed.");
+            }
+            // A change of letter case only is the same file under a new spelling, so it is allowed.
+            if (fs::exists(target, error) && !fs::equivalent(target, file, error))
+                throw std::runtime_error("A file named “" + path_string(target.filename()) + "” is already in that folder. Choose another name.");
+            if (!MoveFileExW(file.c_str(), target.c_str(), 0))
+                throw std::runtime_error("Windows could not rename this clip. Close it in other apps and check your folder permissions.");
+            const auto renamed = path_string(target);
+            Json clips;
+            update([&](Json& s) {
+                for (auto& clip : s["clips"]) if (clip.value("path", "") == path) { clip["path"] = renamed; clip["name"] = path_string(target.filename()); }
+                clips = s["clips"];
+            });
+            log_info("Clip renamed: from={} to={}", quoted_value(path), quoted_value(renamed));
+            try { atomic_write(paths.data / L"clips.json", clips.dump(2)); }
+            catch (...) { throw std::runtime_error("The clip was renamed, but the recent-clips history could not be saved."); }
+            message("Clip renamed.");
         } else if (action.name == "help") open_help(action.payload.value("topic", "obs"));
     }
 
@@ -978,7 +1031,7 @@ std::expected<bool, std::string> Controller::set_theme(const std::string& id) {
 }
 
 std::expected<bool, std::string> Controller::add_clip(const std::string& path, const std::string& app) {
-    const auto file = from_string(path);
+    const auto file = tidy_path(from_string(path));
     std::error_code error;
     if (!file.is_absolute() || !media_file(file) || !fs::is_regular_file(file, error)) return std::unexpected("The exported video could not be added to recent clips.");
     const auto bytes = fs::file_size(file, error);
@@ -996,8 +1049,19 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
     return true;
 }
 
+std::expected<bool, std::string> Controller::remove_clip(const std::string& path) {
+    if (!knows_clip(path)) return std::unexpected("The original is no longer in your recent clips.");
+    const auto file = from_string(path);
+    std::error_code error;
+    if (!media_file(file) || !fs::remove(file, error) || error)
+        return std::unexpected("Windows could not delete the original. Close it in other apps and check your folder permissions.");
+    impl_->reconcile_clips();
+    log_info("Clip deleted: file={}", quoted_value(path));
+    return true;
+}
+
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "rename_clip", "help", "refresh_options"};
     if (!allowed.contains(action)) { log_warn("Action refused: action={} reason=unknown", quoted_value(action)); return std::unexpected("Unknown controller action."); }
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;

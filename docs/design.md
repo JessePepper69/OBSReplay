@@ -354,7 +354,7 @@ No rounded primary pills.
 
 - Title row with **Open folder**.
 - The same two tabs as Capture.
-- Toolbar: game chips on the left, pager on the right.
+- Toolbar: search field, then game chips, with the pager on the right.
 - Grid: 24 clips a page, columns at least 204px wide.
 - The pager repeats under the grid.
 
@@ -459,6 +459,12 @@ Step 3, Start:
 
 ### Clips toolbar and pager
 
+- The toolbar shows whenever the selected tab has clips.
+- Search field: 32px high, a search icon inside its left edge, placeholder "Search clips", a clear button once it has text.
+- Search matches every typed word against the file name, the game and the saved time. It filters as you type and keeps the field focused.
+- Ctrl+F on the Clips page focuses the field. Escape clears it.
+- While a search runs, chips keep their order and show how many matches each game has. A game with none is disabled.
+- No matches: the title "No replays match “text”", one line saying what search looks at, and **Clear search**.
 - One chip per game: **All** first, then games by clip count.
 - Chips appear only when there are two or more games.
 - Game names drop build suffixes from the executable name. "FortniteClient-Win64-Shipping" reads "Fortnite".
@@ -478,8 +484,15 @@ Step 3, Start:
 - While the pointer or keyboard focus is on a card, the thumbnail lifts 3px.
 - The thumbnail outline lights and sweeps (the site's game-card edge).
 - A white play disc appears over the thumbnail.
-- One group of three icon buttons appears on the thumbnail's corner: Edit, Open in your video player, Show in folder.
-- Each icon button has a tooltip and an accessible name.
+- One "more" button (three dots) appears on the thumbnail's top right corner. It opens the clip menu under itself.
+- A right-click anywhere on a card opens the same menu at the pointer.
+- Clip menu rows, each an icon and a label: **Play**, **Edit clip**, **Rename**, a rule, **Open in video player**, **Show in folder**, a rule, **Delete** in red.
+- The menu uses the dropdown list's surface: `--surface`, 12px radius, 1px `--line-strong` edge. It flips to stay inside the window.
+- The card keeps its hover look while its menu is open.
+- Menu keys: arrows, Home and End move; Enter chooses; Escape or Tab closes and returns focus to the button. The row under the pointer takes focus, so there is one highlight.
+- A press outside, scrolling, resizing or the window losing focus closes the menu.
+- **Delete** asks first. Holding Shift while choosing it skips the question.
+- **Rename** opens a dialog with the name in a field and the extension after it. Characters Windows does not allow are dropped as typed. **Rename** stays disabled until the name changes. A name already used in that folder is refused with a message.
 - Focus handed back by a closed viewer does not keep the hover state showing.
 - A thumbnail still being decoded shows the site's skeleton sweep. The frame then fades in.
 - Thumbnails decode one visible clip at a time.
@@ -567,6 +580,8 @@ Layout from top to bottom:
 - A tooltip explains Original versus smaller files.
 - The estimated file size and codec.
 - **Export video**, 40px.
+- **Export video** first asks for a name in a 560px dialog. A checkbox, **Delete original clip after exporting**, sits at the bottom left in line with **Cancel**. It starts unticked every time.
+- With the box ticked, the original is deleted once the export is saved. A failed or canceled export keeps it. The result line adds "Original deleted", and the editor then asks to be closed.
 - Export-bar regions have fixed widths, so changing quality or edits never shifts controls.
 - Export progress, success and failure replace the quality controls inline.
 - Success offers **Show in folder** and **Play video**. Play video opens the export in the main window's viewer. File Explorer does not open on its own.

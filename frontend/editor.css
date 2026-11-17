@@ -172,11 +172,7 @@ input[type="range"]:disabled { cursor:default;opacity:.5; }
 /* The editor's dialogs open with CSS alone; the main window animates its own from script. */
 body.editor dialog[open] { animation:dialog-in 260ms var(--ease) both; }
 @keyframes dialog-in { from { opacity:0;transform:translateY(10px) scale(.97); } }
-.name-input { display:flex;align-items:center;gap:8px;margin-top:16px;padding-right:14px;border:1px solid var(--line-strong);border-radius:10px;background:var(--well);transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
-.name-input:hover { border-color:var(--line-hover); }
-.name-input:focus-within { border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent-text) 22%,transparent); }
-.name-input input,.name-input input:focus-visible { flex:1;height:42px;border:0;background:transparent;box-shadow:none;font-size:14px;outline:0; }
-.name-input span { flex:none;color:var(--dim);font-size:14px; }
+#export-dialog { max-width:560px; }
 #shortcuts-dialog { max-width:720px;padding:20px 24px 24px; }
 .dialog-heading { display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px; }
 .dialog-heading .icon-button { margin:-6px -8px -6px 0;width:38px;height:38px;border-radius:10px;border-color:transparent;background:transparent;color:var(--dim); }

@@ -635,10 +635,10 @@
     const segments = keptSegments(), length = keptLength();
     $("result-length").textContent = ready ? formatLength(length) : "—";
     const removedLength = state.duration - length;
-    $("result-detail").textContent = !ready ? "Loading…" : removedLength > 0.005 ? `${formatLength(removedLength)} removed · ${segments.length} ${segments.length === 1 ? "part" : "parts"}` : "Full clip · no cuts yet";
+    $("result-detail").textContent = state.originalDeleted ? "Exported" : !ready ? "Loading…" : removedLength > 0.005 ? `${formatLength(removedLength)} removed · ${segments.length} ${segments.length === 1 ? "part" : "parts"}` : "Full clip · no cuts yet";
     const dirty = ready && signature() !== state.baseline && signature() !== state.exportedSignature;
     if (dirty !== state.reportedDirty) { state.reportedDirty = dirty; nativeCall("editor_dirty", dirty).catch(() => {}); }
-    $("edit-state").textContent = state.exportStatus === "running" ? "Exporting…" : !ready ? "Loading" : dirty ? "Unexported edits" : state.exportedSignature && signature() === state.exportedSignature ? "Exported" : "No changes";
+    $("edit-state").textContent = state.exportStatus === "running" ? "Exporting…" : state.originalDeleted ? "Exported" : !ready ? "Loading" : dirty ? "Unexported edits" : state.exportedSignature && signature() === state.exportedSignature ? "Exported" : "No changes";
     $("edit-dot").className = `state-dot${state.exportStatus === "running" ? " busy" : dirty ? " dirty" : state.exportedSignature ? " ready" : ""}`;
     renderExport();
   }
@@ -678,8 +678,8 @@
     $("export-result").hidden = mode !== "result";
     if (mode === "ffmpeg") {
       const toolProblem = tool.status === "missing" || tool.status === "invalid";
-      $("ffmpeg-title").textContent = sourceMissing ? "The original replay is gone" : probeFailed && !toolProblem ? "FFmpeg couldn't read this clip" : tool.status === "invalid" ? "That file isn't a usable FFmpeg" : "FFmpeg is needed to export";
-      $("ffmpeg-text").textContent = sourceMissing ? "It was moved or deleted while the editor was open, so it can't be exported. Close the editor." : probeFailed && !toolProblem ? (native.probe.message || "Its video details couldn't be read.") + " Try again, or open the file in another app." : tool.status === "invalid" ? (tool.message || "Choose ffmpeg.exe from a full FFmpeg build.") : "Editing works now. Install FFmpeg to export, or locate ffmpeg.exe if it is already on this PC.";
+      $("ffmpeg-title").textContent = sourceMissing ? (state.originalDeleted ? "The original was deleted" : "The original replay is gone") : probeFailed && !toolProblem ? "FFmpeg couldn't read this clip" : tool.status === "invalid" ? "That file isn't a usable FFmpeg" : "FFmpeg is needed to export";
+      $("ffmpeg-text").textContent = sourceMissing ? (state.originalDeleted ? "You chose to delete it after exporting. Your export is saved in Edited Exports. Close the editor." : "It was moved or deleted while the editor was open, so it can't be exported. Close the editor.") : probeFailed && !toolProblem ? (native.probe.message || "Its video details couldn't be read.") + " Try again, or open the file in another app." : tool.status === "invalid" ? (tool.message || "Choose ffmpeg.exe from a full FFmpeg build.") : "Editing works now. Install FFmpeg to export, or locate ffmpeg.exe if it is already on this PC.";
       $("ffmpeg-help").hidden = $("ffmpeg-locate").hidden = $("ffmpeg-install").hidden = sourceMissing || (probeFailed && !toolProblem);
       // One click installs FFmpeg through winget; the notice then follows the install and reports a failure in place.
       const install = tool.install || {};
@@ -696,7 +696,7 @@
       $("ffmpeg-notice").classList.toggle("working", installing);
       $("probe-retry").hidden = !(probeFailed && !toolProblem && !sourceMissing);
     }
-    if (sourceMissing) $("stage-message").textContent = "The original replay was moved or deleted.";
+    if (sourceMissing) $("stage-message").textContent = state.originalDeleted ? "The original was deleted after exporting." : "The original replay was moved or deleted.";
     const probeReady = native?.probe?.status === "ready";
     const length = keptLength();
     const exportDisabledReason = !state.mediaReady ? "Loading clip" : tool.status === "checking" ? "Looking for FFmpeg…" : !probeReady ? "Analyzing clip…" : length < 0.1 ? "Nothing to export" : "";
@@ -721,7 +721,7 @@
       $("result-mark").innerHTML = failed ? '<svg viewBox="0 0 20 20"><path d="M10 5.5v5.5M10 14.2v.3"/></svg>' : '<svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg>';
       const last = state.lastExport || {};
       $("result-title").textContent = failed ? "Export failed" : `Exported ${last.name || "video"}`;
-      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), formatLength(last.duration), last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.note].filter(Boolean).join(" · ");
+      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), formatLength(last.duration), last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.original_deleted ? "Original deleted" : "", last.note].filter(Boolean).join(" · ");
       $("result-reveal").hidden = failed; $("result-open").hidden = failed;
       $("result-dismiss").textContent = failed ? "Dismiss" : "Done";
     }
@@ -743,15 +743,16 @@
     video.pause();
     const original = String(state.native?.clip?.name || "Replay").replace(/\.[^.]+$/, "");
     $("export-name").value = "";
+    $("export-delete").checked = false;
     $("export-name").placeholder = `${original} (edited)`;
     $("export-dialog").showModal();
     $("export-name").focus();
   }
-  async function runExport(name) {
+  async function runExport(name, deleteOriginal = false) {
     if (!state.mediaReady || state.exportStatus === "running") return;
     const segments = keptSegments();
     try {
-      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, name }));
+      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, name, delete_original: deleteOriginal }));
       state.exportStatus = "running";
       state.exportSignature = signature();
       announce("Export started");
@@ -998,7 +999,9 @@
     if (state.exportStatus === "running" && job.status && job.status !== "running") {
       if (job.status === "done") {
         state.exportStatus = "done"; state.lastExport = job; state.exportedSignature = state.exportSignature;
-        announce(`Exported ${job.name}. Saved in Edited Exports.`);
+        announce(`Exported ${job.name}. Saved in Edited Exports.${job.original_deleted ? " Original deleted." : ""}`);
+        // The original is gone: let go of it, and leave the export's result and the closing notice in charge.
+        if (job.original_deleted) { state.originalDeleted = true; video.pause(); video.removeAttribute("src"); video.load(); state.mediaReady = false; }
       } else if (job.status === "failed") { state.exportStatus = "failed"; state.lastExport = job; announce("Export failed"); }
       else { state.exportStatus = "idle"; flash("Export canceled. No file was saved."); }
     }
@@ -1180,7 +1183,7 @@
   $("export-name").addEventListener("input", () => { const input = $("export-name"), clean = input.value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ""); if (clean !== input.value) input.value = clean; });
   $("export-cancel").addEventListener("click", () => $("export-dialog").close());
   $("export-dialog").addEventListener("click", event => { if (event.target === $("export-dialog")) $("export-dialog").close(); });
-  $("export-form").addEventListener("submit", event => { event.preventDefault(); const name = cleanName($("export-name").value); $("export-dialog").close(); runExport(name); });
+  $("export-form").addEventListener("submit", event => { event.preventDefault(); const name = cleanName($("export-name").value); const deleteOriginal = $("export-delete").checked; $("export-dialog").close(); runExport(name, deleteOriginal); });
   $("shortcuts-button").addEventListener("click", () => $("shortcuts-dialog").showModal());
   $("shortcuts-close").addEventListener("click", () => $("shortcuts-dialog").close());
   $("shortcuts-dialog").addEventListener("click", event => { if (event.target === $("shortcuts-dialog")) $("shortcuts-dialog").close(); });

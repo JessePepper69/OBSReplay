@@ -550,36 +550,18 @@
     edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5.5" cy="6" r="2"/><circle cx="5.5" cy="14" r="2"/><path d="M7.3 7.2 16 14M7.3 12.8 16 6"/></svg>',
     open: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 4H16v4.5M16 4l-6.5 6.5M14 11.5v3a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 4 14.5v-7A1.5 1.5 0 0 1 5.5 6h3"/></svg>',
     folder: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3l1.6 2h6.4A1.5 1.5 0 0 1 17 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>',
+    more: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h.01M10 10h.01M15 10h.01"/></svg>',
+    play: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4.5 9 5.5-9 5.5z"/></svg>',
+    rename: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 16 .7-3.3L13.3 4a1.6 1.6 0 0 1 2.2 0l.5.5a1.6 1.6 0 0 1 0 2.2L7.3 15.3zM11.8 5.6l2.6 2.6"/></svg>',
     trash: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 6h11M8 6V4.5h4V6M6 6l.6 9a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4L14 6M8.5 9v4.5M11.5 9v4.5"/></svg>'
   };
-  // Quick delete on a clip card. A click asks first; Shift+click deletes at once.
-  function deleteButton(clip) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "icon-only delete-clip";
-    button.setAttribute("aria-label", `Delete ${clip.name || "replay"}`);
-    button.dataset.tipTitle = "Delete";
-    button.dataset.tip = "Shift+click deletes without asking";
-    button.innerHTML = icons.trash;
-    button.addEventListener("click", async event => {
-      if (busy()) return;
-      const name = clip.name || (clip.edited ? "this video" : "this replay");
-      if (!event.shiftKey && !await confirmAction(clip.edited ? "Delete edited video?" : "Delete replay?", `Permanently delete “${name}” from your computer? This cannot be undone.`, "Delete", true)) return;
-      // Nothing may still be reading the file when Windows deletes it.
-      if (playerClip?.path === clip.path) { ReplayViewer.release(); playerClip = null; closePlayer(); }
-      dispatch("delete_clip", { path: clip.path });
-    });
-    return button;
-  }
-  function iconAction(label, icon, action, clip) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "icon-only";
-    button.setAttribute("aria-label", `${label}: ${clip.name || "replay"}`);
-    button.title = label;
-    button.innerHTML = icon;
-    button.addEventListener("click", () => dispatch(action, { path: clip.path }));
-    return button;
+  // Deleting asks first; holding Shift while choosing Delete skips the question.
+  async function deleteClip(clip, ask = true) {
+    if (busy()) return;
+    const name = clip.name || (clip.edited ? "this video" : "this replay");
+    if (ask && !await confirmAction(clip.edited ? "Delete edited video?" : "Delete replay?", `Permanently delete “${name}” from your computer? This cannot be undone.`, "Delete", true)) return;
+    if (playerClip?.path === clip.path) { ReplayViewer.release(); playerClip = null; closePlayer(); }
+    dispatch("delete_clip", { path: clip.path });
   }
   // Clip details as separate pieces (app, saved time, size) so they align and wrap cleanly.
   function fillMeta(container, clip, size = true) {
@@ -614,17 +596,125 @@
     try { await nativeCall("open_editor", clip.path); }
     catch (error) { showError(error); }
   }
-  function editButton(clip) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "icon-only edit-clip";
-    button.setAttribute("aria-label", `Edit ${clip.name || "replay"}`);
-    button.dataset.tipTitle = "Edit";
-    button.dataset.tip = "Cut sections out and export a new video";
-    button.innerHTML = icons.edit;
-    button.addEventListener("click", () => openEditor(clip));
-    return button;
+  // Clip menu: every action on a clip, as labelled rows. It opens under the card's "more" button, or at the pointer
+  // on a right-click anywhere on the card. One menu exists at a time.
+  let clipMenu = null;
+  function closeClipMenu(focus = false) {
+    const menu = clipMenu;
+    if (!menu) return;
+    clipMenu = null;
+    menu.element.remove();
+    menu.card.classList.remove("menu-open");
+    menu.trigger.setAttribute("aria-expanded", "false");
+    if (focus && menu.trigger.isConnected) menu.trigger.focus({ preventScroll: true });
   }
+  function openClipMenu(clip, card, trigger, point = null, keyboard = false) {
+    closeClipMenu();
+    closeDropdown();
+    const element = document.createElement("div");
+    element.className = "clip-menu";
+    element.tabIndex = -1;
+    element.setAttribute("role", "menu");
+    element.setAttribute("aria-label", `Actions for ${clip.name || "this clip"}`);
+    const rows = [
+      ["Play", icons.play, () => watchReplay(clip)],
+      ["Edit clip", icons.edit, () => openEditor(clip)],
+      ["Rename", icons.rename, () => renameClip(clip)],
+      null,
+      ["Open in video player", icons.open, () => dispatch("open_clip", { path: clip.path })],
+      ["Show in folder", icons.folder, () => dispatch("reveal_clip", { path: clip.path })],
+      null,
+      ["Delete", icons.trash, event => deleteClip(clip, !event.shiftKey), true]
+    ];
+    for (const row of rows) {
+      if (!row) { const rule = document.createElement("hr"); rule.setAttribute("role", "separator"); element.append(rule); continue; }
+      const [label, icon, run, danger] = row;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.tabIndex = -1;
+      if (danger) item.dataset.danger = "";
+      item.innerHTML = icon;
+      item.append(label);
+      // One highlight for pointer and keyboard: the row under the pointer takes focus.
+      item.addEventListener("pointermove", () => { if (document.activeElement !== item) item.focus({ preventScroll: true }); });
+      item.addEventListener("click", event => { closeClipMenu(event.detail === 0); run(event); });
+      element.append(item);
+    }
+    element.addEventListener("contextmenu", event => event.preventDefault());
+    element.addEventListener("keydown", event => {
+      const items = [...element.querySelectorAll("button")], at = items.indexOf(document.activeElement);
+      const next = event.key === "ArrowDown" ? (at + 1) % items.length : event.key === "ArrowUp" ? (at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length) : event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : -1;
+      if (next >= 0) { event.preventDefault(); items[next].focus({ preventScroll: true }); }
+      else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeClipMenu(true); }
+      else if (event.key === "Tab") { event.preventDefault(); closeClipMenu(true); }
+    });
+    document.body.append(element);
+    clipMenu = { element, card, trigger };
+    card.classList.add("menu-open");
+    trigger.setAttribute("aria-expanded", "true");
+    // Under the button and flush with its right edge, or with a corner at the pointer; flipped where the window ends.
+    const edge = 8, gap = 6, width = element.offsetWidth, height = element.offsetHeight;
+    let left, top, originX = "left", originY = "top";
+    if (point) {
+      left = point.x; top = point.y;
+      if (left + width > innerWidth - edge) { left = point.x - width; originX = "right"; }
+      if (top + height > innerHeight - edge) { top = point.y - height; originY = "bottom"; }
+    } else {
+      const box = trigger.getBoundingClientRect();
+      left = box.right - width; top = box.bottom + gap; originX = "right";
+      if (top + height > innerHeight - edge && box.top - gap - height >= edge) { top = box.top - gap - height; originY = "bottom"; }
+    }
+    left = Math.max(edge, Math.min(left, innerWidth - width - edge));
+    top = Math.max(edge, Math.min(top, innerHeight - height - edge));
+    Object.assign(element.style, { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, transformOrigin: `${originY} ${originX}` });
+    (keyboard ? element.querySelector("button") : element).focus({ preventScroll: true });
+  }
+  document.addEventListener("pointerdown", event => { if (clipMenu && !clipMenu.element.contains(event.target) && !clipMenu.trigger.contains(event.target)) closeClipMenu(); }, true);
+  window.addEventListener("blur", () => closeClipMenu());
+  window.addEventListener("resize", () => closeClipMenu());
+  $("main").addEventListener("scroll", () => closeClipMenu(), { passive: true });
+  // Rename keeps the file in its folder and keeps its extension, which shows after the field.
+  const cleanFileName = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").replace(/^ +|[ .]+$/g, "");
+  let renaming = null;
+  function dismissDialog(dialog) {
+    if (!dialog.open || dialog.classList.contains("closing")) return;
+    if (!motionEnabled()) { dialog.close(); return; }
+    dialog.classList.add("closing");
+    animateDialog(dialog, false).then(() => { dialog.classList.remove("closing"); for (const animation of dialog.getAnimations()) animation.cancel(); if (dialog.open) dialog.close(); });
+  }
+  function renameClip(clip) {
+    if (busy()) return;
+    const file = clip.name || clip.path?.split(/[\\/]/).pop() || "", dot = file.lastIndexOf(".");
+    renaming = { clip, stem: dot > 0 ? file.slice(0, dot) : file, extension: dot > 0 ? file.slice(dot) : "" };
+    $("rename-title").textContent = clip.edited ? "Rename edited video" : "Rename replay";
+    $("rename-extension").textContent = renaming.extension;
+    $("rename-name").value = renaming.stem;
+    $("rename-confirm").disabled = true;
+    $("rename-dialog").showModal();
+    $("rename-name").select();
+    animateDialog($("rename-dialog"), true);
+  }
+  $("rename-name").addEventListener("input", () => {
+    const input = $("rename-name"), clean = input.value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "");
+    if (clean !== input.value) input.value = clean;
+    const name = cleanFileName(clean);
+    $("rename-confirm").disabled = !name || name === renaming?.stem;
+  });
+  $("rename-cancel").addEventListener("click", () => dismissDialog($("rename-dialog")));
+  $("rename-dialog").addEventListener("cancel", event => { event.preventDefault(); dismissDialog($("rename-dialog")); });
+  $("rename-dialog").addEventListener("pointerdown", event => { if (event.target === $("rename-dialog")) dismissDialog($("rename-dialog")); });
+  $("rename-form").addEventListener("submit", event => {
+    event.preventDefault();
+    const name = cleanFileName($("rename-name").value), { clip, stem, extension } = renaming || {};
+    dismissDialog($("rename-dialog"));
+    if (!clip || !name || name === stem) return;
+    // The picture and length already decoded for this file follow it to its new name.
+    const renamed = { ...clip, path: clip.path.replace(/[^\\/]+$/, name + extension) };
+    if (thumbnailCache.has(clipKey(clip))) thumbnailCache.set(clipKey(renamed), thumbnailCache.get(clipKey(clip)));
+    if (clipLengths.has(clipKey(clip))) clipLengths.set(clipKey(renamed), clipLengths.get(clipKey(clip)));
+    dispatch("rename_clip", { path: clip.path, name });
+  });
   const thumbnailCache = new Map();
   const thumbnailJobs = new Map();
   let thumbnailRunning = false;
@@ -788,12 +878,18 @@
     fillMeta(meta, clip, false);
     const foot = document.createElement("div");
     foot.className = "clip-foot";
-    const actions = document.createElement("div");
-    actions.className = "clip-actions";
-    actions.append(editButton(clip), iconAction("Open in your video player", icons.open, "open_clip", clip), iconAction("Show in folder", icons.folder, "reveal_clip", clip), deleteButton(clip));
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "clip-more";
+    more.setAttribute("aria-label", `Actions for ${name.textContent}`);
+    more.setAttribute("aria-haspopup", "menu");
+    more.setAttribute("aria-expanded", "false");
+    more.innerHTML = icons.more;
+    more.addEventListener("click", event => { if (clipMenu?.trigger === more) closeClipMenu(); else openClipMenu(clip, row, more, null, event.detail === 0); });
+    row.addEventListener("contextmenu", event => { event.preventDefault(); openClipMenu(clip, row, more, { x: event.clientX, y: event.clientY }); });
     preview.append(thumbnail);
     foot.append(meta, name);
-    row.append(preview, foot, actions);
+    row.append(preview, foot, more);
     return row;
   }
   function renderClips() {
@@ -821,7 +917,20 @@
   } catch {}
   // Clips page: one game at a time if wanted, 24 clips a page.
   const pageSize = 24;
-  const clipView = { app: null, page: 0 };
+  const clipView = { app: null, page: 0, query: "" };
+  // Search matches every typed word against the file name, the game and the saved time.
+  function searchClips(items) {
+    const words = clipView.query.split(/\s+/).filter(Boolean);
+    if (!words.length) return items;
+    return items.filter(clip => { const text = `${clip.name || ""} ${clip.app ? gameName(clip.app) : ""} ${formatTime(clip.saved_at)}`.toLowerCase(); return words.every(word => text.includes(word)); });
+  }
+  function setClipSearch(value) {
+    const query = value.trim().toLowerCase();
+    $("clips-search-clear").hidden = !value;
+    if (query === clipView.query) return;
+    clipView.query = query; clipView.page = 0;
+    renderClipLists();
+  }
   // The recorded app is an executable name; drop build suffixes so it reads as the game ("FortniteClient-Win64-Shipping" is Fortnite).
   function gameName(app) {
     const name = String(app || "").replace(/\.exe$/i, "").replace(/[-_ ]?(Win64|Win32|WinGDK|x64|x86)([-_ ]?Shipping)?$/i, "").replace(/[-_ ]?Shipping$/i, "").replace(/([a-z])Client$/, "$1").replace(/[-_]+/g, " ").trim();
@@ -843,16 +952,20 @@
     status.textContent = `${first}–${last} of ${total}`;
     container.append(step("Previous page", pagerIcons.back, page - 1, page === 0), status, step("Next page", pagerIcons.next, page + 1, page >= pages - 1));
   }
-  function renderClipFilters(items) {
-    const counts = new Map();
+  // Chips keep their order (games by clip count) while a search runs; each count is what the search found in that game.
+  function renderClipFilters(items, everything) {
+    const totals = new Map(), counts = new Map();
+    for (const clip of everything) { const key = clip.app || ""; totals.set(key, (totals.get(key) || 0) + 1); }
     for (const clip of items) { const key = clip.app || ""; counts.set(key, (counts.get(key) || 0) + 1); }
-    if (clipView.app !== null && !counts.has(clipView.app)) clipView.app = null;
+    if (clipView.app !== null && !totals.has(clipView.app)) clipView.app = null;
     const filters = $("clips-filters");
     filters.replaceChildren();
-    if (counts.size > 1) for (const [key, count] of [[null, items.length], ...[...counts].sort((a, b) => b[1] - a[1])]) {
+    if (totals.size > 1) for (const [key] of [[null], ...[...totals].sort((a, b) => b[1] - a[1])]) {
+      const count = key === null ? items.length : counts.get(key) || 0;
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("aria-pressed", String(clipView.app === key));
+      button.disabled = !count && clipView.app !== key;
       const total = document.createElement("span");
       total.textContent = String(count);
       button.append(key === null ? "All" : gameName(key), total);
@@ -882,6 +995,7 @@
   };
   function renderClipLists(clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : []) {
     thumbnailObserver.disconnect();
+    closeClipMenu();
     const groups = { replays: clips.filter(clip => !clip.edited), edits: clips.filter(clip => clip.edited) };
     for (const button of document.querySelectorAll("[data-clip-tab]")) {
       const selected = clipTabs[button.dataset.clipList] === button.dataset.clipTab;
@@ -894,15 +1008,17 @@
     for (let [list, container, limit, compact] of [["clips", $("clips-list"), pageSize, false], ["latest", $("latest-content"), 8, true]]) {
       const tab = clipTabs[list];
       let items = groups[tab], start = 0;
+      const searching = !compact && Boolean(clipView.query) && items.length > 0;
       if (!compact) {
         const all = items.length;
-        items = renderClipFilters(items);
+        items = renderClipFilters(searchClips(items), items);
         const pages = Math.max(1, Math.ceil(items.length / pageSize));
         clipView.page = Math.min(Math.max(0, clipView.page), pages - 1);
         start = clipView.page * pageSize;
         const last = Math.min(items.length, start + pageSize);
         for (const pager of [$("clips-pager-top"), $("clips-pager-bottom")]) renderPager(pager, clipView.page, pages, start + 1, last, items.length);
-        $("clips-toolbar").hidden = !all || ($("clips-filters").childElementCount === 0 && pages < 2);
+        $("clips-toolbar").hidden = !all;
+        $("clips-search-status").textContent = clipView.query ? `${items.length} ${items.length === 1 ? "clip matches" : "clips match"}` : "";
         limit = pageSize;
       }
       container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
@@ -912,9 +1028,15 @@
       else {
         const empty = document.createElement("div");
         empty.className = "clips-empty";
-        const title = document.createElement("h2"); title.textContent = emptyCopy[tab].title;
-        const description = document.createElement("p"); description.textContent = tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
+        const title = document.createElement("h2"); title.textContent = searching ? `No ${tab === "edits" ? "edited exports" : "replays"} match “${$("clips-search").value.trim()}”` : emptyCopy[tab].title;
+        const description = document.createElement("p"); description.textContent = searching ? "Search looks at the file name, the game and the saved date." : tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
         empty.append(title, description);
+        if (searching) {
+          const clear = document.createElement("button");
+          clear.type = "button"; clear.textContent = "Clear search";
+          clear.addEventListener("click", () => { $("clips-search").value = ""; setClipSearch(""); $("clips-search").focus(); });
+          empty.append(clear);
+        }
         container.append(empty);
       }
     }
@@ -1876,6 +1998,17 @@
   $("capture-settings").addEventListener("click", () => showTab("settings"));
   // Repair re-runs setup with the saved settings; unapplied edits are reviewed in Settings first.
   $("capture-repair").addEventListener("click", () => { if (state.dirty) showTab("settings"); else dispatch("setup", formValue()); });
+  $("clips-search").addEventListener("input", () => setClipSearch($("clips-search").value));
+  $("clips-search").addEventListener("keydown", event => {
+    if (event.key !== "Escape" || !$("clips-search").value) return;
+    event.preventDefault(); $("clips-search").value = ""; setClipSearch("");
+  });
+  $("clips-search-clear").addEventListener("click", () => { $("clips-search").value = ""; setClipSearch(""); $("clips-search").focus(); });
+  // Ctrl+F on the Clips page goes to its search field.
+  document.addEventListener("keydown", event => {
+    if (!(event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") || state.tab !== "clips" || document.querySelector("dialog[open]") || $("clips-toolbar").hidden) return;
+    event.preventDefault(); $("clips-search").focus(); $("clips-search").select();
+  });
   $("all-clips").addEventListener("click", () => { showClipTab("clips", clipTabs.latest); showTab("clips"); });
   for (const button of document.querySelectorAll("[data-clip-tab]")) {
     button.addEventListener("click", () => showClipTab(button.dataset.clipList, button.dataset.clipTab));
@@ -2047,6 +2180,7 @@
     showTab("clips");
     clipTabs.clips = tab;
     clipView.app = null;
+    clipView.query = ""; $("clips-search").value = ""; $("clips-search-clear").hidden = true;
     clipView.page = Math.max(0, Math.floor((state.snapshot.clips.filter(item => Boolean(item.edited) === Boolean(clip.edited)).findIndex(item => item.path === path)) / pageSize));
     try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
     renderClipLists();

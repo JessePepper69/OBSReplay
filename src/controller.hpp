@@ -4,6 +4,9 @@
 #include <memory>
 
 namespace replay {
+// A typed name reduced to a file stem Windows allows: no reserved characters or device names, the extension dropped,
+// at most 120 characters. Empty when nothing usable is left.
+std::wstring clean_file_stem(const std::string& typed, const std::wstring& extension);
 class Controller {
 public:
     explicit Controller(Paths paths);
@@ -13,6 +16,8 @@ public:
     std::string snapshot() const;
     bool knows_clip(const std::string& path) const;
     std::expected<bool, std::string> add_clip(const std::string& path, const std::string& app);
+    // Deletes a listed clip at once, outside the action queue. The editor uses it for "delete original after exporting".
+    std::expected<bool, std::string> remove_clip(const std::string& path);
     std::expected<bool, std::string> dispatch(std::string action, std::string payload = "{}");
     // OBS's own figures (frame rate, render time, skipped frames) from its last answer, or null when OBS is not connected.
     // Asking keeps them fresh for a few seconds; nobody asking, OBS is not polled for them.

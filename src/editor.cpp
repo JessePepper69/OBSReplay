@@ -966,19 +966,9 @@ struct EditorHost::Impl::Session {
 
     // Name typed in the export dialog, already reduced to characters a Windows file name allows; empty keeps the default.
     std::wstring export_name;
-    static std::wstring file_name_from(const std::string& typed) {
-        std::wstring clean;
-        for (const wchar_t c : wide(typed)) if (c >= 32 && !wcschr(L"<>:\"/\\|?*", c)) clean += c;
-        const auto trim = [&] { while (!clean.empty() && (clean.back() == L' ' || clean.back() == L'.')) clean.pop_back(); while (!clean.empty() && clean.front() == L' ') clean.erase(clean.begin()); };
-        trim();
-        if (clean.size() >= 4 && _wcsicmp(clean.c_str() + clean.size() - 4, L".mp4") == 0) { clean.resize(clean.size() - 4); trim(); }
-        if (clean.size() > 120) { clean.resize(120); trim(); }
-        // Device names (CON, NUL, COM1...) cannot be file names.
-        std::wstring base = clean.substr(0, clean.find(L'.'));
-        for (auto& c : base) c = static_cast<wchar_t>(towupper(c));
-        if (base == L"CON" || base == L"PRN" || base == L"AUX" || base == L"NUL" || (base.size() == 4 && (base.starts_with(L"COM") || base.starts_with(L"LPT")) && iswdigit(base[3]))) clean.clear();
-        return clean;
-    }
+    // Ticked in the export dialog: the source file is deleted once the export has been saved. A failed or canceled export keeps it.
+    bool delete_original{};
+    static std::wstring file_name_from(const std::string& typed) { return clean_file_stem(typed, L".mp4"); }
     fs::path output_for() const {
         auto folder = source.parent_path();
         if (_wcsicmp(folder.filename().c_str(), L"Edited Exports") != 0) folder /= L"Edited Exports";
@@ -1007,6 +997,7 @@ struct EditorHost::Impl::Session {
             { std::lock_guard lock(mutex); info = probe; if (export_state.value("status", "") == "running") return std::unexpected("An export is already running."); }
             if (info.value("status", "") != "ready") return std::unexpected("The clip is still being analyzed. Try again in a moment.");
             export_name = file_name_from(request.value("name", std::string{}));
+            delete_original = request.value("delete_original", false);
             const double duration = info.value("duration", 0.0);
             std::vector<std::pair<double, double>> segments;
             double previous = -1, total = 0;
@@ -1279,9 +1270,15 @@ struct EditorHost::Impl::Session {
                 // The finished video is offered in the editor (Play video, Show in folder); File Explorer is not opened unasked.
                 const bool revealed = false;
                 log_info("Export finished: file={} bytes={} seconds={:.2f}{}", quoted_value(path_string(final)), error ? 0 : bytes, total, history_note.empty() ? "" : " note=" + quoted_value(history_note));
+                bool original_deleted = false;
+                if (delete_original) {
+                    const auto removed = host.controller.remove_clip(path_string(source));
+                    original_deleted = removed.has_value();
+                    if (!removed) { history_note += (history_note.empty() ? "" : " ") + removed.error(); log_warn("Original kept after export: file={} error={}", quoted_value(path_string(source)), quoted_value(removed.error())); }
+                }
                 change([&] {
                     export_state = {{"status", "done"}, {"output", path_string(final)}, {"name", path_string(final.filename())}, {"bytes", error ? 0 : bytes},
-                                    {"duration", total}, {"revealed", revealed}, {"note", history_note}, {"quality", quality}};
+                                    {"duration", total}, {"revealed", revealed}, {"note", history_note}, {"quality", quality}, {"original_deleted", original_deleted}};
                 });
             }
         } catch (const std::exception& e) {

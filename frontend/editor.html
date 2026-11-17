@@ -145,7 +145,7 @@
     </div>
   </dialog>
 
-  <dialog id="export-dialog" aria-labelledby="export-title"><form method="dialog" id="export-form"><h2 id="export-title">Name your export</h2><p>Leave it empty to use the name shown.</p><div class="name-input"><input id="export-name" type="text" maxlength="120" spellcheck="false" autocomplete="off" aria-labelledby="export-title"><span aria-hidden="true">.mp4</span></div><div class="dialog-actions"><button type="button" id="export-cancel">Cancel</button><button type="submit" class="primary" id="export-confirm">Export video</button></div></form></dialog>
+  <dialog id="export-dialog" aria-labelledby="export-title"><form method="dialog" id="export-form"><h2 id="export-title">Name your export</h2><p>Leave it empty to use the name shown.</p><div class="name-input"><input id="export-name" type="text" maxlength="120" spellcheck="false" autocomplete="off" aria-labelledby="export-title"><span aria-hidden="true">.mp4</span></div><div class="dialog-actions"><label class="check"><input type="checkbox" id="export-delete"><span>Delete original clip after exporting</span></label><button type="button" id="export-cancel">Cancel</button><button type="submit" class="primary" id="export-confirm">Export video</button></div></form></dialog>
   <div class="menu" id="menu" role="listbox" hidden></div>
   <section class="tracks-panel" id="tracks-panel" role="dialog" aria-labelledby="tracks-title" hidden>
     <div class="tracks-heading"><h2 id="tracks-title">Track volumes</h2><p>Changes what you hear while editing. Exports keep every track as recorded.</p></div>

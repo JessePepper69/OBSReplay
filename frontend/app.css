@@ -291,8 +291,8 @@ summary:focus-visible { outline-offset:-3px; }
 .clip-thumbnail img { display:block;width:100%;height:100%;border-radius:12px;object-fit:cover;animation:fade 220ms var(--ease) both; }
 .clip-thumbnail:not([data-thumbnail]) { background:linear-gradient(100deg,var(--surface) 35%,var(--raise) 50%,var(--surface) 65%) 0 0 / 220% 100%;animation:sk 1.3s linear infinite; }
 .clip-thumbnail::after { content:"";position:absolute;inset:-3px;border-radius:15px;padding:2px;pointer-events:none;opacity:0;background:conic-gradient(from var(--sweep),color-mix(in srgb,var(--ui-accent-text) 10%,transparent) 0deg,color-mix(in srgb,var(--ui-accent-text) 10%,transparent) 220deg,color-mix(in srgb,var(--ui-accent-text) 60%,transparent) 264deg,var(--ui-accent-text) 296deg,color-mix(in srgb,var(--ui-accent-text) 20%,transparent) 330deg,color-mix(in srgb,var(--ui-accent-text) 10%,transparent) 360deg);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;transition:opacity 140ms ease-out; }
-.clip-card:hover .clip-thumbnail,.clip-preview:focus-visible .clip-thumbnail { translate:0 -3px; }
-.clip-card:hover .clip-thumbnail::after,.clip-preview:focus-visible .clip-thumbnail::after { opacity:1;transition-duration:300ms;animation:sweep 4.8s linear infinite; }
+.clip-card:hover .clip-thumbnail,.clip-preview:focus-visible .clip-thumbnail,.clip-card.menu-open .clip-thumbnail { translate:0 -3px; }
+.clip-card:hover .clip-thumbnail::after,.clip-preview:focus-visible .clip-thumbnail::after,.clip-card.menu-open .clip-thumbnail::after { opacity:1;transition-duration:300ms;animation:sweep 4.8s linear infinite; }
 .clip-play { position:absolute;inset:0;display:grid;place-items:center;border-radius:12px;background:transparent;transition:background-color 200ms var(--ease); }
 .clip-play svg { width:44px;height:44px;padding:13px 12px 13px 14px;border-radius:50%;background:var(--ov-text);color:var(--ov-ink);fill:currentColor;stroke-width:0;box-shadow:0 10px 24px -8px #000;opacity:0;scale:.86;transition:opacity 200ms var(--ease),scale 200ms var(--ease); }
 .clip-thumbnail[data-thumbnail="unavailable"] .clip-play svg { opacity:.85;scale:1; }
@@ -301,7 +301,7 @@ summary:focus-visible { outline-offset:-3px; }
 .clip-preview:active .clip-play svg { scale:.94; }
 /* The file name appears under the card with the pointer or keyboard focus, in the gap between rows, so nothing moves. */
 .clip-title { position:absolute;left:0;right:0;top:100%;padding-top:2px;font-size:12px;font-weight:500;line-height:18px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;translate:0 -4px;pointer-events:none;transition:opacity 140ms ease-out,translate 240ms var(--ease); }
-.clip-card:hover .clip-title,.clip-card:has(:focus-visible) .clip-title { opacity:1;translate:0 0;transition-duration:220ms,240ms; }
+.clip-card:hover .clip-title,.clip-card:has(:focus-visible) .clip-title,.clip-card.menu-open .clip-title { opacity:1;translate:0 0;transition-duration:220ms,240ms; }
 .clip-foot { position:relative;margin-top:9px; }
 .clip-meta { display:flex;flex-wrap:wrap;gap:0 10px;min-width:0;color:var(--dim);font-size:13px;font-variant-numeric:tabular-nums; }
 .clip-meta .clip-app { color:var(--text);font-weight:600; }
@@ -310,18 +310,37 @@ summary:focus-visible { outline-offset:-3px; }
 .clip-foot .clip-meta span:last-child { flex:none; }
 .clip-length { left:auto !important;right:8px; }
 .clip-chip { position:absolute;left:8px;bottom:8px;padding:2px 7px;border-radius:6px;background:var(--ov-chip);font-size:12px;font-weight:600;line-height:18px;color:var(--ov-text);font-variant-numeric:tabular-nums; }
-/* Row actions sit on the thumbnail and appear with the pointer or keyboard focus. */
-.clip-actions { position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;background:var(--ov-bg);box-shadow:inset 0 0 0 1px var(--ov-line);opacity:0;translate:0 2px;transition:opacity 140ms ease-out,translate 240ms var(--ease); }
-.clip-card:hover .clip-actions,.clip-card:has(:focus-visible) .clip-actions { opacity:1;translate:0 -3px;transition-duration:200ms,240ms; }
-.clip-actions .icon-only { width:30px;min-width:30px;height:30px;border-radius:8px;color:var(--ov-muted); }
-.clip-actions .icon-only:hover:not(:disabled) { background:var(--ov-hover);color:var(--ov-text); }
-.clip-actions .delete-clip,.clip-actions .delete-clip:hover:not(:disabled) { color:var(--red); }
-.clip-actions .delete-clip:hover:not(:disabled) { background:color-mix(in srgb,var(--red) 22%,transparent); }
+/* One "more" button sits on the thumbnail's corner and appears with the pointer or keyboard focus. It opens the clip menu;
+   a right-click anywhere on the card opens the same menu at the pointer. The card keeps its hover look while the menu is open. */
+button.clip-more { position:absolute;top:8px;right:8px;width:30px;min-width:30px;height:30px;padding:0;border:0;border-radius:9px;background:var(--ov-bg);box-shadow:inset 0 0 0 1px var(--ov-line);color:var(--ov-muted);opacity:0;translate:0 2px;transition:opacity 140ms ease-out,translate 240ms var(--ease),background-color var(--fast) var(--ease),color var(--fast) var(--ease),scale var(--fast) var(--ease); }
+.clip-card:hover .clip-more,.clip-card:has(:focus-visible) .clip-more,.clip-card.menu-open .clip-more { opacity:1;translate:0 -3px;transition-duration:200ms,240ms,var(--fast),var(--fast),var(--fast); }
+button.clip-more:hover:not(:disabled),button.clip-more[aria-expanded="true"] { background:var(--ov-hover);color:var(--ov-text); }
+.clip-more svg { width:18px;height:18px;stroke-width:2.6; }
+/* The clip menu is the dropdown list's surface with an icon and a label on each row. */
+.clip-menu { position:fixed;z-index:80;min-width:214px;padding:5px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface);box-shadow:0 16px 38px rgba(0,0,0,.38);outline:0;animation:menu-in 130ms var(--ease); }
+@keyframes menu-in { from { opacity:0;scale:.96; } }
+.clip-menu button { display:flex;justify-content:flex-start;gap:11px;width:100%;height:34px;padding:0 14px 0 10px;border:0;border-radius:8px;background:transparent;font-size:13px;font-weight:550;color:var(--muted);text-align:left;transition:none; }
+.clip-menu button svg { width:16px;height:16px;color:var(--dim); }
+.clip-menu button:hover:not(:disabled),.clip-menu button:focus { background:var(--raise);color:var(--text);outline:0; }
+.clip-menu button:hover svg,.clip-menu button:focus svg { color:var(--text); }
+.clip-menu button:active:not(:disabled) { scale:none; }
+.clip-menu button[data-danger],.clip-menu button[data-danger] svg,.clip-menu button[data-danger]:hover,.clip-menu button[data-danger]:focus,.clip-menu button[data-danger]:hover svg,.clip-menu button[data-danger]:focus svg { color:var(--red); }
+.clip-menu button[data-danger]:hover:not(:disabled),.clip-menu button[data-danger]:focus { background:color-mix(in srgb,var(--red) 16%,transparent); }
+.clip-menu hr { height:1px;margin:5px 6px;border:0;background:var(--line-strong); }
 .clips-empty { padding:36px 0; }
 .clips-empty h2 { margin-bottom:6px;font-size:18px; }
 .clips-empty p { max-width:62ch;font-size:14px;color:var(--dim); }
+.clips-empty button { margin-top:16px; }
 
-.clips-toolbar { display:flex;align-items:center;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin:-4px 0 18px; }
+.clips-toolbar { display:flex;align-items:center;gap:12px 14px;flex-wrap:wrap;margin:-4px 0 18px; }
+/* Search: the field's edge is on the wrapper, so the icon and the clear button sit inside it. */
+.search-field { display:flex;align-items:center;gap:8px;flex:0 1 250px;min-width:170px;height:32px;padding:0 4px 0 10px;border:1px solid var(--line-strong);border-radius:var(--r-control);background:var(--well);color:var(--dim);cursor:text;transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+.search-field:hover { border-color:var(--line-hover); }
+.search-field:focus-within { border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent-text) 22%,transparent); }
+.search-field>svg { width:15px;height:15px; }
+.search-field input,.search-field input:focus-visible { flex:1;min-width:0;height:30px;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;outline:0;font-size:13px; }
+.search-field button.icon-only { width:24px;min-width:24px;height:24px;border-radius:6px; }
+.search-field button.icon-only svg { width:13px;height:13px; }
 .filters { display:flex;flex-wrap:wrap;gap:6px;min-width:0; }
 .filters button { height:32px;padding:0 11px;gap:7px;border-color:var(--line);background:transparent;color:var(--dim);font-weight:600; }
 .filters button:hover:not(:disabled) { background:transparent;border-color:var(--line-hover);color:var(--text); }
@@ -380,7 +399,22 @@ dialog.closing::backdrop { animation:backdrop-out 160ms ease-in both; }
 @keyframes backdrop-out { to { opacity:0; } }
 dialog h2 { font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.2; }
 dialog p { margin-top:10px;font-size:14px;line-height:1.55;color:var(--muted); }
-.dialog-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:24px; }
+.dialog-actions { display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:24px; }
+/* A name field with the file's extension after it: the export and rename dialogs. */
+.name-input { display:flex;align-items:center;gap:8px;margin-top:16px;padding-right:14px;border:1px solid var(--line-strong);border-radius:10px;background:var(--well);transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease); }
+.name-input:hover { border-color:var(--line-hover); }
+.name-input:focus-within { border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent-text) 22%,transparent); }
+.name-input input,.name-input input:focus-visible { flex:1;height:42px;border:0;background:transparent;box-shadow:none;font-size:14px;outline:0; }
+.name-input span { flex:none;color:var(--dim);font-size:14px; }
+/* Checkbox with its label. In a dialog's action row it takes the left end, in line with the buttons. */
+.check { display:inline-flex;align-items:center;gap:9px;min-height:32px;font-size:13px;font-weight:500;line-height:1.3;color:var(--muted);cursor:pointer;transition:color var(--fast) var(--ease); }
+.check:hover,.check:has(input:checked) { color:var(--text); }
+.check input { appearance:none;-webkit-appearance:none;position:relative;display:block;width:18px;height:18px;margin:0;flex:none;border:1px solid var(--line-hover);border-radius:5px;background:var(--well);cursor:pointer;transition:background-color var(--fast) var(--ease),border-color var(--fast) var(--ease); }
+.check:hover input:not(:checked) { border-color:var(--dim); }
+.check input:checked { background:var(--ui-accent);border-color:transparent; }
+.check input::after { content:"";position:absolute;inset:0;background:var(--on-accent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.7 6.3 2.2 2.2 4.4-4.9'/%3E%3C/svg%3E") center/12px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2.7 6.3 2.2 2.2 4.4-4.9'/%3E%3C/svg%3E") center/12px no-repeat;opacity:0;scale:.6;transition:opacity var(--fast) var(--ease),scale var(--ui) var(--ease); }
+.check input:checked::after { opacity:1;scale:1; }
+.dialog-actions .check { margin-right:auto; }
 
 /* Guided setup */
 .setup-steps { display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 20px -5px;padding:0;list-style:none; }

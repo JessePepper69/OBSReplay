@@ -50,7 +50,7 @@ This file covers what OBSReplay is, who uses it, the product rules every change 
 | One Apply model | Settings change only through **Apply changes**. Capture and audio changes restart the dedicated OBS session. App settings do not. |
 | Confirmed results only | A clip appears in the list after OBS confirms the save and the file exists. The UI never invents clips, counters or success states. |
 | Honest replay length | The UI says "up to" the configured length. It shows no buffer fill meter. |
-| Originals stay intact | The editor writes a new file. It never modifies the source replay. |
+| Originals stay intact | The editor writes a new file. It never modifies the source replay. The source is deleted only when the user ticks **Delete original clip after exporting**, and only after the export is saved. |
 | User keeps control of Windows and OBS | OBSReplay does not change Windows capture settings, Game Bar settings or OBS crash recovery. It needs no admin rights. |
 | Local only | OBSReplay talks to OBS on `127.0.0.1`. Clips stay on local disk. Help links open from a fixed allowlist. |
 

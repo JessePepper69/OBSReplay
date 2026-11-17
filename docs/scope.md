@@ -89,6 +89,9 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Recent clip history | Done | Up to 50 replays and 50 edited exports, from confirmed saves. |
 | **Replays** and **Edited exports** tabs | Done | On **Capture** (latest 8) and **Clips** (24 per page). |
 | App filter and paging on **Clips** | Done | |
+| Search on **Clips** | Done | File name, game and saved time. |
+| Clip menu | Done | One button per card, or a right-click: play, edit, rename, open, show in folder, delete. |
+| Rename a clip | Done | Renames the file in its folder and keeps its extension. |
 | Thumbnails and clip length | Done | Decoded in the page from the clip file. |
 | In-app viewer with timeline, filmstrip and waveform | Done | The waveform needs FFmpeg. |
 | **Show in folder**, **Open file**, **Delete** | Done | Delete asks for confirmation and removes the file. |
@@ -105,6 +108,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Export quality 1 to 10 with size estimate | Done | 10 keeps the original video where the file allows it. |
 | Frame-exact cuts | Done | |
 | Named exports in `Edited Exports` | Done | Never overwrites a file. |
+| Delete original after exporting | Done | Opt-in checkbox in the export dialog, unticked each time. |
 | FFmpeg detection and **Locate ffmpeg.exe** | Done | |
 | Warn on quit with unexported cuts or a running export | Done | |
 
