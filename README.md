@@ -143,7 +143,7 @@ Third-party notices are compiled into the executable. Open them from **Help**, *
 OBSReplay is not affiliated with the OBS Project.
 
 > [!NOTE]
-> Claude wrote the code. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write the majority of your sotware in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
+> Claude wrote the code under review. The UI/UX, user flow, onboarding and feature set come from me and from public recommendations. If you still hand-write the majority of your (basic) softwares code in 2026, when a model can program and diagnose in 30 seconds what would take you weeks, you are a caveman.
 
 ## License
 
