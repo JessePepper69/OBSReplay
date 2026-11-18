@@ -297,7 +297,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `editor_waveform` | none | base64 string | Audio peaks, 100 per second. Empty until the waveform is ready. |
 | `media_url` | `path` string | URL string or error | URL of this editor's clip. Any other path is refused. |
 | `preview_urls` | none | JSON string | `{video, level, stems:[{track, url}]}` for the generated preview files. `video` is empty at level `full`. |
-| `start_export` | JSON string `{segments:[[start,end],...], quality, name?, size_limit?, tracks?}` | `true` or error | Validate and start an export. `size_limit` is 0 or 10, 25, 50, 100, 500 (MB). `tracks` is an array of recorded track numbers to keep, or null for every track. |
+| `start_export` | JSON string `{segments:[[start,end],...], quality, name?, size_limit?, tracks?}` | `true` or error | Validate and start an export. `size_limit` is 0 or 10, 25, 50, 100, 500 (MB). `tracks` is an array of recorded track numbers to keep, or null for every track. `volumes` is an object of track number to a volume from 0 to 1, or null for full volume. |
 | `cancel_export` | none | nothing | Cancel the running export. |
 | `pick_ffmpeg` | none | `true`, `false` on cancel, or error | Native file dialog, then FFmpeg detection with that file. |
 | `ffmpeg_help` | none | nothing | Open the FFmpeg download page. |
@@ -782,11 +782,14 @@ A size limit replaces the quality choice until the user moves the slider again. 
 ### Audio tracks in an export
 
 - The **Audio tracks** panel lists each recorded track with a check box and a volume slider. A clip with one track is listed too.
-- Every listed track ticked: the export keeps its tracks as recorded, OBS's Mix included.
+- Every listed track ticked at full volume: the export keeps its tracks as recorded, OBS's Mix included.
+- A volume set on a track is the volume it is exported at. The export applies it as a linear gain (`volume=0.1` for 10%, which is 20 dB down), the same gain the preview uses. A track turned down counts as a changed choice: the export leads with a mix of the tracks at their set volumes, followed by each track at its volume. A track at 0, or muted, is left out like an unticked one.
+- The main volume slider is the listening volume. It does not change the export.
+- Volumes are remembered between clips (`track_volumes`), so the export dialog states the sound when it differs from the recording: "Sound: Desktop 100%, Microphone 10%".
 - Two or more ticked, but not all: the first track is a mix of the ticked tracks (`amix`, `normalize=0`, titled "Mix"), followed by each ticked track with its name. Most players play only the first track, so it carries exactly the choice.
 - One ticked: that track alone. None ticked: no audio, and the result line says "No sound".
 - The choice applies to the smart cut, the re-encode and the size limit, and the size budget counts only exported streams.
-- An unticked track is silent in preview. The choice counts as an unexported edit.
+- An unticked track is silent in preview. A track choice, or a volume moved in this window, counts as an unexported edit.
 
 ### Export naming
 

@@ -567,7 +567,7 @@ Layout from top to bottom:
 - Shift+click on Play restarts from the first kept section. A double click does nothing extra, so quick play and pause taps never jump back.
 - A Preview cuts switch follows the buttons.
 - One master volume slider, 50% by default.
-- An Audio tracks button opens a popover with a check box, a slider and mute per recorded track. A ticked track goes into the export.
+- An Audio tracks button opens a popover with a check box, a slider and mute per recorded track. A ticked track goes into the export at the volume its slider shows. The export dialog adds a quiet line such as "Sound: Desktop 100%, Microphone 10%" when the sound differs from the recording.
 - Track rows use the file's own track names.
 - The frame-step and Play buttons have no tooltips. Their accessible names remain.
 

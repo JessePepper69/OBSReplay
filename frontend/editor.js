@@ -82,7 +82,9 @@
 
   // ---------- Edit model ----------
   // The kept sections plus any audio track left out of the export: both change what the exported file holds.
-  const signature = () => JSON.stringify([keptSegments().map(([start, end]) => [Math.round(start * 1000), Math.round(end * 1000)]), state.tracks.filter(track => !track.include).map(track => track.index)]);
+  const signature = () => JSON.stringify([keptSegments().map(([start, end]) => [Math.round(start * 1000), Math.round(end * 1000)]), state.tracks.filter(track => !track.include).map(track => track.index),
+    // Volumes count as an edit once they are moved in this window; the ones remembered from last time do not.
+    state.levelsTouched ? state.tracks.map(track => [track.index, exportLevel(track)]) : []]);
   const keptSegments = () => {
     const segments = [];
     for (const piece of state.pieces) {
@@ -303,7 +305,7 @@
       button.classList.toggle("muted", level === 0 || !track.include);
       button.setAttribute("aria-pressed", String(track.muted));
     }
-    $("tracks-note").hidden = !state.tracks.length || state.tracks.some(track => track.include);
+    $("tracks-note").hidden = !state.tracks.length || state.tracks.some(track => track.include && exportLevel(track) > 0);
     // Until the separate tracks play, the clip's own sound plays; it is silenced when no track is exported.
     video.muted = state.stems.length > 0 || master === 0 || (state.tracks.length > 0 && !state.tracks.some(track => track.include));
     video.volume = master;
@@ -828,13 +830,24 @@
     const bytes = length * (plan.video_kbps + plan.audio_kbps * exportAudio().streams) * 1000 / 8 * 1.01;
     return `≈ ${formatBytes(bytes)} · ${plan.original ? `original ${plan.codec}` : `${plan.codec}${plan.height ? ` ${plan.height}p` : ""}`}`;
   }
-  // The audio the export carries, mirroring native start_export: every listed track ticked keeps the recorded
-  // tracks (tracks: null); otherwise the ticked tracks, led by a mix of them when there are two or more.
+  // The volume a track is exported at: what its slider says, or nothing while it is muted.
+  const exportLevel = track => track.muted ? 0 : Math.min(1, Math.max(0, Number(track.level) || 0));
+  // The audio the export carries, mirroring native start_export. Every listed track ticked at full volume keeps
+  // the recorded tracks (tracks: null). Anything else exports the ticked tracks at their set volumes, led by a
+  // mix of them when there are two or more. A track turned all the way down is left out like an unticked one.
   function exportAudio() {
     const recorded = Number(state.native?.probe?.audio_tracks) || 0;
-    const ticked = state.tracks.filter(track => track.include).map(track => track.index);
-    if (!state.tracks.length || ticked.length === state.tracks.length) return { tracks: null, streams: recorded };
-    return { tracks: ticked, streams: ticked.length + (ticked.length >= 2 ? 1 : 0) };
+    const heard = state.tracks.filter(track => track.include && exportLevel(track) > 0);
+    const asRecorded = !state.tracks.length || (heard.length === state.tracks.length && heard.every(track => exportLevel(track) === 1));
+    if (asRecorded) return { tracks: null, volumes: null, streams: recorded, heard };
+    return { tracks: heard.map(track => track.index), volumes: Object.fromEntries(heard.map(track => [track.index, exportLevel(track)])), streams: heard.length + (heard.length >= 2 ? 1 : 0), heard };
+  }
+  // "Desktop 100%, Microphone 10%": what the export will sound like, for the export dialog.
+  function audioSummary() {
+    if (!state.tracks.length) return "";
+    const plan = exportAudio();
+    if (!plan.tracks) return "";
+    return plan.heard.length ? `Sound: ${plan.heard.map(track => `${track.name} ${Math.round(exportLevel(track) * 100)}%`).join(", ")}` : "Sound: none";
   }
 
   // Export first asks for a file name; an empty field keeps the default name.
@@ -844,6 +857,8 @@
     video.pause();
     const original = String(state.native?.clip?.name || "Replay").replace(/\.[^.]+$/, "");
     $("export-name").value = "";
+    $("export-audio").textContent = audioSummary();
+    $("export-audio").hidden = !$("export-audio").textContent;
     $("export-delete").checked = false;
     $("export-name").placeholder = `${original} (edited)`;
     $("export-dialog").showModal();
@@ -853,7 +868,7 @@
     if (!state.mediaReady || state.exportStatus === "running") return;
     const segments = keptSegments();
     try {
-      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, size_limit: state.sizeLimit, tracks: exportAudio().tracks, name, delete_original: deleteOriginal }));
+      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, size_limit: state.sizeLimit, tracks: exportAudio().tracks, volumes: exportAudio().volumes, name, delete_original: deleteOriginal }));
       state.exportStatus = "running";
       state.exportSignature = signature();
       clearTimeout(copiedTimer); $("result-copy").textContent = "Copy";
@@ -929,13 +944,14 @@
       mute.setAttribute("aria-label", `Mute ${track.name}`);
       mute.dataset.tip = `Mute ${track.name}`;
       mute.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 8h3l4-3.5v11l-4-3.5h-3z"/><path class="volume-wave" d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.5 5.5a6.5 6.5 0 0 1 0 9"/><path class="volume-off" d="m13.5 8 4 4m0-4-4 4"/></svg>';
-      mute.addEventListener("click", () => { track.muted = !track.muted; applyVolumes(); });
+      mute.addEventListener("click", () => { track.muted = !track.muted; state.levelsTouched = true; applyVolumes(); changed(); });
       const id = `track-volume-${track.index}`;
       const slider = document.createElement("input");
       slider.type = "range"; slider.id = id; slider.min = "0"; slider.max = "1"; slider.step = "0.05";
       slider.setAttribute("aria-label", `${track.name} volume`);
       slider.addEventListener("input", () => { track.level = Number(slider.value); track.muted = false; applyVolumes(); });
       slider.addEventListener("change", () => {
+        state.levelsTouched = true; changed();
         state.savedTrackLevels[track.name] = track.level;
         savePref("track_volumes", state.savedTrackLevels);
       });

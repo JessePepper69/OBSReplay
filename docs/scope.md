@@ -113,7 +113,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | One editor window per clip | Done | Reopening a clip focuses its window. |
 | Split, remove, restore, undo, redo | Done | Edit decisions live in the page. |
 | Preview quality **Full**, **Half**, **Quarter** | Done | Half and Quarter build a proxy file with FFmpeg. |
-| Per-track volume in preview | Done | Uses audio stems copied from the clip. |
+| Per-track volume, in preview and in the export | Done | The volume set on a track in **Audio tracks** is the volume it is exported at. The main volume slider only changes how loud the editor plays. |
 | Pick the audio tracks to export | Done | A check box per track in **Audio tracks**. All ticked exports the tracks as recorded. A smaller choice leads with a mix of the ticked tracks, then each ticked track. None ticked exports no sound. An unticked track is silent in preview. |
 | Export quality 1 to 10 with size estimate | Done | 10 keeps the original video where the file allows it. |
 | **Max size** export: 10, 25, 50, 100 or 500 MB | Done | 1 MB is 1,000,000 bytes. The file is measured after encoding and encoded again at a lower bitrate if it is over, up to three more times. It never reports a file over the limit. The video is always H.264, so it plays everywhere. A size the edit cannot meet is shown as unavailable. |

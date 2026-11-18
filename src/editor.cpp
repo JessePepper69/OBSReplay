@@ -376,13 +376,15 @@ std::wstring filter_file(const FFmpeg& tool, const fs::path& file) {
     const bool old = std::regex_search(tool.version, match, numbered) && std::stoi(match[1]) < 7;
     return (old ? L" -filter_complex_script " : L" -/filter_complex ") + quoted(file);
 }
-// Which recorded audio tracks an export carries. With every listed track ticked the file keeps its tracks as
-// recorded (OBS's own Mix included). A smaller choice leads with a mix of just the ticked tracks, because most
-// players only play the first track, followed by each ticked track under its own name. One ticked track is
-// exported alone, and none gives a silent video.
+// Which recorded audio tracks an export carries, and how loud. With every listed track ticked at full volume the
+// file keeps its tracks as recorded (OBS's own Mix included). Any other choice leads with a mix of the ticked
+// tracks at their set volumes, because most players only play the first track, followed by each ticked track
+// under its own name at its set volume. One ticked track is exported alone, and none gives a silent video.
 struct AudioPlan {
     std::vector<int> tracks;  // recorded track numbers, in order
     bool mix = false;
+    std::vector<double> gains;  // volume of each track, 0 to 1, in the order of `tracks`; empty means all at 1
+    double gain(size_t i) const { return i < gains.size() ? gains[i] : 1.0; }
     int streams() const { return static_cast<int>(tracks.size()) + (mix ? 1 : 0); }
 };
 // MP4 stores a track's name from its "title" tag; the recorded names are re-applied to the new audio tracks.
@@ -403,11 +405,21 @@ std::wstring track_titles(const Json& info, const AudioPlan& plan) {
 // the audio output labels in file order. normalize=0 adds the tracks at their own levels, as OBS builds its Mix.
 std::vector<std::string> audio_outputs(const AudioPlan& plan, std::string& graph) {
     std::vector<std::string> labels;
-    if (!plan.mix) { for (const int t : plan.tracks) labels.push_back(std::format("o{}", t)); return labels; }
+    // A track with its volume turned down passes through a volume filter first: the same linear gain the preview
+    // applies, so the export sounds as the editor did. The mix is then built from the adjusted tracks.
+    std::vector<std::string> sources;
+    for (size_t i = 0; i < plan.tracks.size(); ++i) {
+        const int t = plan.tracks[i];
+        if (std::abs(plan.gain(i) - 1.0) < 0.0005) { sources.push_back(std::format("o{}", t)); continue; }
+        graph += std::format(";[o{0}]volume={1:.4f}[g{0}]", t, plan.gain(i));
+        sources.push_back(std::format("g{}", t));
+    }
+    if (!plan.mix) return sources;
     std::string inputs;
     labels.emplace_back("mix");
-    for (const int t : plan.tracks) {
-        graph += std::format(";[o{0}]asplit=2[m{0}][k{0}]", t);
+    for (size_t i = 0; i < plan.tracks.size(); ++i) {
+        const int t = plan.tracks[i];
+        graph += std::format(";[{1}]asplit=2[m{0}][k{0}]", t, sources[i]);
         inputs += std::format("[m{}]", t);
         labels.push_back(std::format("k{}", t));
     }
@@ -1084,7 +1096,24 @@ struct EditorHost::Impl::Session {
                 std::ranges::sort(chosen);
                 chosen.erase(std::unique(chosen.begin(), chosen.end()), chosen.end());
                 const auto listed = preview_tracks(recorded);
-                if (!std::ranges::includes(chosen, listed)) audio = {chosen, chosen.size() >= 2};
+                // Volumes set in Audio tracks, keyed by track number; a track not named plays at full volume.
+                std::vector<double> gains;
+                bool turned_down = false;
+                const auto volumes = request.value("volumes", Json::object());
+                for (auto it = chosen.begin(); it != chosen.end();) {
+                    const auto key = std::to_string(*it);
+                    double level = 1.0;
+                    if (volumes.is_object() && volumes.contains(key)) {
+                        if (!volumes[key].is_number()) return std::unexpected("The track volumes couldn't be read. Open Audio tracks and set them again.");
+                        level = std::clamp(volumes[key].get<double>(), 0.0, 1.0);
+                    }
+                    // A track turned all the way down is left out, like an unticked one.
+                    if (level < 0.0005) { it = chosen.erase(it); turned_down = true; continue; }
+                    if (std::abs(level - 1.0) >= 0.0005) turned_down = true;
+                    gains.push_back(level);
+                    ++it;
+                }
+                if (turned_down || !std::ranges::includes(chosen, listed)) audio = {chosen, chosen.size() >= 2, gains};
             }
             const int limit = request.value("size_limit", 0);
             if (limit && std::ranges::find(size_limits, limit) == size_limits.end()) return std::unexpected("Choose a size from the list.");
@@ -1101,8 +1130,10 @@ struct EditorHost::Impl::Session {
             const bool original = limit ? smart && lower(info.value("codec", "")) == "h264" && original_bytes(info, total, audio) <= limit * 1e6 * 0.9 : quality == 10 && smart;
             change([&] { export_state = {{"status", "running"}, {"progress", 0.0}, {"speed", 0.0}, {"quality", quality}, {"size_limit", limit}, {"attempt", 1}, {"total", total},
                                          {"encoder", original ? "Original video" : encoder_label(tool, info, quality, tool.nvenc, limit != 0)}}; });
-            log_info("Export started: source={} sections={} seconds={:.2f} quality={} size_limit_mb={} audio_streams={}{} original_video={}", quoted_value(path_string(source)), segments.size(), total, quality, limit,
-                     audio.streams(), audio.mix ? " (mix)" : "", original);
+            std::string volumes_text;
+            for (size_t i = 0; i < audio.gains.size(); ++i) volumes_text += std::format("{}{}:{:.0f}%", i ? "," : "", audio.tracks[i], audio.gains[i] * 100);
+            log_info("Export started: source={} sections={} seconds={:.2f} quality={} size_limit_mb={} audio_streams={}{}{} original_video={}", quoted_value(path_string(source)), segments.size(), total, quality, limit,
+                     audio.streams(), audio.mix ? " (mix)" : "", volumes_text.empty() ? "" : " track_volumes=" + volumes_text, original);
             exporter = std::thread([this, tool, info, segments, total, quality, limit, audio, original] { run_export(tool, info, segments, total, quality, limit, audio, original); });
             return true;
         } catch (const std::exception& e) { return std::unexpected(std::string("The export request could not be read. ") + e.what()); }

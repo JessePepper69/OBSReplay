@@ -104,6 +104,8 @@ The live run read state only. It did not stop capture, save a replay or play a c
 
 Play from a removed section (`build/edtest/play-removed.mjs`, after 1.0.2): one press of Play starts playback from inside a removed section for cuts made at the playhead, for a cut dragged to an arbitrary time (three positions), and for a removed ending. Playback that runs into a removed section carries on past it, including one with a dragged cut. 9 of 9 passed. The dragged-cut cases failed on the 1.0.2 code: the video stayed seeking at the cut. The editor suite still passes 118 of 118.
 
+Track volumes in the export (`build/edtest/volumes.mjs`, after 1.0.3), measured on tone clips with FFmpeg: Microphone at 10% came out 20.0 dB down in the mix and on its own track, with Desktop unchanged, in the smart cut, the re-encode and a Max size export; both tracks at 50% came out 6.0 dB down; a track at 0% was left out; a single-track clip at 25% came out 12.0 dB down. 14 of 14 passed. The audio track suite (13 of 13), the playback test (9 of 9) and the editor suite (118 of 118) still pass.
+
 Not exercised in the second check: fullscreen on a second monitor, copy to the clipboard, and dragging a clip out of the window. These need real mouse input or would overwrite the user's clipboard. The Max size failure after four encodes and the x264 Max size path were read in code only; NVENC always fit on the test machine.
 
 Not exercised: the profile update at launch, Start and Stop against a live OBS, the new buffer memory figure inside OBS, sizes of 1 GB and above in the page, and the display fix button. These need a live OBS session or real hardware changes.
