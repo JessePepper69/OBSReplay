@@ -20,7 +20,11 @@
 #replay-player .viewer-stage video { position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;background:transparent; }
 #replay-player .viewer-message { position:absolute;inset:auto 0 50%;translate:0 50%;max-width:52ch;margin:auto;padding:0 24px;text-align:center;color:var(--ov-muted);font-size:13px;line-height:1.6;pointer-events:none; }
 #replay-player .viewer-message:empty { display:none; }
-#replay-player .viewer-stage:fullscreen { aspect-ratio:auto;width:100%;height:100%; }
+/* The stage and the controls go fullscreen together; the controls dock at the bottom edge (dock.js, app.css). */
+#replay-player .viewer-body { display:contents; }
+#replay-player .viewer-dock { flex:none;min-width:0; }
+#replay-player .viewer-body:fullscreen { display:block;background:#05080d; }
+#replay-player .viewer-body:fullscreen .viewer-stage { position:absolute;inset:0;aspect-ratio:auto;min-height:0; }
 
 /* Transport: time, frame and play buttons, volume and fullscreen */
 #replay-player .viewer-transport { display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:16px;min-height:54px;padding:8px 16px;border-top:1px solid var(--line);background:var(--page); }

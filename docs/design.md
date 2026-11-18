@@ -525,6 +525,7 @@ Step 3, Start:
 - The viewer is a dialog.
 - It contains the video, the editor's transport and the editor's timeline.
 - Transport: time, frame step, play, volume, fullscreen.
+- Fullscreen covers the screen with the video. The transport and timeline drop below the bottom edge, leaving a 6 px strip that shows the playhead position. Pointing at the strip slides them up at once; 250 ms after the pointer leaves they slide back down. They stay up during a drag on the timeline.
 - Timeline: ruler, filmstrip, waveform, playhead.
 - Timeline input: wheel zooms, Shift+wheel scrolls, drag scrubs.
 - The viewer has none of the editor's editing tools.
@@ -570,6 +571,7 @@ Layout from top to bottom:
 - An Audio tracks button opens a popover with a check box, a slider and mute per recorded track. A ticked track goes into the export at the volume its slider shows. The export dialog adds a quiet line such as "Sound: Desktop 100%, Microphone 10%" when the sound differs from the recording.
 - Track rows use the file's own track names.
 - The frame-step and Play buttons have no tooltips. Their accessible names remain.
+- A fullscreen button ends the row. F and a double-click on the video do the same. Fullscreen behaves as in the viewer, with the toolbar docked too; it stays up while Audio tracks is open.
 
 ### Clip editor toolbar
 
@@ -627,6 +629,7 @@ Layout from top to bottom:
 | Ctrl+E | Export |
 | `?` | Shortcuts |
 | M | Mute |
+| F | Full screen |
 
 ### Export name dialog
 

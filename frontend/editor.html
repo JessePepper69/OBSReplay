@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="editor.css">
   <script src="theme.js"></script>
   <script src="tooltip.js" defer></script>
+  <script src="dock.js" defer></script>
   <script src="editor.js" defer></script>
 </head>
 <body class="editor">
@@ -34,6 +35,7 @@
         <div class="preview-status" id="preview-status" hidden><span class="preview-spinner" aria-hidden="true"></span><span id="preview-text">Preparing smooth preview…</span></div>
       </section>
 
+      <div class="video-dock" id="dock">
       <div class="transport">
         <div class="time"><strong id="time-current">0:00.00</strong><span id="time-total">/ 0:00.00</span><small id="time-result" title="Position in the exported video"></small></div>
         <div class="transport-buttons">
@@ -50,6 +52,7 @@
             <input type="range" id="volume-master" min="0" max="1" step="0.05" value="0.5" aria-label="Listening volume" data-tip-title="Listening volume" data-tip="How loud the editor plays. It does not change the export.">
             <button type="button" class="icon-button" id="tracks-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tracks-panel" aria-label="Audio tracks" data-tip-title="Audio tracks" data-tip="Choose which tracks go into the export, like game audio and microphone, and how loud each plays here."><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5v13M10 3.5v13M15 3.5v13"/><path d="M3 12h4M8 7h4M13 10.5h4"/></svg></button>
           </div>
+          <button type="button" class="icon-button" id="fullscreen" aria-label="Full screen" data-tip="Full screen" data-tip-keys="F"><svg viewBox="0 0 20 20" aria-hidden="true" class="full-enter"><path d="M4 7.5V4h3.5M12.5 4H16v3.5M16 12.5V16h-3.5M7.5 16H4v-3.5"/></svg><svg viewBox="0 0 20 20" aria-hidden="true" class="full-exit"><path d="M7.5 4v3.5H4M12.5 4v3.5H16M16 12.5h-3.5V16M4 12.5h3.5V16"/></svg></button>
         </div>
       </div>
 
@@ -72,6 +75,7 @@
 
       <div class="timeline" id="timeline" tabindex="0" role="slider" aria-label="Timeline. Use arrow keys to move the playhead." aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
         <canvas id="timeline-canvas" aria-hidden="true"></canvas>
+      </div>
       </div>
     </main>
 
@@ -128,6 +132,7 @@
         <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Previous or next cut</dd></div>
         <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Start or end of clip</dd></div>
         <div><dt><kbd>M</kbd></dt><dd>Mute all audio</dd></div>
+        <div><dt><kbd>F</kbd> · double-click video</dt><dd>Full screen</dd></div>
       </dl>
       <dl>
         <div><dt><kbd>S</kbd></dt><dd>Split at playhead</dd></div>

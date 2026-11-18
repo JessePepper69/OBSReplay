@@ -56,6 +56,7 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 | `viewer.js` | Replay viewer (`window.ReplayViewer`): playback, canvas timeline, filmstrip, waveform. |
 | `editor.html`, `editor.js` | Editor window: edit model, undo/redo, canvas timeline, preview, export dialog, preferences. |
 | `theme.js` | Theme list and `window.Theme`. Loaded in `<head>` without `defer`. |
+| `dock.js` | `window.videoDock`: fullscreen with the controls docked at the bottom edge, shared by the viewer and the editor. |
 | `tooltip.js` | Custom tooltips from `title`, `data-tip`, `data-tip-title` and `data-tip-keys`, in both pages. |
 | `app.css` | Design tokens (Original theme), shared components, main window layout. |
 | `themes.css` | Token overrides for the five other themes. |
@@ -145,6 +146,8 @@ First reveal:
 - Each editor has its own `smartview`, its own `ClipMedia` and its own analysis, preview and export threads.
 - The view allows navigation to `saucer://embedded/editor.html` and nothing else.
 - The close event dispatches the page event `editor:close-request` and blocks. The page confirms and calls `close_editor`. If the page has not polled for 5 s, the close goes through.
+- The view's `fullscreen` event calls `set_window_fullscreen` and blocks saucer's own handling, as in the main window. A close that goes through first clears the window's saved fullscreen placement.
+- In a headless run `set_window_fullscreen` only logs, so a test that enters fullscreen never moves a window onto the screen.
 
 ### Isolated and headless runs
 
@@ -630,6 +633,15 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 - The filmstrip comes from a second muted `<video>` that seeks through the clip, coarse pass first.
 - The waveform comes from `EditorHost::waveform`: FFmpeg decodes the first audio track to 8 kHz mono, and the code keeps one peak (0..255) per 80 samples. One decode runs at a time. The last result is cached by path, size and write time.
 - Without FFmpeg the waveform lane stays flat.
+
+## Fullscreen dock
+
+- `dock.js` serves the viewer and the editor. The viewer puts `#viewer-body` (stage, transport, timeline) in fullscreen; the editor puts `#main` (stage, transport, toolbar, timeline) in fullscreen. The export bar stays out.
+- The controls sit in a `.video-dock`. In normal layout it is an ordinary block. While its root is fullscreen (`app.css`), it is positioned at the bottom edge and translated down until 6 px show: the `.dock-peek` strip, filled to the playhead.
+- `pointerenter` on the dock adds `open` (160 ms slide up). `pointerleave` waits 250 ms, then removes it (200 ms slide down). A transparent band 18 px above the dock widens the target.
+- The dock stays up while the page's `held()` is true (a timeline drag; in the editor also the Audio tracks panel or a menu) and while Tab has moved focus into it. Shortcut keys pressed with the timeline focused do not hold it.
+- Entering fullscreen shows the dock and lowers it 250 ms later. The editor moves the tooltip, the Audio tracks panel and the menu into `#main` while fullscreen, and the viewer moves the tooltip into `#viewer-body`, so they draw above the fullscreen element.
+- `data-motion="off"` removes the slide.
 - `app.js` owns the clip actions: **Delete**, **Show in folder**, **Open file**, **Edit clip**.
 - Each clip card has one menu, opened by its button or a right-click: **Play**, **Edit clip**, **Rename**, **Open in video player**, **Show in folder**, **Delete**. **Delete** is last and red. A click asks first. Shift+click deletes at once.
 - **Clips** search matches every typed word against the file name, the game and the saved date. The date is matched as the card shows it and as weekday, month name, year, local numeric date and `2026-11-15`.

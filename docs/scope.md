@@ -135,7 +135,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Tray notifications for saves and errors while hidden | Done | |
 | Volume mixer shows OBSReplay name and icon | Done | |
 | NVIDIA overlay notice | Done | When `NVIDIA Overlay.exe` runs, guided setup shows a notice and the app shows a toast: the overlay also uses Alt+Z. Dismissing either hides both for good. |
-| Fullscreen video on any monitor | Done | The viewer fills the monitor the window is on. |
+| Fullscreen video on any monitor | Done | The viewer and the editor fill the monitor the window is on. The controls drop to a strip at the bottom edge and slide up when you point at it. |
 | Embedded third-party notices | Done | Opened from Help. |
 | Self-install and uninstall | Done | The exe copies itself to `%LOCALAPPDATA%\Programs\OBSReplay` on first run. Uninstall from Settings or Windows **Installed apps**. |
 | Updates from GitHub Releases | Done | Daily check, release notes, one-click install, **Skip this version**. |

@@ -741,6 +741,8 @@ void drag_files(void* hwnd,const std::vector<fs::path>& files) {
 
 void set_window_fullscreen(void* handle,bool enabled) {
     const HWND hwnd=static_cast<HWND>(handle);
+    // A headless test run keeps its windows off screen; the page still goes fullscreen inside the window.
+    if (headless_mode()) { log_info("Window fullscreen: {} (headless, window left in place)", enabled ? "on" : "off"); return; }
     const auto saved=fullscreen_windows.find(hwnd);
     if (enabled) {
         if (saved!=fullscreen_windows.end()) return;

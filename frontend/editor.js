@@ -360,9 +360,12 @@
   let colors = Theme.timeline();
   Theme.onChange(() => { colors = Theme.timeline(); requestDraw(); });
   function requestDraw() { if (!drawFrame) drawFrame = requestAnimationFrame(draw); }
+  // A section a pixel or two wide gives its inset outline a negative width. The canvas throws on a negative radius,
+  // which stopped the whole redraw before the playhead, so both are held at zero.
   function roundRect(x, y, w, h, r) {
+    w = Math.max(0, w); h = Math.max(0, h);
     context.beginPath();
-    context.roundRect(x, y, Math.max(0, w), h, Math.min(r, w / 2, h / 2));
+    context.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2)));
   }
   function tickStep(pixelsPerSecond) {
     const steps = [1 / state.fps, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
@@ -629,6 +632,21 @@
     flashTimer = setTimeout(() => { $("toast").hidden = true; }, 2600);
     announce(text);
   }
+  // Fullscreen covers the screen with the video. The transport, tools and timeline dock at the bottom edge and
+  // slide up on hover. The tooltip, the Audio tracks panel and the menu move into the fullscreen element so they show.
+  const dock = window.videoDock($("main"), $("dock"), {
+    held: () => Boolean(state.drag) || !$("tracks-panel").hidden || !$("menu").hidden,
+    progress: () => state.duration ? currentTime() / state.duration : 0,
+    onChange: fullscreen => {
+      closeMenu(); toggleTracksPanel(false);
+      const home = fullscreen ? $("main") : document.body;
+      for (const element of [$("app-tooltip"), $("tracks-panel"), $("menu")]) if (element && element.parentElement !== home) home.append(element);
+      $("fullscreen").setAttribute("aria-label", fullscreen ? "Exit full screen" : "Full screen");
+      $("fullscreen").dataset.tip = fullscreen ? "Exit full screen" : "Full screen";
+      requestDraw();
+    },
+  });
+  function toggleFullscreen() { if (document.fullscreenElement || state.mediaReady) dock.toggle(); }
   function renderTime() {
     const time = currentTime();
     $("time-current").textContent = formatPosition(time);
@@ -647,6 +665,7 @@
     timeline.setAttribute("aria-valuenow", time.toFixed(2));
     const index = pieceIndexAt(time);
     timeline.setAttribute("aria-valuetext", `${formatTime(time)}, section ${index + 1} of ${state.pieces.length}${removedHere ? ", removed" : ""}`);
+    dock.render();
   }
   function renderControls() {
     const ready = state.mediaReady, edit = editable();
@@ -658,7 +677,7 @@
     for (const id of ["split", "trim-start", "trim-end"]) $(id).disabled = !edit;
     $("undo").disabled = !edit || !state.history.length;
     $("redo").disabled = !edit || !state.future.length;
-    for (const id of ["play", "frame-back", "frame-forward", "prev-cut", "next-cut", "zoom-fit", "skip-removed", "volume-master", "mute-master", "tracks-button"]) $(id).disabled = !ready;
+    for (const id of ["play", "frame-back", "frame-forward", "prev-cut", "next-cut", "zoom-fit", "skip-removed", "volume-master", "mute-master", "tracks-button", "fullscreen"]) $(id).disabled = !ready;
     const segments = keptSegments(), length = keptLength();
     $("result-length").textContent = ready ? formatLength(length) : "—";
     const removedLength = state.duration - length;
@@ -1272,6 +1291,8 @@
   $("volume-master").addEventListener("change", () => savePref("volume_master", state.master));
   $("mute-master").addEventListener("click", () => { state.masterMuted = !state.masterMuted; if (!state.masterMuted && state.master === 0) state.master = 0.5; applyVolumes(); });
   $("tracks-button").addEventListener("click", () => toggleTracksPanel());
+  $("fullscreen").addEventListener("click", toggleFullscreen);
+  $("stage").addEventListener("dblclick", toggleFullscreen);
   $("tracks-panel").addEventListener("keydown", event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); toggleTracksPanel(false); $("tracks-button").focus(); } });
   document.addEventListener("pointerdown", event => { if (!$("tracks-panel").hidden && !$("tracks-panel").contains(event.target) && !$("tracks-button").contains(event.target)) toggleTracksPanel(false); }, true);
   window.addEventListener("resize", () => { if (!$("tracks-panel").hidden) placeTracksPanel(); });
@@ -1394,6 +1415,7 @@
     else if (key === "-" || key === "_") zoomBy(1 / 1.6);
     else if (key === "0") setView(0, state.duration);
     else if (key === "?") $("shortcuts-dialog").showModal();
+    else if (key.toLowerCase() === "f") toggleFullscreen();
     else if (key === "Escape") { if (state.selected.size) { state.selected.clear(); renderControls(); requestDraw(); } else handled = false; }
     else handled = false;
     if (handled) event.preventDefault();

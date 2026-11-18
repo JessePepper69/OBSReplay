@@ -161,9 +161,12 @@
   let colors = Theme.timeline();
   Theme.onChange(() => { colors = Theme.timeline(); requestDraw(); });
   function requestDraw() { if (!drawFrame) drawFrame = requestAnimationFrame(draw); }
+  // A section a pixel or two wide gives its inset outline a negative width. The canvas throws on a negative radius,
+  // which stopped the whole redraw before the playhead, so both are held at zero.
   function roundRect(x, y, w, h, r) {
+    w = Math.max(0, w); h = Math.max(0, h);
     context.beginPath();
-    context.roundRect(x, y, Math.max(0, w), h, Math.min(r, w / 2, h / 2));
+    context.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2)));
   }
   function tickStep(pixelsPerSecond) {
     const steps = [1 / state.fps, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
@@ -346,12 +349,24 @@
   (function watchScale() { matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`).addEventListener("change", () => { requestDraw(); watchScale(); }, { once: true }); })();
 
   // ---------- Controls ----------
+  // The stage and the controls go fullscreen together. The controls dock at the bottom edge and slide up on hover.
+  const dock = window.videoDock($("viewer-body"), $("viewer-dock"), {
+    held: () => Boolean(state.drag),
+    progress: () => state.duration ? currentTime() / state.duration : 0,
+    onChange: fullscreen => {
+      $("viewer-fullscreen").setAttribute("aria-label", fullscreen ? "Exit full screen" : "Full screen");
+      $("viewer-fullscreen").dataset.tip = fullscreen ? "Exit full screen" : "Full screen";
+      if (dialog.open) hostTooltip(true);
+      requestDraw();
+    },
+  });
   function renderTime() {
     const time = currentTime();
     $("viewer-current").textContent = formatDuration(time, 2);
     $("viewer-total").textContent = `/ ${formatDuration(state.duration, 2)}`;
     timeline.setAttribute("aria-valuenow", time.toFixed(2));
     timeline.setAttribute("aria-valuetext", `${formatTime(time)} of ${formatTime(state.duration)}`);
+    dock.render();
   }
   function renderControls() {
     for (const id of ["viewer-play", "viewer-frame-back", "viewer-frame-forward", "viewer-fullscreen"]) $(id).disabled = !state.ready;
@@ -360,8 +375,7 @@
     $("viewer-play").setAttribute("aria-label", playing ? "Pause" : "Play");
   }
   function toggleFullscreen() {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else if (state.ready) stage.requestFullscreen().catch(() => {});
+    if (document.fullscreenElement || state.ready) dock.toggle();
   }
 
   // ---------- Filmstrip thumbnails, decoded from a second muted video like the editor's ----------
@@ -501,9 +515,10 @@
 
   // tooltip.js keeps its tooltip in <body>, which a modal dialog covers. While the viewer is open
   // the tooltip lives inside the dialog so the hints on its controls can be seen.
+  // In fullscreen it lives inside the fullscreen element for the same reason.
   function hostTooltip(inside) {
     const tip = $("app-tooltip");
-    const home = inside ? dialog : document.body;
+    const home = !inside ? document.body : document.fullscreenElement === $("viewer-body") ? $("viewer-body") : dialog;
     if (tip && tip.parentElement !== home) home.append(tip);
   }
   dialog.addEventListener("close", () => hostTooltip(false));

@@ -1625,7 +1625,11 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
         const auto id = self->id;
         auto* impl = &host;
         window.on<saucer::window::event::close>([self] {
-            if (self->allow_close || !self->page_alive()) return saucer::policy::allow;
+            if (self->allow_close || !self->page_alive()) {
+                // Forget a fullscreen placement, so a later window that gets the same handle starts clean.
+                set_window_fullscreen(self->window->native().hwnd, false);
+                return saucer::policy::allow;
+            }
             self->view->execute("window.dispatchEvent(new CustomEvent('editor:close-request'))");
             return saucer::policy::block;
         });
@@ -1637,6 +1641,9 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
             return !navigation.new_window() && url.scheme() == "saucer" && url.host() == "embedded" && url.path() == std::filesystem::path("/editor.html") ? saucer::policy::allow : saucer::policy::block;
         });
         web.on<saucer::webview::event::permission>([](const std::shared_ptr<saucer::permission::request>& request) { request->accept(false); return saucer::status::handled; });
+        // Fullscreen is handled here, as in the main window: saucer 8.0.5 swaps the monitor's x and y, which moves a
+        // window on a monitor away from 0,0 off every screen.
+        web.on<saucer::webview::event::fullscreen>([self](bool enabled) { set_window_fullscreen(self->window->native().hwnd, enabled); return saucer::policy::block; });
         web.expose("theme_changed", [self](std::string id) {
             const auto next = theme_ground(id);
             self->window->set_background({next.r, next.g, next.b, 255});
