@@ -55,6 +55,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | --- | --- | --- |
 | Start and stop the replay buffer | Done | Stop discards buffered history. |
 | Save by button, tray menu or global hotkey | Done | A save completes when OBS reports the file and the file exists. A failed save is not retried. |
+| Screenshot hotkey | Done | Default Alt+S. A full-size PNG of what OBS captures, in the clips folder (the app's folder when sorting by app). A black picture is deleted and reported. Listed on the **Screenshots** tab. Toast with **Show in folder**, or a tray balloon while hidden. A switch in Settings turns the shortcut off and frees its keys. |
 | Connection and replay state display | Done | Shows connection, session ownership, pending work, errors and the confirmed file. |
 | Reconnect and **Open OBS** | Done | Reconnect never repeats a save. |
 | Capture readiness checks | Done | Verifies scene, sources, display and audio devices before start and save. |
@@ -81,7 +82,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Sort clips into app folders | Done | Best-effort label from the foreground window. |
 | Save sound | Done | |
 | **Start with Windows** | Done | One switch, in guided setup and in Settings, App. Current-user `Run` entry. |
-| Configurable hotkeys with conflict detection | Done | |
+| Configurable hotkeys with conflict detection | Done | Save, show and screenshot. |
 | Animations switch | Done | |
 | Six color themes | Done | Applied to every window. |
 | One explicit Apply with pending state | Done | Capture and audio changes restart the owned OBS session and resume capture. |
@@ -92,6 +93,8 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | --- | --- | --- |
 | Clip list | Done | Every replay and edited export, with no limit, from confirmed saves. Videos already in the clips folder are added at launch. |
 | **Replays** and **Edited exports** tabs | Done | On **Capture** (latest 8) and **Clips** (24 per page). |
+| **Screenshots** tab | Done | On **Clips** only. PNG and JPG pictures in the clips folder (not in Edited Exports), with the same game chips, date filter, search and day headings as clips. A viewer with previous and next, Copy, Show in folder, Open file and Delete. |
+| Screenshot a frame in the replay viewer | Done | A camera button saves the frame on screen at full size, taken from the clip file by FFmpeg, as `<clip> frame M-SS.ss.png` next to the clip, listed on **Screenshots**. |
 | App filter and paging on **Clips** | Done | |
 | Date filter on **Clips** | Done | One menu: Any time, Today, Last 7 days, Last 30 days, This year. |
 | Day headings on **Clips** | Done | Today, Yesterday, then the date with a short age ("3d ago", "2w ago", "1m ago", "1y ago"). A date from another year shows its year. |
@@ -123,6 +126,11 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | Delete original after exporting | Done | Opt-in checkbox in the export dialog, unticked each time. |
 | FFmpeg detection and **Locate ffmpeg.exe** | Done | |
 | Warn on quit with unexported cuts or a running export | Done | |
+| Export menu beside **Export video** | Done | Vertical (9:16), GIF, MP3, WAV and the frame under the playhead, from one split button. An item that can't run is listed with the reason. |
+| Export vertical (9:16) | Done | 1080×1920 H.264. **Fill** crops a window you drag over the picture; **Fit** shows the whole picture over a blurred copy. Quality and **Max size** apply. |
+| Export as GIF | Done | Small 360p 12 fps, Medium 480p 15 fps, Large 720p 20 fps. A Compression slider (None to Maximum) uses fewer colours to make the file smaller, up to about a third of the size. No sound. Up to 60 s. |
+| Export audio as MP3 or WAV | Done | The ticked tracks at their volumes, mixed to one stereo file. MP3 needs an FFmpeg with libmp3lame. |
+| Save this frame (PNG) | Done | The frame under the playhead at full size. |
 
 ## Desktop integration
 

@@ -159,7 +159,7 @@ ProcessResult run_tool(const fs::path& exe, const std::wstring& arguments, const
     return result;
 }
 
-struct FFmpeg { std::string status = "checking"; fs::path exe; std::string version, message; bool nvenc = false, hevc_nvenc = false, x264 = false, x265 = false; };
+struct FFmpeg { std::string status = "checking"; fs::path exe; std::string version, message; bool nvenc = false, hevc_nvenc = false, x264 = false, x265 = false, mp3 = false; };
 
 // Decodes the first audio track to 8 kHz mono and keeps one peak (0..255) per 80 samples: 100 peaks per second.
 // The editor and the replay viewer draw their waveform lanes from this.
@@ -204,6 +204,7 @@ FFmpeg inspect_ffmpeg(const fs::path& exe) {
         info.nvenc = test.code == 0 && !test.canceled;
     }
     info.x265 = encoders.find(" libx265 ") != std::string::npos;
+    info.mp3 = encoders.find(" libmp3lame ") != std::string::npos;
     if (info.nvenc && encoders.find(" hevc_nvenc ") != std::string::npos) {
         const auto test = run_tool(exe, L"-hide_banner -nostdin -loglevel error -f lavfi -i color=c=black:s=256x144:r=30:d=0.2 -c:v hevc_nvenc -preset p4 -rc vbr -cq 23 -b:v 0 -f null -", {}, {}, 15000);
         info.hevc_nvenc = test.code == 0 && !test.canceled;
@@ -462,6 +463,81 @@ std::string concat_entry(const fs::path& file) {
     for (const char c : text) escaped += c == '\'' ? std::string("'\\''") : std::string(1, c);
     return "file '" + escaped + "'\n";
 }
+
+// The frame shown at `time`, as a full-size PNG. The seek lands a quarter frame before that frame, so FFmpeg's first
+// frame at or after it is the frame the player shows. At the end of the clip the playhead can sit past the last
+// frame's start (the container often runs a little longer than the video), so the frame number is held to the last
+// frame (`frames`, 0 when unknown), and a seek that still finds nothing takes the last frame from the end instead.
+ProcessResult extract_frame(const FFmpeg& tool, const fs::path& source, double time, double fps, double duration, int64_t frames,
+                            const fs::path& output, const std::function<bool()>& cancelled) {
+    if (frames <= 0 && fps > 0 && duration > 0) frames = static_cast<int64_t>(std::ceil(duration * fps - 1e-6));
+    double seek = time;
+    if (fps > 0) {
+        auto frame = static_cast<int64_t>(std::floor(time * fps + 1e-3));
+        if (frames > 0) frame = std::min(frame, frames - 1);
+        seek = std::max(0.0, (static_cast<double>(frame) - 0.25) / fps);
+    }
+    const std::wstring picture = L" -map 0:v:0 -vf \"scale=in_color_matrix=auto:in_range=auto,format=rgb24\" -c:v png -f image2 -update 1 ";
+    auto result = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -ss " + number(seek) + L" -i " + quoted(source) + L" -frames:v 1" + picture + quoted(output), {}, cancelled, 60000);
+    std::error_code error;
+    if (result.code == 0 && !result.canceled && (fs::file_size(output, error) == 0 || error))
+        // -update 1 keeps overwriting the picture, so the last frame decoded is the one left.
+        result = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -sseof -1 -i " + quoted(source) + picture + quoted(output), {}, cancelled, 60000);
+    return result;
+}
+
+// What an export makes. "mp4" is the edited video; the others come from the export menu.
+const std::array<std::string_view, 6> export_formats{"mp4", "vertical", "gif", "mp3", "wav", "png"};
+bool video_format(std::string_view format) { return format == "mp4" || format == "vertical"; }
+std::wstring format_extension(std::string_view format) {
+    return format == "gif" ? L".gif" : format == "mp3" ? L".mp3" : format == "wav" ? L".wav" : format == "png" ? L".png" : L".mp4";
+}
+// The word a file gets when it keeps the clip's name: "Replay (edited).mp4", "Replay (vertical).mp4", "Replay (frame).png".
+std::wstring format_label(std::string_view format) {
+    return format == "vertical" ? L"vertical" : format == "mp3" || format == "wav" ? L"audio" : format == "png" ? L"frame" : L"edited";
+}
+
+// A vertical export is 9:16. Fill crops a 9:16 window out of the frame at a chosen place (0 left edge, 1 right edge);
+// Fit shows the whole frame across the middle over a blurred, zoomed copy of itself.
+struct Framing { bool vertical = false, fit = false; double crop = 0.5; };
+// 1080x1920, or 720x1280 from a clip under 1000 lines, so a small clip is not blown up further.
+int vertical_base(const Json& info) { return info.value("height", 0) >= 1000 ? 1920 : 1280; }
+int vertical_width(int height) { return static_cast<int>(std::lround(height * 9.0 / 16 / 2)) * 2; }
+// The tallest vertical size that still gets enough bits per pixel at this bitrate, as limit_height does for landscape.
+int vertical_limit_height(const Json& info, int kbps) {
+    const int base = vertical_base(info);
+    const double fps = std::max(1.0, info.value("fps", 30.0));
+    int last = base;
+    for (const int step : {1920, 1280, 960, 854}) {
+        if (step > base) continue;
+        last = step;
+        if (kbps * 1000.0 / (vertical_width(step) * static_cast<double>(step) * fps) >= 0.045) return step;
+    }
+    return last;
+}
+// The filter that turns the joined video [vc] into the vertical picture [v]. Runs on the CPU.
+std::string vertical_filter(const Framing& framing, int height) {
+    const int width = vertical_width(height);
+    if (!framing.fit)
+        return std::format("[vc]crop=w='min(iw,trunc(ih*9/16/2)*2)':h=ih:x='(iw-ow)*{:.4f}':y=0,scale={}:{}:flags=lanczos,setsar=1,format=yuv420p[v]",
+                           std::clamp(framing.crop, 0.0, 1.0), width, height);
+    // The background is blurred at a quarter size, which looks the same and costs a fraction of the work.
+    const int small_width = std::max(2, width / 8 * 2), small_height = std::max(2, height / 8 * 2);
+    return std::format("[vc]split=2[vb][vf];[vb]scale={0}:{1}:force_original_aspect_ratio=increase,crop={0}:{1},boxblur=10:2,scale={2}:{3},eq=brightness=-0.12:saturation=0.9[vbg];"
+                       "[vf]scale={2}:-2:flags=lanczos[vfg];[vbg][vfg]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]",
+                       small_width, small_height, width, height);
+}
+// GIF sizes: picture height and frame rate. GIFs of game footage grow fast, so the default is modest.
+struct GifPreset { int height, fps; };
+GifPreset gif_preset(std::string_view name) { return name == "small" ? GifPreset{360, 12} : name == "large" ? GifPreset{720, 20} : GifPreset{480, 15}; }
+constexpr double gif_max_seconds = 60;
+// GIF compression, 0 (none) to 4 (maximum): fewer colours, and from Strong on no dithering, which LZW packs far better.
+// Measured on 6 s of 480p 15 fps game footage: 14.0, 10.5, 8.5, 6.4 and 5.1 MB.
+struct GifCompression { int colors; const char* dither; };
+GifCompression gif_compression(int level) {
+    static constexpr std::array<GifCompression, 5> levels{{{256, "bayer:bayer_scale=4"}, {128, "bayer:bayer_scale=5"}, {64, "bayer:bayer_scale=5"}, {32, "none"}, {16, "none"}}};
+    return levels[static_cast<size_t>(std::clamp(level, 0, 4))];
+}
 }
 
 struct EditorHost::Impl {
@@ -482,6 +558,9 @@ struct EditorHost::Impl {
     // Replay viewer waveform: one decode at a time on a worker; asking for another clip makes the running one stale.
     std::atomic<uint64_t> wave_run{0};
     std::map<uint64_t, std::thread> wave_workers;
+    // The replay viewer's screenshot button: one frame at a time, on a worker joined on the UI thread.
+    uint64_t frame_run = 0;
+    std::map<uint64_t, std::thread> frame_workers;
     std::string wave_key, wave_json;  // last finished result (UI thread only)
     // One-click FFmpeg install through winget, the same way guided setup installs OBS Studio.
     std::mutex install_mutex;
@@ -554,6 +633,10 @@ struct EditorHost::Impl {
         else if (key == "preview_cuts") valid = value.is_boolean();
         else if (key == "preview_quality") valid = value.is_string() && (value == "full" || value == "half" || value == "quarter");
         else if (key == "size_limit") valid = value.is_number_integer() && (value == 0 || std::ranges::find(size_limits, value.get<int>()) != size_limits.end());
+        else if (key == "vertical_framing") valid = value.is_string() && (value == "fill" || value == "fit");
+        else if (key == "vertical_crop") valid = number(0, 1);
+        else if (key == "gif_size") valid = value.is_string() && (value == "small" || value == "medium" || value == "large");
+        else if (key == "gif_compression") valid = value.is_number_integer() && number(0, 4);
         else return std::unexpected("Unknown editor preference.");
         if (!valid) return std::unexpected("That preference value isn't supported.");
         store_preference(key.c_str(), value);
@@ -717,7 +800,7 @@ struct EditorHost::Impl::Session {
         return Json{
             {"clip", clip}, {"animations", animations}, {"theme", theme}, {"quality", quality}, {"source_missing", missing},
             {"ffmpeg", {{"status", tool.status}, {"path", path_string(tool.exe)}, {"version", tool.version}, {"message", tool.message}, {"install", host.install_state()},
-                        {"encoder", tool.nvenc ? "NVIDIA NVENC" : tool.x264 ? "x264 (CPU)" : ""}}},
+                        {"encoder", tool.nvenc ? "NVIDIA NVENC" : tool.x264 ? "x264 (CPU)" : ""}, {"mp3", tool.mp3}}},
             {"probe", probe}, {"waveform", {{"status", wave_status}, {"rate", 100}}}, {"export", export_state}, {"preview", preview},
             {"prefs", prefs_for_page()}, {"quality_plans", plans}, {"revision", revision}}.dump();
     }
@@ -837,6 +920,12 @@ struct EditorHost::Impl::Session {
             const auto choice = choose_encode(tool, info, quality, tool.nvenc);
             plans.push_back({{"video_kbps", choice.video_kbps}, {"audio_kbps", plan.audio_kbps}, {"codec", choice.hevc ? "HEVC" : "H.264"},
                              {"height", plan.max_height && height > plan.max_height ? plan.max_height : height}, {"original", false}});
+        }
+        // Export vertical: always re-encoded as H.264 at the vertical size.
+        for (int quality = 1; quality <= 10; ++quality) {
+            const auto rate = vertical_quality_rate(info, quality)(false);
+            plans[quality - 1]["vertical_kbps"] = rate.video_kbps;
+            plans[quality - 1]["vertical_height"] = rate.max_height;
         }
         return plans;
     }
@@ -1036,8 +1125,10 @@ struct EditorHost::Impl::Session {
     // Name typed in the export dialog, already reduced to characters a Windows file name allows; empty keeps the default.
     std::wstring export_name;
     // Ticked in the export dialog: the source file is deleted once the export has been saved. A failed or canceled export keeps it.
+    // Only a video export (mp4 or vertical) can delete the original.
     bool delete_original{};
-    static std::wstring file_name_from(const std::string& typed) { return clean_file_stem(typed, L".mp4"); }
+    // What the running or last export makes (one of export_formats).
+    std::string export_format = "mp4";
     fs::path output_for() const {
         auto folder = source.parent_path();
         if (_wcsicmp(folder.filename().c_str(), L"Edited Exports") != 0) folder /= L"Edited Exports";
@@ -1047,8 +1138,9 @@ struct EditorHost::Impl::Session {
         const bool named = !export_name.empty();
         const auto stem = named ? export_name : source.stem().wstring();
         for (unsigned i = 1; i < 1000; ++i) {
-            const auto suffix = named ? (i == 1 ? std::wstring{} : L" (" + std::to_wstring(i) + L")") : (i == 1 ? std::wstring(L" (edited)") : L" (edited " + std::to_wstring(i) + L")");
-            auto candidate = folder / (stem + suffix + L".mp4");
+            const auto label = format_label(export_format);
+            const auto suffix = named ? (i == 1 ? std::wstring{} : L" (" + std::to_wstring(i) + L")") : (i == 1 ? L" (" + label + L")" : L" (" + label + L" " + std::to_wstring(i) + L")");
+            auto candidate = folder / (stem + suffix + format_extension(export_format));
             std::error_code error;
             if (!fs::exists(candidate, error) && !fs::exists(fs::path(candidate.wstring() + L".part"), error)) return candidate;
         }
@@ -1058,34 +1150,46 @@ struct EditorHost::Impl::Session {
     std::expected<bool, std::string> start_export(const std::string& payload) {
         try {
             const auto request = Json::parse(payload);
+            const auto format = request.value("format", std::string("mp4"));
+            if (std::ranges::find(export_formats, format) == export_formats.end()) return std::unexpected("Choose an export type from the list.");
+            const bool video = video_format(format);
             const int quality = request.at("quality").get<int>();
             if (quality < 1 || quality > 10) return std::unexpected("Choose a quality from 1 to 10.");
             const auto tool = host.ffmpeg_info();
             if (tool.status != "ready") return std::unexpected("FFmpeg is needed to export. Locate ffmpeg.exe first.");
+            if (format == "mp3" && !tool.mp3) return std::unexpected("This FFmpeg build has no MP3 encoder. Export WAV instead, or install a full FFmpeg build.");
             Json info;
             { std::lock_guard lock(mutex); info = probe; if (export_state.value("status", "") == "running") return std::unexpected("An export is already running."); }
             if (info.value("status", "") != "ready") return std::unexpected("The clip is still being analyzed. Try again in a moment.");
-            export_name = file_name_from(request.value("name", std::string{}));
-            delete_original = request.value("delete_original", false);
             const double duration = info.value("duration", 0.0);
             std::vector<std::pair<double, double>> segments;
-            double previous = -1, total = 0;
-            for (const auto& item : request.at("segments")) {
-                const double start = item.at(0).get<double>(), end = item.at(1).get<double>();
-                if (!std::isfinite(start) || !std::isfinite(end) || start < 0 || end <= start || start < previous - 1e-6)
-                    return std::unexpected("The kept sections couldn't be read. Undo the last change and try again.");
-                previous = end;
-                const double clamped = duration > 0 ? std::min(end, duration) : end;
-                if (clamped - start < 0.01) continue;
-                total += clamped - start;
-                segments.emplace_back(start, clamped);
+            double total = 0, frame_time = 0;
+            if (format == "png") {
+                // Save this frame: the frame under the playhead, whatever has been cut.
+                frame_time = request.at("time").get<double>();
+                if (!std::isfinite(frame_time) || frame_time < 0 || (duration > 0 && frame_time > duration + 0.5)) return std::unexpected("The playhead position couldn't be read. Move the playhead and try again.");
+            } else {
+                double previous = -1;
+                for (const auto& item : request.at("segments")) {
+                    const double start = item.at(0).get<double>(), end = item.at(1).get<double>();
+                    if (!std::isfinite(start) || !std::isfinite(end) || start < 0 || end <= start || start < previous - 1e-6)
+                        return std::unexpected("The kept sections couldn't be read. Undo the last change and try again.");
+                    previous = end;
+                    const double clamped = duration > 0 ? std::min(end, duration) : end;
+                    if (clamped - start < 0.01) continue;
+                    total += clamped - start;
+                    segments.emplace_back(start, clamped);
+                }
+                if (segments.empty() || total < 0.1) return std::unexpected("Keep at least one section to export.");
+                if (segments.size() > 200) return std::unexpected("Exports support up to 200 kept sections. Restore or join some sections first.");
             }
-            if (segments.empty() || total < 0.1) return std::unexpected("Keep at least one section to export.");
-            if (segments.size() > 200) return std::unexpected("Exports support up to 200 kept sections. Restore or join some sections first.");
+            if (format == "gif" && total > gif_max_seconds + 0.05) return std::unexpected(std::format("A GIF can be up to {:.0f} seconds. Cut the video shorter first.", gif_max_seconds));
             // Ticked audio tracks: absent means every track as recorded.
             const int recorded = info.value("audio_tracks", 0);
             AudioPlan audio;
             for (int t = 0; t < recorded; ++t) audio.tracks.push_back(t);
+            // The tracks you hear, at their volumes: what an audio export mixes into one stereo file.
+            AudioPlan heard{preview_tracks(recorded), false, {}};
             if (request.contains("tracks") && !request["tracks"].is_null()) {
                 std::vector<int> chosen;
                 for (const auto& item : request.at("tracks")) {
@@ -1114,27 +1218,61 @@ struct EditorHost::Impl::Session {
                     ++it;
                 }
                 if (turned_down || !std::ranges::includes(chosen, listed)) audio = {chosen, chosen.size() >= 2, gains};
+                heard = {chosen, chosen.size() >= 2, gains};
             }
-            const int limit = request.value("size_limit", 0);
+            const bool sound_only = format == "mp3" || format == "wav";
+            if (sound_only) {
+                if (!recorded) return std::unexpected("This clip has no sound to export.");
+                if (heard.tracks.empty()) return std::unexpected("No audio track is ticked. Open Audio tracks and tick the sound you want.");
+            }
+            if (format == "gif" || format == "png") audio = {};
+            const int limit = video ? request.value("size_limit", 0) : 0;
             if (limit && std::ranges::find(size_limits, limit) == size_limits.end()) return std::unexpected("Choose a size from the list.");
             if (limit && !limit_plan(limit * 1e6, total, info.value("fps", 30.0), audio.streams()).possible)
                 return std::unexpected(std::format("This video is too long to fit in {} MB. Cut it shorter or choose a bigger size.", limit));
+            Framing framing;
+            if (format == "vertical") {
+                framing.vertical = true;
+                const auto fit = request.value("framing", std::string("fill"));
+                if (fit != "fill" && fit != "fit") return std::unexpected("Choose Fill or Fit for the vertical video.");
+                framing.fit = fit == "fit";
+                const auto crop = request.value("crop", 0.5);
+                if (!std::isfinite(crop) || crop < 0 || crop > 1) return std::unexpected("The crop position couldn't be read. Move the crop box and try again.");
+                framing.crop = crop;
+            }
+            const auto gif_size = request.value("gif_size", std::string("medium"));
+            if (format == "gif" && gif_size != "small" && gif_size != "medium" && gif_size != "large") return std::unexpected("Choose a GIF size from the list.");
+            const auto compression_value = request.value("gif_compression", Json(0));
+            if (format == "gif" && (!compression_value.is_number_integer() || compression_value.get<int>() < 0 || compression_value.get<int>() > 4)) return std::unexpected("Choose a GIF compression from 0 to 4.");
+            const int compression = compression_value.is_number_integer() ? std::clamp(compression_value.get<int>(), 0, 4) : 0;
             std::error_code missing;
             if (!fs::is_regular_file(source, missing)) return std::unexpected("The original replay was moved or deleted, so it can't be exported.");
-            if (!limit) host.store_preference("quality", quality);
+            if (format == "mp4" && !limit) host.store_preference("quality", quality);
             if (exporter.joinable()) exporter.join();
+            export_name = clean_file_stem(request.value("name", std::string{}), format_extension(format));
+            delete_original = video && request.value("delete_original", false);
+            export_format = format;
             cancel_export = false;
-            const bool smart = smart_cut_possible(tool, info);
+            const bool smart = format == "mp4" && smart_cut_possible(tool, info);
             // A size limit is for sharing, so its video is always H.264, which plays everywhere. It keeps the original
             // video only when that is H.264 already and the edit fits well under the limit (checked again after export).
             const bool original = limit ? smart && lower(info.value("codec", "")) == "h264" && original_bytes(info, total, audio) <= limit * 1e6 * 0.9 : quality == 10 && smart;
-            change([&] { export_state = {{"status", "running"}, {"progress", 0.0}, {"speed", 0.0}, {"quality", quality}, {"size_limit", limit}, {"attempt", 1}, {"total", total},
-                                         {"encoder", original ? "Original video" : encoder_label(tool, info, quality, tool.nvenc, limit != 0)}}; });
+            const std::string label = format == "mp4" ? (original ? "Original video" : encoder_label(tool, info, quality, tool.nvenc, limit != 0))
+                : format == "vertical" ? encoder_label(tool, info, quality, tool.nvenc, true)
+                : format == "gif" ? "GIF" : format == "mp3" ? "MP3" : format == "wav" ? "WAV" : "PNG";
+            change([&] { export_state = {{"status", "running"}, {"format", format}, {"progress", 0.0}, {"speed", 0.0}, {"quality", quality}, {"size_limit", limit}, {"attempt", 1}, {"total", total},
+                                         {"encoder", label}}; });
+            const auto& logged = sound_only ? heard : audio;
             std::string volumes_text;
-            for (size_t i = 0; i < audio.gains.size(); ++i) volumes_text += std::format("{}{}:{:.0f}%", i ? "," : "", audio.tracks[i], audio.gains[i] * 100);
-            log_info("Export started: source={} sections={} seconds={:.2f} quality={} size_limit_mb={} audio_streams={}{}{} original_video={}", quoted_value(path_string(source)), segments.size(), total, quality, limit,
-                     audio.streams(), audio.mix ? " (mix)" : "", volumes_text.empty() ? "" : " track_volumes=" + volumes_text, original);
-            exporter = std::thread([this, tool, info, segments, total, quality, limit, audio, original] { run_export(tool, info, segments, total, quality, limit, audio, original); });
+            for (size_t i = 0; i < logged.gains.size(); ++i) volumes_text += std::format("{}{}:{:.0f}%", i ? "," : "", logged.tracks[i], logged.gains[i] * 100);
+            const auto extra = framing.vertical ? std::format(" framing={} crop={:.3f}", framing.fit ? "fit" : "fill", framing.crop)
+                : format == "gif" ? std::format(" gif_size={} gif_compression={}", gif_size, compression) : format == "png" ? std::format(" time={:.3f}", frame_time) : std::string{};
+            log_info("Export started: format={} source={} sections={} seconds={:.2f} quality={} size_limit_mb={} audio_streams={}{}{} original_video={}{}", format, quoted_value(path_string(source)), segments.size(), total, quality, limit,
+                     logged.streams(), logged.mix ? " (mix)" : "", volumes_text.empty() ? "" : " track_volumes=" + volumes_text, original, extra);
+            const AudioPlan sound = sound_only ? heard : audio;
+            exporter = std::thread([this, tool, info, segments, total, quality, limit, sound, original, format, framing, gif_size, compression, frame_time] {
+                run_export(tool, info, segments, total, quality, limit, sound, original, format, framing, gif_size, compression, frame_time);
+            });
             return true;
         } catch (const std::exception& e) { return std::unexpected(std::string("The export request could not be read. ") + e.what()); }
     }
@@ -1289,23 +1427,38 @@ struct EditorHost::Impl::Session {
     }
     // maxrate with a one-second buffer caps the whole video at maxrate x (length + 1 s) whatever the content,
     // so the first attempt nearly always fits. Calm scenes still come in under the cap.
-    static RateFor limit_rate(const Json& info, double seconds, int video_kbps, int audio_kbps) {
+    static RateFor limit_rate(const Json& info, double seconds, int video_kbps, int audio_kbps, bool vertical = false) {
         const int cap = std::max(1, static_cast<int>(video_kbps * seconds / (seconds + 1)));
-        return [info, cap, audio_kbps](bool hevc) { return EncodeRate{cap, cap, cap, audio_kbps, limit_height(info, cap, hevc)}; };
+        return [info, cap, audio_kbps, vertical](bool hevc) { return EncodeRate{cap, cap, cap, audio_kbps, vertical ? vertical_limit_height(info, cap) : limit_height(info, cap, hevc)}; };
+    }
+    // Export vertical at a quality: the clip's bitrate share for that quality, scaled by how many pixels the vertical
+    // picture has against the clip, as H.264. max_height is the vertical picture's height.
+    static RateFor vertical_quality_rate(const Json& info, int quality) {
+        return [info, quality](bool) {
+            const auto plan = plan_for(quality);
+            const int height = vertical_base(info);
+            const double source = std::max(1.0, static_cast<double>(info.value("width", 0)) * info.value("height", 0));
+            const double pixels = std::min(2.0, vertical_width(height) * static_cast<double>(height) / source);
+            const double factor = lower(info.value("codec", "")) == "h264" ? 1.0 : 1.35;
+            const int kbps = std::max(1500, static_cast<int>(std::lround(reference_kbps(info) * plan.share * factor * pixels)));
+            return EncodeRate{kbps, kbps * 3 / 2, kbps * 2, plan.audio_kbps, height};
+        };
     }
 
     // Quality 1-9, 10 when the original can't be kept, and size limits: re-encode the kept sections into one video.
     ProcessResult encode_export(const FFmpeg& tool, const Json& info, const std::vector<std::pair<double, double>>& segments, double total, int quality,
-                                const RateFor& rate_for, const AudioPlan& audio_plan, const fs::path& work, const fs::path& temporary, bool h264_only = false) {
+                                const RateFor& rate_for, const AudioPlan& audio_plan, const fs::path& work, const fs::path& temporary, bool h264_only = false,
+                                const Framing& framing = {}) {
         const int height = info.value("height", 0);
         std::vector<int> levels;  // 0: GPU decode + NVENC, 1: CPU decode + NVENC, 2: x264
-        if (tool.nvenc) { levels.push_back(0); levels.push_back(1); }
+        // A vertical picture is cropped and blurred on the CPU, so its frames are decoded there too.
+        if (tool.nvenc) { if (!framing.vertical) levels.push_back(0); levels.push_back(1); }
         if (tool.x264) levels.push_back(2);
         ProcessResult result;
         for (const int level : levels) {
             std::error_code ignored; fs::remove(temporary, ignored);
             const bool gpu = level == 0, hardware = level < 2;
-            const bool hevc = !h264_only && choose_encode(tool, info, quality, hardware).hevc;
+            const bool hevc = !h264_only && !framing.vertical && choose_encode(tool, info, quality, hardware).hevc;
             const auto plan = rate_for(hevc);
             // Separate seeking inputs decode only the kept sections; each GPU input holds a decoder, so cap them lower.
             const bool seeking = segments.size() <= (gpu ? 4u : 16u);
@@ -1327,9 +1480,10 @@ struct EditorHost::Impl::Session {
             }
             filter += chain + std::format("concat=n={}:v=1:a={}[vc]", segments.size(), audio_plan.tracks.size());
             for (const int t : audio_plan.tracks) filter += std::format("[o{}]", t);
-            const bool scale = plan.max_height && height > plan.max_height;
-            filter += gpu ? (scale ? std::format(";[vc]scale_cuda=-2:{}:format=yuv420p[v]", plan.max_height) : std::string(";[vc]scale_cuda=format=yuv420p[v]"))
-                          : std::format(";[vc]{}format=yuv420p[v]", scale ? std::format("scale=-2:{}:flags=lanczos,", plan.max_height) : std::string{});
+            const bool scale = !framing.vertical && plan.max_height && height > plan.max_height;
+            if (framing.vertical) filter += ";" + vertical_filter(framing, plan.max_height);
+            else filter += gpu ? (scale ? std::format(";[vc]scale_cuda=-2:{}:format=yuv420p[v]", plan.max_height) : std::string(";[vc]scale_cuda=format=yuv420p[v]"))
+                               : std::format(";[vc]{}format=yuv420p[v]", scale ? std::format("scale=-2:{}:flags=lanczos,", plan.max_height) : std::string{});
             const auto outputs = audio_outputs(audio_plan, filter);
             atomic_write(work / L"video.txt", filter);
             std::wstring maps = L" -map \"[v]\"";
@@ -1341,7 +1495,8 @@ struct EditorHost::Impl::Session {
                 : L" -c:v libx264 -preset faster" + bitrate;
             const std::wstring audio = outputs.empty() ? L"" : L" -c:a aac -b:a " + std::to_wstring(plan.audio_kbps) + L"k";
             change([&] {
-                export_state["encoder"] = encoder_label(tool, info, quality, hardware, h264_only) + (scale ? std::format(" · {}p", plan.max_height) : std::string{});
+                export_state["encoder"] = encoder_label(tool, info, quality, hardware, h264_only || framing.vertical)
+                    + (framing.vertical ? std::format(" · {}×{}", vertical_width(plan.max_height), plan.max_height) : scale ? std::format(" · {}p", plan.max_height) : std::string{});
                 export_state["progress"] = 0.0; export_state.erase("eta");
             });
             std::string carry;
@@ -1362,7 +1517,7 @@ struct EditorHost::Impl::Session {
     // Size limit: encode, measure the real file, and while it is over the limit encode again with a video bitrate
     // lowered by the overshoot plus a margin. Never more than three encodes; a file that still doesn't fit is deleted.
     ProcessResult fit_export(const FFmpeg& tool, const Json& info, const std::vector<std::pair<double, double>>& segments, double total, int quality,
-                             int limit, const AudioPlan& audio, bool original, const fs::path& work, const fs::path& temporary, int& attempts) {
+                             int limit, const AudioPlan& audio, bool original, const fs::path& work, const fs::path& temporary, int& attempts, const Framing& framing = {}) {
         const double limit_bytes = limit * 1e6;
         const auto size_of = [&] { std::error_code error; const auto bytes = fs::file_size(temporary, error); return error ? 0.0 : static_cast<double>(bytes); };
         const auto over = [&](double bytes) { std::error_code ignored; fs::remove(temporary, ignored); log_info("Export over its size limit: attempt={} bytes={:.0f} limit={:.0f}", attempts, bytes, limit_bytes); };
@@ -1383,12 +1538,12 @@ struct EditorHost::Impl::Session {
         auto plan = limit_plan(limit_bytes, total, info.value("fps", 30.0), audio.streams());
         // A big limit on a small clip must not blow the file up to the limit: the video never gets more than the
         // source needs as H.264 (its own bitrate, or 1.35 times it when the source is HEVC or AV1).
-        const double enough = reference_kbps(info) * (lower(info.value("codec", "")) == "h264" ? 1.0 : 1.35);
+        const double enough = framing.vertical ? vertical_quality_rate(info, 10)(false).video_kbps : reference_kbps(info) * (lower(info.value("codec", "")) == "h264" ? 1.0 : 1.35);
         double video_kbps = std::min<double>(plan.video_kbps, std::max<double>(enough, limit_min_video_kbps));
         for (int pass = 0; pass < 3; ++pass) {
             ++attempts;
             change([&] { export_state["attempt"] = attempts; export_state["progress"] = 0.0; });
-            result = encode_export(tool, info, segments, total, quality, limit_rate(info, total, static_cast<int>(video_kbps), plan.audio_kbps), audio, work, temporary, true);
+            result = encode_export(tool, info, segments, total, quality, limit_rate(info, total, static_cast<int>(video_kbps), plan.audio_kbps, framing.vertical), audio, work, temporary, true, framing);
             if (result.canceled || result.code != 0 || !result.started) return result;
             const double bytes = size_of();
             if (bytes > 0 && bytes <= limit_bytes) return result;
@@ -1404,10 +1559,103 @@ struct EditorHost::Impl::Session {
         return result;
     }
 
+    // GIF: two passes over the kept sections. The first builds a 256-colour palette for this video, the second draws
+    // the video with it. A GIF has no sound.
+    ProcessResult gif_export(const FFmpeg& tool, const Json& info, const std::vector<std::pair<double, double>>& segments, double total,
+                             const std::string& size, int compression, const fs::path& work, const fs::path& temporary) {
+        const auto preset = gif_preset(size);
+        const auto squeeze = gif_compression(compression);
+        const int source_height = info.value("height", 0);
+        const int height = source_height > 0 ? std::min(preset.height, source_height) : preset.height;
+        // Separate seeking inputs decode only the kept sections, as encode_export does.
+        const bool seeking = segments.size() <= 16;
+        std::wstring inputs = seeking ? L"" : L" -i " + quoted(source);
+        std::string picture, joins;
+        for (size_t i = 0; i < segments.size(); ++i) {
+            const auto& [first, last] = segments[i];
+            const auto input = seeking ? std::to_string(i) : std::string("0");
+            if (seeking) inputs += L" -ss " + number(first) + L" -t " + number(last - first) + L" -i " + quoted(source);
+            const auto trim = seeking ? std::string{} : std::format("trim=start={:.6f}:end={:.6f},", first, last);
+            picture += std::format("[{}:v:0]{}setpts=PTS-STARTPTS[v{}];", input, trim, i);
+            joins += std::format("[v{}]", i);
+        }
+        picture += joins + std::format("concat=n={}:v=1:a=0,fps={},scale=-2:{}:flags=lanczos,setsar=1", segments.size(), preset.fps, height);
+        const auto palette = work / L"palette.png";
+        const size_t palette_input = seeking ? segments.size() : 1;
+        const auto cancelled = [&] { return cancel_export.load() || stopping.load(); };
+        ProcessResult result;
+        for (int pass = 0; pass < 2; ++pass) {
+            const auto graph = pass == 0 ? picture + std::format(",palettegen=max_colors={}:stats_mode=diff[p]", squeeze.colors)
+                                         : picture + std::format("[x];[x][{}:v]paletteuse=dither={}:diff_mode=rectangle[p]", palette_input, squeeze.dither);
+            const auto script = work / (pass == 0 ? L"palette.txt" : L"gif.txt");
+            atomic_write(script, graph);
+            const std::wstring output = pass == 0 ? L" -map \"[p]\" -frames:v 1 -update 1 -f image2 " + quoted(palette)
+                                                  : L" -map \"[p]\" -loop 0 -f gif " + quoted(temporary);
+            std::string carry;
+            int64_t written = -1;
+            const auto started = Clock::now();
+            result = run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats" + inputs + (pass == 1 ? L" -i " + quoted(palette) : std::wstring{}) +
+                filter_file(tool, script) + output, progress_reader(carry, written, [&](double seconds, double speed) {
+                    if (seconds < 0) { if (speed >= 0) change([&] { export_state["speed"] = speed; }); return; }
+                    if (pass == 0) return;  // the palette is written at the end, so the first pass has no running position
+                    const double part = std::clamp(seconds / std::max(total, 0.1), 0.0, 1.0);
+                    const double elapsed = std::chrono::duration<double>(Clock::now() - started).count();
+                    change([&] { export_state["progress"] = 0.3 + 0.7 * part; export_state["eta"] = part > 0.02 ? elapsed * (1 - part) / part : -1.0; });
+                }), cancelled);
+            if (result.canceled || result.code != 0 || !result.started) return result;
+            if (pass == 0) {
+                std::error_code error;
+                if (fs::file_size(palette, error) == 0 || error) { result.code = 1; result.errors = "FFmpeg couldn't build the GIF's colours."; return result; }
+                change([&] { export_state["progress"] = 0.3; });
+            }
+        }
+        return result;
+    }
+
+    // MP3 or WAV: the ticked tracks at their volumes, cut to the kept sections and mixed into one stereo file.
+    ProcessResult audio_export(const FFmpeg& tool, const std::vector<std::pair<double, double>>& segments, double total, const AudioPlan& heard,
+                               bool wav, const fs::path& work, const fs::path& temporary) {
+        std::string graph, chain, mix;
+        for (size_t i = 0; i < segments.size(); ++i)
+            for (const int t : heard.tracks) {
+                graph += std::format("[0:a:{}]atrim=start={:.6f}:end={:.6f},asetpts=PTS-STARTPTS[a{}_{}];", t, segments[i].first, segments[i].second, i, t);
+                chain += std::format("[a{}_{}]", i, t);
+            }
+        graph += chain + std::format("concat=n={}:v=0:a={}", segments.size(), heard.tracks.size());
+        for (const int t : heard.tracks) graph += std::format("[o{}]", t);
+        for (size_t i = 0; i < heard.tracks.size(); ++i) {
+            graph += std::format(";[o{0}]volume={1:.4f}[g{0}]", heard.tracks[i], heard.gain(i));
+            mix += std::format("[g{}]", heard.tracks[i]);
+        }
+        // normalize=0 adds the tracks at their own levels, as OBS builds its Mix and as the video export does.
+        graph += heard.tracks.size() >= 2 ? std::format(";{}amix=inputs={}:duration=longest:normalize=0,", mix, heard.tracks.size()) : ";" + mix;
+        graph += "aresample=48000,aformat=channel_layouts=stereo[out]";
+        atomic_write(work / L"audio.txt", graph);
+        const std::wstring codec = wav ? L" -c:a pcm_s16le -f wav " : L" -c:a libmp3lame -b:a 192k -id3v2_version 3 -f mp3 ";
+        std::string carry;
+        int64_t written = -1;
+        return run_tool(tool.exe, L"-hide_banner -nostdin -y -loglevel error -progress pipe:1 -nostats -i " + quoted(source) + filter_file(tool, work / L"audio.txt") +
+            L" -map \"[out]\" -map_metadata -1" + codec + quoted(temporary), progress_reader(carry, written, [&](double seconds, double) {
+                if (seconds >= 0 && total > 0) change([&] { export_state["progress"] = std::clamp(seconds / total, 0.0, 1.0); });
+            }), [&] { return cancel_export.load() || stopping.load(); });
+    }
+
+    // Save this frame: the one frame under the playhead, as a full-size PNG. The seek lands a quarter frame before
+    // that frame, so FFmpeg's first frame at or after it is the frame the editor shows.
+    // At the end of the clip the playhead can sit past the last frame's start (the container often runs a little
+    // longer than the video), so the frame number is held to the last frame, and a seek that still finds nothing
+    // takes the last frame from the end instead.
+    ProcessResult frame_export(const FFmpeg& tool, const Json& info, double time, const fs::path& temporary) {
+        int64_t frames = 0;
+        { std::lock_guard lock(mutex); frames = frame_count; }
+        return extract_frame(tool, source, time, info.value("fps", 0.0), info.value("duration", 0.0), frames, temporary, [&] { return cancel_export.load() || stopping.load(); });
+    }
+
     void run_export(const FFmpeg& tool, const Json& info, const std::vector<std::pair<double, double>>& segments, double total, int quality, int limit,
-                    const AudioPlan& audio, bool original) {
+                    const AudioPlan& audio, bool original, const std::string& format, const Framing& framing, const std::string& gif_size, int compression, double frame_time) {
         const auto com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         fs::path temporary, work;
+        const bool video = video_format(format);
         try {
             auto final = output_for();
             temporary = fs::path(final.wstring() + L".part");
@@ -1417,7 +1665,11 @@ struct EditorHost::Impl::Session {
             if (made) throw std::runtime_error("A temporary folder for the export could not be created.");
             ProcessResult result;
             int attempts = 0;  // encodes a size limit needed
-            if (limit) result = fit_export(tool, info, segments, total, quality, limit, audio, original, work, temporary, attempts);
+            if (format == "gif") result = gif_export(tool, info, segments, total, gif_size, compression, work, temporary);
+            else if (format == "mp3" || format == "wav") result = audio_export(tool, segments, total, audio, format == "wav", work, temporary);
+            else if (format == "png") result = frame_export(tool, info, frame_time, temporary);
+            else if (limit) result = fit_export(tool, info, segments, total, quality, limit, audio, original, work, temporary, attempts, framing);
+            else if (framing.vertical) result = encode_export(tool, info, segments, total, quality, vertical_quality_rate(info, quality), audio, work, temporary, true, framing);
             else {
                 bool finished = false;
                 if (original) {
@@ -1430,6 +1682,11 @@ struct EditorHost::Impl::Session {
                 }
                 if (!finished) result = encode_export(tool, info, segments, total, quality, quality_rate(tool, info, quality), audio, work, temporary);
             }
+            // FFmpeg can finish without writing anything, for example a frame past the end of the clip.
+            if (!result.canceled && result.started && result.code == 0) {
+                std::error_code error;
+                if (fs::file_size(temporary, error) == 0 || error) { result.code = 1; result.errors = "FFmpeg finished without writing the file."; }
+            }
             if (result.fit_failed) {
                 throw std::runtime_error(result.errors);
             } else if (result.canceled) {
@@ -1441,7 +1698,7 @@ struct EditorHost::Impl::Session {
             } else if (result.code != 0) {
                 std::error_code ignored; fs::remove(temporary, ignored);
                 const auto detail = last_line(result.errors);
-                throw std::runtime_error("FFmpeg could not export this video." + (detail.empty() ? std::string{} : " " + detail));
+                throw std::runtime_error(std::string(format == "png" ? "FFmpeg could not save this frame." : format == "mp3" || format == "wav" ? "FFmpeg could not export the sound." : format == "gif" ? "FFmpeg could not make the GIF." : "FFmpeg could not export this video.") + (detail.empty() ? std::string{} : " " + detail));
             } else {
                 bool moved = false;
                 for (int i = 0; i < 20 && !moved; ++i) {
@@ -1453,22 +1710,25 @@ struct EditorHost::Impl::Session {
                 std::error_code error;
                 const auto bytes = fs::file_size(final, error);
                 std::string history_note;
-                const auto added = host.controller.add_clip(path_string(final), clip.value("app", ""));
-                if (!added) history_note = added.error();
+                // Only videos go into the clip list; a GIF, sound file or frame is offered from the editor and the folder.
+                if (video) {
+                    const auto added = host.controller.add_clip(path_string(final), clip.value("app", ""));
+                    if (!added) history_note = added.error();
+                }
                 { std::lock_guard lock(mutex); if (export_state.contains("note")) history_note = export_state["note"].get<std::string>() + (history_note.empty() ? "" : " " + history_note); }
                 // The finished video is offered in the editor (Play video, Show in folder); File Explorer is not opened unasked.
                 const bool revealed = false;
-                log_info("Export finished: file={} bytes={} seconds={:.2f} size_limit_mb={} attempts={}{}", quoted_value(path_string(final)), error ? 0 : bytes, total, limit, std::max(1, attempts), history_note.empty() ? "" : " note=" + quoted_value(history_note));
+                log_info("Export finished: format={} file={} bytes={} seconds={:.2f} size_limit_mb={} attempts={}{}", format, quoted_value(path_string(final)), error ? 0 : bytes, total, limit, std::max(1, attempts), history_note.empty() ? "" : " note=" + quoted_value(history_note));
                 bool original_deleted = false;
-                if (delete_original) {
+                if (delete_original && video) {
                     const auto removed = host.controller.remove_clip(path_string(source));
                     original_deleted = removed.has_value();
                     if (!removed) { history_note += (history_note.empty() ? "" : " ") + removed.error(); log_warn("Original kept after export: file={} error={}", quoted_value(path_string(source)), quoted_value(removed.error())); }
                 }
                 change([&] {
-                    export_state = {{"status", "done"}, {"output", path_string(final)}, {"name", path_string(final.filename())}, {"bytes", error ? 0 : bytes},
+                    export_state = {{"status", "done"}, {"format", format}, {"output", path_string(final)}, {"name", path_string(final.filename())}, {"bytes", error ? 0 : bytes},
                                     {"duration", total}, {"revealed", revealed}, {"note", history_note}, {"quality", quality}, {"original_deleted", original_deleted},
-                                    {"size_limit", limit}, {"attempts", std::max(1, attempts)}, {"audio_streams", audio.streams()}};
+                                    {"size_limit", limit}, {"attempts", std::max(1, attempts)}, {"audio_streams", format == "mp3" || format == "wav" ? 1 : audio.streams()}};
                 });
             }
         } catch (const std::exception& e) {
@@ -1481,6 +1741,7 @@ struct EditorHost::Impl::Session {
     }
 
     std::string exported_path() { std::lock_guard lock(mutex); return export_state.value("status", "") == "done" ? export_state.value("output", "") : std::string{}; }
+    std::string exported_format() { std::lock_guard lock(mutex); return export_state.value("format", std::string("mp4")); }
 };
 
 EditorHost::Impl::~Impl() {
@@ -1489,6 +1750,7 @@ EditorHost::Impl::~Impl() {
     if (installer.joinable()) installer.join();
     ++wave_run;
     for (auto& [run, worker] : wave_workers) if (worker.joinable()) worker.join();
+    for (auto& [run, worker] : frame_workers) if (worker.joinable()) worker.join();
     sessions.clear();
     for (auto& detector : detectors) if (detector.joinable()) detector.join();
 }
@@ -1532,6 +1794,76 @@ EditorHost::EditorHost(saucer::application* app, Controller& controller, Paths p
 EditorHost::~EditorHost() = default;
 
 void EditorHost::on_play(std::function<void(const std::string&)> handler) { impl_->play = std::move(handler); }
+
+void EditorHost::save_frame(const std::string& path, double time, std::function<void(std::string)> callback) {
+    auto& host = *impl_;
+    // Shared, so a worker that can't be started still answers the page.
+    const auto done = std::make_shared<std::function<void(std::string)>>(std::move(callback));
+    const auto fail = [&](const std::string& error) { (*done)(Json{{"status", "failed"}, {"error", error}}.dump()); };
+    try {
+        if (!host.controller.knows_clip(path)) return fail("This clip is no longer in your list.");
+        if (!std::isfinite(time) || time < 0) return fail("The playhead position couldn't be read.");
+        const auto source = from_string(path);
+        auto extension = source.extension().wstring();
+        for (auto& c : extension) c = static_cast<wchar_t>(towlower(c));
+        if (extension == L".png" || extension == L".jpg" || extension == L".jpeg") return fail("This is already a picture.");
+        // The game the clip belongs to, so the screenshot sorts with it on the Screenshots tab.
+        std::string app;
+        try { for (const auto& clip : Json::parse(host.controller.snapshot()).at("clips")) if (clip.value("path", "") == path) { app = clip.value("app", ""); break; } } catch (...) {}
+        host.detect_if_needed();
+        const uint64_t run = ++host.frame_run;
+        host.frame_workers.emplace(run, std::thread([&host, run, source, path, time, app, token = std::weak_ptr<bool>(host.alive), done]() mutable {
+            Json result = {{"status", "failed"}, {"error", "The frame couldn't be saved."}};
+            fs::path temporary;
+            try {
+                for (int i = 0; i < 2000 && host.detecting() && !host.closing.load(); ++i) Sleep(10);
+                const auto tool = host.ffmpeg_info();
+                if (tool.status != "ready") throw std::runtime_error("FFmpeg is needed to save a frame. Open a clip in the editor to install it.");
+                const auto cancelled = [&] { return host.closing.load(); };
+                const auto probe = probe_from_output(run_tool(tool.exe, L"-hide_banner -nostdin -i " + quoted(source), {}, cancelled, 20000).errors);
+                if (probe.value("status", "") != "ready") throw std::runtime_error("FFmpeg couldn't read this clip's video.");
+                // Next to the clip; an export's frame goes beside its Edited Exports folder, where screenshots are listed.
+                auto folder = source.parent_path();
+                if (_wcsicmp(folder.filename().c_str(), L"Edited Exports") == 0) folder = folder.parent_path();
+                const auto seconds = std::max(0.0, time);
+                const auto minutes = static_cast<int>(seconds / 60);
+                const auto stamp = wide(std::format("{}-{:05.2f}", minutes, seconds - minutes * 60));
+                fs::path output;
+                for (unsigned i = 1; i < 1000 && output.empty(); ++i) {
+                    auto candidate = folder / (source.stem().wstring() + L" frame " + stamp + (i == 1 ? std::wstring{} : L" (" + std::to_wstring(i) + L")") + L".png");
+                    std::error_code error;
+                    if (!fs::exists(candidate, error) && !fs::exists(fs::path(candidate.wstring() + L".part"), error)) output = candidate;
+                }
+                if (output.empty()) throw std::runtime_error("Too many frames of this clip have that name.");
+                temporary = fs::path(output.wstring() + L".part");
+                const auto made = extract_frame(tool, source, time, probe.value("fps", 0.0), probe.value("duration", 0.0), 0, temporary, cancelled);
+                std::error_code error;
+                if (made.canceled) throw std::runtime_error("OBSReplay is closing.");
+                if (made.code != 0 || fs::file_size(temporary, error) == 0 || error) {
+                    const auto detail = last_line(made.errors);
+                    throw std::runtime_error("FFmpeg couldn't save this frame." + (detail.empty() ? std::string{} : " " + detail));
+                }
+                if (!MoveFileExW(temporary.c_str(), output.c_str(), MOVEFILE_WRITE_THROUGH)) throw std::runtime_error("Windows couldn't save the frame next to the clip.");
+                temporary.clear();
+                const auto added = host.controller.add_screenshot(path_string(output), app);
+                const auto bytes = fs::file_size(output, error);
+                log_info("Frame saved from viewer: source={} time={:.3f} file={} bytes={}", quoted_value(path), time, quoted_value(path_string(output)), error ? 0 : bytes);
+                result = {{"status", "saved"}, {"path", path_string(output)}, {"name", path_string(output.filename())}, {"bytes", error ? 0 : bytes}};
+                if (!added) result["note"] = added.error();
+            } catch (const std::exception& e) {
+                result = {{"status", "failed"}, {"error", e.what()}};
+                log_warn("Frame not saved from viewer: source={} error={}", quoted_value(path), quoted_value(e.what()));
+            }
+            if (!temporary.empty()) { std::error_code ignored; fs::remove(temporary, ignored); }
+            // The promise is settled on the UI thread, which also joins this worker.
+            host.app->post([&host, run, token, text = result.dump(), done]() mutable {
+                if (!token.lock()) return;
+                if (const auto worker = host.frame_workers.find(run); worker != host.frame_workers.end()) { worker->second.join(); host.frame_workers.erase(worker); }
+                (*done)(std::move(text));
+            });
+        }));
+    } catch (const std::exception& e) { fail(e.what()); }
+}
 void EditorHost::waveform(const std::string& path, std::function<void(std::string)> done) {
     try { impl_->waveform(path, done); } catch (...) { done(R"({"status":"unavailable"})"); }
 }
@@ -1541,6 +1873,11 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
     try {
         log_info("Editor requested: file={}", quoted_value(path));
         if (!host.controller.knows_clip(path)) return std::unexpected("This replay is no longer in your recent clips.");
+        {
+            auto extension = from_string(path).extension().wstring();
+            for (auto& c : extension) c = static_cast<wchar_t>(towlower(c));
+            if (extension == L".png" || extension == L".jpg" || extension == L".jpeg") return std::unexpected("A screenshot can't be opened in the clip editor.");
+        }
         for (auto& session : host.sessions) {
             if (session->clip.value("path", "") == path && !session->allow_close) {
                 if (headless_mode()) return true;
@@ -1682,6 +2019,10 @@ std::expected<bool, std::string> EditorHost::open(const std::string& path) {
         web.expose("play_output", [self, impl, token = std::weak_ptr<bool>(impl->alive)]() -> std::expected<bool, std::string> {
             const auto output = self->exported_path();
             if (output.empty()) return std::unexpected("Export a video first.");
+            if (!video_format(self->exported_format())) {
+                log_info("Open exported file: file={}", quoted_value(output));
+                try { open_path(from_string(output), false); return true; } catch (const std::exception& e) { return std::unexpected(e.what()); }
+            }
             log_info("Play exported video: file={}", quoted_value(output));
             impl->app->post([impl, output, token] { if (token.lock() && impl->play) impl->play(output); });
             return true;

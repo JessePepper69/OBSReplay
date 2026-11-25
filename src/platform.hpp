@@ -67,6 +67,9 @@ std::string random_secret();
 std::string sha256_base64(const std::string& input);
 std::string now_iso();
 void save_feedback();
+void screenshot_feedback();
+// Whether a picture file is black all over (read small). False when it cannot be read.
+bool image_is_black(const fs::path& file);
 // True while a process with this executable name (for example L"NVIDIA Overlay.exe") is running.
 bool process_running(const wchar_t* executable);
 // Puts existing files on the clipboard as files, the way Explorer's Copy does, so they paste into a chat or a folder.

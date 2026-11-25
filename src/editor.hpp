@@ -29,6 +29,10 @@ public:
     // or {"status":"unavailable"}. Decoded on a worker thread; `done` is called once, on the UI thread.
     // Asking for another clip stops a decode that is still running. Only clips in the recent history are read.
     void waveform(const std::string& path, std::function<void(std::string)> done);
+    // The replay viewer's screenshot button: the frame of a listed clip at `time` seconds, at full size from the file,
+    // saved as a PNG next to the clip and listed as a screenshot. `done` gets {"status":"saved","path","name","bytes"}
+    // or {"status":"failed","error"}, once, on the UI thread.
+    void save_frame(const std::string& path, double time, std::function<void(std::string)> done);
     // Called on the UI thread when an editor asks to play a video (its export) in the main window's viewer.
     void on_play(std::function<void(const std::string& path)> handler);
     struct Impl;

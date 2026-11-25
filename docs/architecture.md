@@ -113,10 +113,11 @@ See [product](product.md) for the rules the code must keep and [scope](scope.md)
 ### Global hotkeys
 
 - `parse_hotkey` accepts `Alt`, `Ctrl`/`Control`, `Shift` plus one of `A`-`Z`, `0`-`9`, `F1`-`F24`. One modifier is the minimum.
-- `Desktop::bind` registers both hotkeys with `RegisterHotKey` and `MOD_NOREPEAT`. If one fails, it restores the previous pair and returns an error that names the conflicting shortcut.
-- The save hotkey dispatches `save`. The show hotkey toggles the window.
+- `Desktop::bind` registers the three hotkeys (save, show, screenshot) with `RegisterHotKey` and `MOD_NOREPEAT`. Save and show work as a pair: if one fails, it restores the previous shortcuts and returns an error that names the conflicting one.
+- The screenshot hotkey is registered last. When another app holds it, a change being applied (`strict`) is refused and the previous shortcuts come back. At launch, or from settings already saved, save and show stay registered and `hotkey_error` names the screenshot shortcut. The same keys are not tried again until they change.
+- The save hotkey dispatches `save`. The show hotkey toggles the window. The screenshot hotkey dispatches `screenshot`.
 - `Desktop::reconcile` rebinds from the settings in the snapshot. While a `setup` or `apply` is pending, it waits until the settings match or the controller finishes.
-- `hotkey_recording(true)` unregisters both hotkeys so the page can capture a key combination. Recording ends on `hotkey_recording(false)`, on window focus loss, on hide, or after 45 s.
+- `hotkey_recording(true)` unregisters all three hotkeys so the page can capture a key combination. Recording ends on `hotkey_recording(false)`, on window focus loss, on hide, or after 45 s.
 
 ### Show and hide to tray
 
@@ -280,6 +281,8 @@ The page calls `window.saucer.exposed.<name>(...)`. Each call returns a promise.
 | `drag_clips` | JSON array of paths | nothing | Start an OLE drag of listed clips out of the window. The page calls it while the left button is held and the pointer has moved 8 px. The drag runs after the call returns, through `app->post`, because it has its own message loop. Does nothing in headless mode. |
 | `hide` | none | nothing | Hide to tray. |
 | `hotkey_recording` | `enabled` bool | nothing | Suspend or restore global hotkeys while the page records a shortcut. |
+| `reveal_screenshot` | none | `true` or error | Select the last screenshot this run saved in Explorer. Runs outside the action queue. |
+| `save_frame` | `path`, `time` | JSON string | Save the frame of a listed clip at `time` seconds as a screenshot. See [screenshot of a frame](#screenshot-of-a-frame-in-the-replay-viewer). |
 | `ui_ready` | none | nothing | First frame is ready; reveal the window. |
 | `theme_changed` | `id` string | nothing | Repaint the native window ground and set force-dark for the theme. |
 | `quit` | none | nothing | Exit the controller. OBS keeps running. |
@@ -300,7 +303,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `editor_waveform` | none | base64 string | Audio peaks, 100 per second. Empty until the waveform is ready. |
 | `media_url` | `path` string | URL string or error | URL of this editor's clip. Any other path is refused. |
 | `preview_urls` | none | JSON string | `{video, level, stems:[{track, url}]}` for the generated preview files. `video` is empty at level `full`. |
-| `start_export` | JSON string `{segments:[[start,end],...], quality, name?, size_limit?, tracks?}` | `true` or error | Validate and start an export. `size_limit` is 0 or 10, 25, 50, 100, 500 (MB). `tracks` is an array of recorded track numbers to keep, or null for every track. `volumes` is an object of track number to a volume from 0 to 1, or null for full volume. |
+| `start_export` | JSON string `{format?, segments:[[start,end],...], quality, name?, size_limit?, tracks?, volumes?, framing?, crop?, gif_size?, time?}` | `true` or error | Validate and start an export. `format` is `mp4` (default), `vertical`, `gif`, `mp3`, `wav` or `png`. `size_limit` is 0 or 10, 25, 50, 100, 500 (MB), for `mp4` and `vertical` only. `tracks` is an array of recorded track numbers to keep, or null for every track. `volumes` is an object of track number to a volume from 0 to 1, or null for full volume. `framing` (`fill`, `fit`) and `crop` (0 to 1) are for `vertical`, `gif_size` for `gif`, `time` (seconds) for `png`. |
 | `cancel_export` | none | nothing | Cancel the running export. |
 | `pick_ffmpeg` | none | `true`, `false` on cancel, or error | Native file dialog, then FFmpeg detection with that file. |
 | `ffmpeg_help` | none | nothing | Open the FFmpeg download page. |
@@ -356,9 +359,9 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 
 - Unknown actions are rejected.
 - The payload must be a JSON object of at most 128 KiB.
-- A dispatch while `busy` is `true` is rejected. The queue holds at most 4 actions.
+- A dispatch while `busy` is `true` is rejected. The queue holds at most 4 actions. One exception: a `screenshot` while a `save` or another `screenshot` runs waits in the queue, because that wait is a second at most.
 - On acceptance the controller sets `busy`, `operation`, a working `message`, clears `error` and increments `revision`.
-- For `save`, the controller reads the foreground app name at dispatch time.
+- For `save` and `screenshot`, the controller reads the foreground app name at dispatch time.
 - The worker runs one action at a time. A thrown error becomes `error` with the message "Action needs attention".
 
 | Action | Payload | Effect |
@@ -371,6 +374,7 @@ For `setup` and `apply`, `Desktop::dispatch` runs before the controller:
 | `stop` | none | Send `StopReplayBuffer`, wait up to 5 s. The `replay_enabled` setting is not changed. |
 | `shutdown` | none | Tray **Close OBSReplay and OBS**: stop the buffer, close the OBSReplay session of OBS, set `quit` in the state. |
 | `save` | none | Save the replay buffer. See [replay save](#replay-save). |
+| `screenshot` | none | Save a screenshot. See [screenshot](#screenshot). |
 | `reconnect` | none | Close the socket and connect again. Does not launch OBS. |
 | `reset` | none | With OBS closed: remove the integration, delete the login entry, set `start_at_login` to `false`. `replay_enabled` is kept. |
 | `refresh_options` | none | Re-read monitors, audio devices and encoders. |
@@ -548,6 +552,23 @@ On failure the controller restores the previous login entry and, after an owned-
 5. `remember_clip`: with `sort_by_app`, move the file into a subfolder named after the app (`safe_name`, numbered suffix on collision); add it to history; write `clips.json`; play the save sound.
 6. Without confirmation, report an error. The controller does not retry the save.
 
+### Screenshot
+
+1. Verify connection and ownership. The replay buffer does not have to run: OBS draws the scene whenever it is open.
+2. Pick `<clips_dir>[\<app>]\Screenshot YYYY-MM-DD HH-MM-SS.png`, the app folder when `sort_by_app` is on, a numbered suffix on collision.
+3. Ask `GetCurrentProgramScene` for the scene, then `SaveSourceScreenshot` with `png` and no size, so OBS writes the scene at its full size (the captured display), 10 s timeout.
+4. The file must exist and not be empty. `image_is_black` reads it at 64×36 through WIC; a picture with every sample at 10 or below is deleted and reported: in **Fullscreen games only**, OBS captures nothing until a game runs full screen.
+5. Play the screenshot sound (WAVE resource 104) when `save_sound` is on, set `last_screenshot` (`path`, `name`, `saved_at`) in the state and the message to "Saved <name>".
+6. `Desktop::reconcile` shows a tray balloon for a new `last_screenshot` while the window is hidden. The open window shows a toast with **Show in folder**, which calls the bridge function `reveal_screenshot` outside the action queue, so it works while a save runs. It selects only the screenshot this run saved.
+
+Screenshots join the clip list with `screenshot: true` and show on the **Screenshots** tab. `image_file` accepts `.png`, `.jpg` and `.jpeg`; `listed_file` is a video or a picture. The folder scan (`discover_clips`) lists only pictures the app names (`Screenshot …` from the shortcut, `… frame M-SS.ss` from the viewer), never inside `Edited Exports`, where a picture is a frame saved from the editor. Other pictures in the clips folder are never listed, so they can't be deleted from the app; a screenshot renamed in the app stays listed through `clips.json`. Found files are merged into the live list, so an entry added while the scan runs is kept. Open, reveal, rename and delete accept pictures; the clip editor refuses them.
+
+While `screenshot_enabled` is off, `keys_from` gives an empty screenshot key, `Desktop::bind` registers nothing for it and reports nothing, and the `screenshot` action is refused.
+
+### Screenshot of a frame in the replay viewer
+
+The viewer's camera button calls the bridge function `save_frame(path, time)` with the playhead time. `EditorHost::save_frame` runs on a worker: it waits for FFmpeg detection, reads the clip's frame rate and length, and `extract_frame` (shared with the editor's **Save this frame**) writes the frame under the playhead at the clip's own size, so the viewer's scaled picture plays no part. The file is `<clip stem> frame M-SS.ss.png` next to the clip, or beside `Edited Exports` for an export, numbered on collision, and `Controller::add_screenshot` lists it. The result reaches the page as JSON on the UI thread, which also joins the worker; the viewer shows "Saved … to Screenshots" or the reason over the picture.
+
 ## Settings and stored files
 
 ### Settings keys
@@ -576,6 +597,8 @@ On failure the controller restores the previous login entry and, after an owned-
 | `start_at_login` | bool | `true` | Boolean. |
 | `save_hotkey` | string | `Alt+Z` | `Ctrl`/`Alt`/`Shift` modifiers, then one of `A`-`Z`, `0`-`9`, `F1`-`F24`. Must differ from `show_hotkey`. |
 | `show_hotkey` | string | `Alt+X` | Same shape as `save_hotkey`. |
+| `screenshot_hotkey` | string | `Alt+S` | Same shape as `save_hotkey`. Must differ from both while `screenshot_enabled` is on. A settings file from before 1.0.4 has none and gets the first of `Alt+S`, `Alt+Shift+S`, `Ctrl+Alt+S`, `Alt+F12` that its other shortcuts don't use. |
+| `screenshot_enabled` | bool | `true` | Off: no screenshot shortcut is registered and screenshots are refused. |
 | `replay_enabled` | bool | `true` | Boolean. **Start replay capture automatically**: capture starts at launch. `start`, `stop` and `reset` do not change it. |
 | `settings_version` | integer | `2` | Not validated. A stored file without it was written by 1.0.1 or earlier: `load_settings` sets `replay_enabled` to `true` once, adds the version and saves. Up to 1.0.1, start and stop overwrote `replay_enabled`, so the stored value was not a choice. |
 | `animations_enabled` | bool | `true` | Optional. Boolean when present. |
@@ -718,6 +741,10 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 | `preview_cuts` | Boolean. Preview playback skips removed sections. |
 | `preview_quality` | `full`, `half`, `quarter`. Also switches the preview. |
 | `size_limit` | `0` or `10`, `25`, `50`, `100`, `500`. The chosen **Max size**. |
+| `vertical_framing` | `fill` or `fit`. The last vertical framing. |
+| `vertical_crop` | 0 to 1. Where the Fill window sits: 0 left edge, 1 right edge. |
+| `gif_size` | `small`, `medium`, `large`. The last GIF size. |
+| `gif_compression` | 0 to 4. The last GIF compression. |
 
 ### Export
 
@@ -727,14 +754,16 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 - Segments are `[start, end]` pairs in seconds, ordered, non-overlapping, at most 200. The code clamps ends to the probed duration and drops pieces shorter than 0.01 s.
 - FFmpeg is `ready`, the probe is `ready`, no export is running, and the source file exists.
 
+- `format` is one of the six. `mp3` needs an FFmpeg with `libmp3lame`; the probe records it as `mp3`. `mp3` and `wav` need a recorded and a ticked track. `gif` allows up to 60 s. `png` needs a `time` within the clip.
+
 `run_export` then runs on a thread:
 
 1. Pick the output path with `output_for`.
 2. Create a work folder under `%TEMP%\OBSReplay-preview`.
-3. At quality 10 when `smart_cut_possible`: run `smart_export`. If it fails, record a note and continue with step 4.
-4. Otherwise run `encode_export`.
-5. Rename `<name>.mp4.part` to `<name>.mp4` without overwriting.
-6. Add the file to history with `Controller::add_clip`. Explorer is not opened. The editor offers **Show in folder**, **Play video** and **Copy**.
+3. By format: `gif_export`, `audio_export` or `frame_export`; `fit_export` for a size limit; `encode_export` with a framing for `vertical`. For `mp4` at quality 10 when `smart_cut_possible`: run `smart_export`. If it fails, record a note and continue with `encode_export`.
+4. A result file of 0 bytes counts as a failure.
+5. Rename `<name>.<ext>.part` to `<name>.<ext>` without overwriting.
+6. Add a video (`mp4`, `vertical`) to history with `Controller::add_clip`. A GIF, sound file or frame stays out of the clip list. Explorer is not opened. The editor offers **Show in folder**, **Play video** (or **Play**, **Open**, which open the file in its Windows app) and **Copy**.
 
 Cancel or window close terminates FFmpeg and deletes the partial file. FFmpeg children run hidden inside a kill-on-close job object.
 
@@ -803,10 +832,24 @@ A size limit replaces the quality choice until the user moves the slider again. 
 - The choice applies to the smart cut, the re-encode and the size limit, and the size budget counts only exported streams.
 - An unticked track is silent in preview. A track choice, or a volume moved in this window, counts as an unexported edit.
 
+### Other export formats
+
+The menu beside **Export video** offers five more exports. They use the kept sections, except **Save this frame**.
+
+| Format | Output | How |
+| --- | --- | --- |
+| `vertical` | 9:16 H.264 MP4, 1080×1920 (720×1280 from a clip under 1000 lines) | `encode_export` with `vertical_filter` after the concat. **Fill** crops a 9:16 window at `crop` and scales it up. **Fit** scales the frame to the full width over a copy blurred at a quarter size (`boxblur`), darkened slightly. The filters run on the CPU, so the CUDA-decode attempt is skipped. Bitrate: the quality's share of the clip's bitrate, scaled by the vertical picture's pixels against the clip's (at most 2×), 1.35 times for a source that is not H.264, at least 1500 kbps. A size limit works as for MP4, with `vertical_limit_height` stepping through 1920, 1280, 960 and 854. Audio as for MP4. |
+| `gif` | GIF, no sound | Two passes. The first builds a palette (`palettegen=stats_mode=diff`), the second draws with it (`paletteuse`, `diff_mode=rectangle`). Small is 360p at 12 fps, Medium 480p at 15 fps, Large 720p at 20 fps, never taller than the clip. `gif_compression` 0 to 4 sets the colours and dither: 256 and 128 colours with Bayer dither, 64 with a coarser Bayer, then 32 and 16 colours without dither, which LZW packs far better. On 6 s of 480p game footage: 14.0, 10.5, 8.5, 6.4 and 5.1 MB. The page's size line is a rough guess from those figures. Up to 60 s. |
+| `mp3`, `wav` | One stereo file | The ticked tracks at their volumes, cut with `atrim`, joined, then mixed with `amix` (`normalize=0`) and resampled to 48 kHz stereo. Every listed track counts as ticked when the choice is as recorded, so OBS's Mix is rebuilt from its parts. MP3 is `libmp3lame` at 192 kbps; WAV is 16-bit PCM. |
+| `png` | One full-size frame | `-ss` lands a quarter frame before the frame under the playhead, so FFmpeg's first frame is the one the editor shows. Converted to RGB with the clip's colour matrix. Cuts don't matter. |
+
+- A GIF, sound file or frame does not count as exporting the edit: the editor keeps "Unexported edits" and still asks before closing.
+- **Delete original clip after exporting** is offered for `mp4` and `vertical` only.
+
 ### Export naming
 
 - The folder is `Edited Exports` beside the source. A source already inside `Edited Exports` exports to the same folder.
-- Without a typed name: `<source stem> (edited).mp4`, then `(edited 2)`, `(edited 3)`, up to 999.
+- Without a typed name: `<source stem> (edited).mp4`, then `(edited 2)`, `(edited 3)`, up to 999. The word follows the format: `(vertical)` for a vertical video, `(audio)` for MP3 and WAV, `(frame)` for a frame, `(edited)` for a GIF. The extension follows the format.
 - With a typed name: `<name>.mp4`, then `<name> (2).mp4`, and so on.
 - `file_name_from` strips characters Windows forbids, a trailing `.mp4`, and reserved device names, and limits the name to 120 characters.
 

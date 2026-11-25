@@ -602,7 +602,8 @@ Layout from top to bottom:
 - A **Max size** row under the slider: five chips, 10, 25, 50, 100 and 500, then "MB". A chosen chip dims the slider, and the label reads "Fit to 25 MB", "Already fits" or "Too long". The estimate reads "Up to 25 MB". Moving the slider or pressing the chip again ends the choice. A size the edit cannot meet is dimmed and explains why in a toast.
 - A tooltip explains Original versus smaller files.
 - The estimated file size and codec.
-- **Export video**, 40px.
+- **Export video**, 40px, joined on its right by a 36px menu button with a chevron. One swept outline runs around both, with a hairline between them. The chevron turns over while the menu is open.
+- The menu is an action menu (`role="menu"`): **Export vertical (9:16)**, **Export as GIF**, **Export audio (MP3)**, **Export audio (WAV)** and **Save this frame (PNG)**, each with a quiet hint on the right ("Shorts, TikTok, Reels", "No sound", the playhead time). An item that can't run now stays listed, dimmed, and its hint turns into the reason in the warning colour ("Tick a track in Audio tracks first", "This FFmpeg has no MP3 encoder", "Up to 60 seconds"). Choosing it shows the reason as a toast.
 - **Export video** first asks for a name in a 560px dialog. A checkbox, **Delete original clip after exporting**, sits at the bottom left in line with **Cancel**. It starts unticked every time.
 - With the box ticked, the original is deleted once the export is saved. A failed or canceled export keeps it. The result line adds "Original deleted", and the editor then asks to be closed.
 - Export-bar regions have fixed widths, so changing quality or edits never shifts controls.
@@ -634,6 +635,11 @@ Layout from top to bottom:
 ### Export name dialog
 
 - **Export video** first opens a small dialog with one field for the file name.
+- The same dialog serves every format. The extension after the field, the confirm button ("Export vertical video", "Export GIF", "Export MP3", "Save frame") and a quiet line under the title follow the format.
+- Vertical adds a Fill / Fit segmented control, one line of explanation and a preview: the frame under the playhead with the 9:16 window (dimmed outside it, draggable, or moved with the arrow keys as a slider), and a portrait thumbnail of the result. Fit hides the window and draws the blurred background in the thumbnail.
+- GIF adds a Small / Medium / Large segmented control with the height and frame rate under each, a **Compression** slider (None, Light, Medium, Strong, Maximum) with the hint "Fewer colours make a smaller file. Strong and Maximum show colour banding.", and a line with a rough size that follows both.
+- Save this frame titles the dialog "Name your frame" and names the playhead time.
+- The delete-original checkbox shows for videos only.
 - The placeholder is the default name.
 - An empty field keeps the default name.
 - The field removes characters Windows forbids as the user types.
@@ -662,7 +668,17 @@ Layout from top to bottom:
 - Recording a shortcut suspends native shortcuts.
 - Recording supports Escape and reset.
 - Recording expires before the native guard.
-- The default save shortcut is Alt+Z.
+- The default save shortcut is Alt+Z. The default screenshot shortcut is Alt+S, in its own row, **Save screenshot**, with the hint "Saves a full-size PNG of what OBS captures, next to your replays."
+- The three shortcuts must differ. The page says so before Apply.
+- The **Save screenshot** row has an On/Off switch before the shortcut. Off dims the shortcut and disables **Change** and **Reset**; the shortcut is kept for when it is turned on again.
+
+### Screenshots
+
+- **Clips** has a third tab, **Screenshots**, with its count. Game chips, the date menu, search, paging and day headings ("2 screenshots") work as for clips. **Latest** on Capture lists videos only.
+- A screenshot card shows the picture without the play badge. Its menu: **View**, **Rename**, **Select**, **Copy**, **Open in image viewer**, **Show in folder**, **Delete**.
+- The screenshot viewer uses the replay viewer's shell: name and details in the header with "2 of 5", the picture fitted to a 16:9 stage, previous and next arrows that show on hover (and with the arrow keys), then **Delete** on the left and **Show in folder**, **Open file** and **Copy** (primary) on the right. Deleting moves to the next screenshot.
+- The replay viewer has a camera button beside full screen: **Screenshot this frame**. A short note over the picture says "Saved <name> to Screenshots", or why not.
+- A saved screenshot shows a toast, "Screenshot saved: <name>", with **Show in folder**. While the window is hidden, a tray balloon says the same.
 
 ### Switches
 

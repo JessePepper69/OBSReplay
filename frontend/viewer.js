@@ -567,6 +567,8 @@
     isOpen: () => dialog.open,
     isPlaying: () => Boolean(state.session) && !video.paused,
     clip: () => state.clip,
+    // Where the playhead is, in seconds: the frame on screen.
+    time: () => currentTime(),
     // Read-only view of the timeline, for checks.
     inspect: () => ({ ready: state.ready, duration: state.duration, fps: state.fps, view: { ...state.view }, thumbnails: state.thumbs.length, peaks: state.waveform ? state.waveform.length : 0, volume: state.volume, muted: state.muted || state.volume === 0, lanes: metrics() })
   };

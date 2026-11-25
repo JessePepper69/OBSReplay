@@ -44,12 +44,14 @@ OBS does the capture and the encoding. OBSReplay installs OBS when it is missing
 - **Self-install:** Run the exe once. It installs itself, adds a Start menu shortcut and can be uninstalled from Windows or from Settings.
 - **Updates:** OBSReplay checks GitHub once a day. A new version shows its changes and installs with one click, or you skip it.
 - **Save hotkey:** Press `Alt+Z` in any game to save the last few minutes. A sound confirms the save.
+- **Screenshots:** Press `Alt+S` to save a full-size PNG of what OBS captures, or press the camera button in the replay viewer to save the frame on screen. Screenshots have their own tab in Clips, filtered by game and date like clips. A switch turns the shortcut off.
 - **Capture modes:** Record fullscreen games only, one whole display, or a hybrid that switches between the two.
 - **Clips library:** Browse every clip you saved, grouped by day, with a thumbnail, its length and its size. Search by name, game or date. Filter by game or by how recent. Each card has a menu to play, edit, rename, copy, open or delete the clip.
 - **Select, copy and drag:** Select several clips to copy or delete them together. Copy a clip and paste it into a chat, or drag its card straight out of the window.
 - **Replay viewer:** Watch a clip in the app with a timeline, a waveform and frame-by-frame steps.
 - **Clip editor:** Cut sections out of a clip and export the result. You pick the export quality and file name, and which audio tracks go in.
 - **Max size export:** Choose 10, 25, 50, 100 or 500 MB and the export comes out under it, as H.264 that plays everywhere. Copy the result straight to the clipboard.
+- **More export formats:** The menu beside **Export video** makes a vertical 9:16 video for Shorts and TikTok (crop or fit), a GIF with a compression slider, the sound alone as MP3 or WAV, or a PNG of the frame under the playhead.
 - **Quality presets:** Choose from Very low to Very high. No bitrate numbers to learn.
 - **Hardware encoding:** Uses your NVIDIA, AMD or Intel GPU with H.264, HEVC or AV1.
 - **Separate audio tracks:** Game audio and your microphone are saved as two tracks, so you can mute either one later.

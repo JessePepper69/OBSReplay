@@ -16,6 +16,8 @@ public:
     std::string snapshot() const;
     bool knows_clip(const std::string& path) const;
     std::expected<bool, std::string> add_clip(const std::string& path, const std::string& app);
+    // Lists a picture saved from a clip (the viewer's screenshot button) on the Screenshots tab.
+    std::expected<bool, std::string> add_screenshot(const std::string& path, const std::string& app);
     // Deletes a listed clip at once, outside the action queue. The editor uses it for "delete original after exporting".
     std::expected<bool, std::string> remove_clip(const std::string& path);
     std::expected<bool, std::string> dispatch(std::string action, std::string payload = "{}");

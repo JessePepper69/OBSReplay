@@ -61,7 +61,7 @@ target_include_directories(OBSReplay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/genera
 target_compile_definitions(OBSReplay PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(OBSReplay PRIVATE /W4 /utf-8 /permissive- /EHsc)
 target_link_libraries(OBSReplay PRIVATE saucer::saucer saucer::private saucer::embedded nlohmann_json::nlohmann_json
-  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi dwmapi gdiplus pdh psapi)
+  comctl32 comdlg32 shell32 ole32 uuid propsys advapi32 bcrypt crypt32 winmm winhttp version dxgi dwmapi gdiplus pdh psapi windowscodecs)
 saucer_embed("frontend" TARGET OBSReplay DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/embedded")
 set_target_properties(OBSReplay PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 target_link_options(OBSReplay PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO /OPT:REF /OPT:ICF)

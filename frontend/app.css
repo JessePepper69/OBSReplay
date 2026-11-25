@@ -259,6 +259,8 @@ summary:focus-visible { outline-offset:-3px; }
 .switch-control input:disabled { cursor:default; }
 .hotkey-control { display:flex;align-items:center;gap:8px;flex-shrink:0; }
 .hotkey-control input { width:144px;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;cursor:default; }
+.hotkey-control .hotkey-switch { min-height:36px; }
+.hotkey-control:has(.hotkey-switch input:not(:checked)) input[readonly] { opacity:.45; }
 .hotkey-control input.recording { border-color:var(--focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent-text) 22%,transparent);color:var(--ui-accent-text); }
 /* Theme picker: a wrapping row of swatch buttons; the chosen one is ringed in the accent. */
 .theme-row .setting-copy { flex:0 0 84px; }
@@ -574,3 +576,5 @@ html[data-motion="off"] .update-bar.busy i { width:100%;opacity:.55; }
 html[data-motion="off"] .video-dock,html[data-motion="off"] .dock-peek { transition:none; }
 /* The fullscreen button swaps its corners to point inward while fullscreen. */
 :root:not(:has(:fullscreen)) .full-exit,:fullscreen .full-enter { display:none; }
+
+.clip-card.screenshot .clip-play { display:none; }

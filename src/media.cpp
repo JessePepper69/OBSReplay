@@ -182,7 +182,8 @@ HRESULT ClipMedia::respond(ICoreWebView2WebResourceRequestedEventArgs* args) {
         }
         auto extension = source->second.extension().wstring();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-        const auto mime = extension == L".m4a" ? L"audio/mp4" : extension == L".mp4" || extension == L".mov" ? L"video/mp4" : L"video/x-matroska";
+        const auto mime = extension == L".m4a" ? L"audio/mp4" : extension == L".mp4" || extension == L".mov" ? L"video/mp4" : extension == L".png" ? L"image/png"
+            : extension == L".jpg" || extension == L".jpeg" ? L"image/jpeg" : L"video/x-matroska";
         std::wstring extra = std::wstring(L"Content-Type: ") + mime + L"\r\nAccept-Ranges: bytes\r\nContent-Length: " + std::to_wstring(last - first + 1) + L"\r\n";
         if (has_range) extra += L"Content-Range: bytes " + std::to_wstring(first) + L"-" + std::to_wstring(last) + L"/" + std::to_wstring(total) + L"\r\n";
         ComPtr<IStream> stream;

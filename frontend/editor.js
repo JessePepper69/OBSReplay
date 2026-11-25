@@ -18,8 +18,29 @@
     exportStatus: "idle", lastExport: null, waveform: null, waveRate: 100, waveRequested: false,
     thumbs: [], thumbsRequested: false, motion: true,
     timecode: "duration", scale: 1, master: 0.5, masterMuted: false, tracks: [], tracksFromProbe: false, savedTrackLevels: {},
-    stems: [], prefsLoaded: false, previewLevel: "full", originalUrl: "", previewUrls: {}
+    stems: [], prefsLoaded: false, previewLevel: "full", originalUrl: "", previewUrls: {},
+    exportFormat: "mp4", framing: "fill", crop: 0.5, gifSize: "medium", gifCompression: 0, frameTime: 0
   };
+  // What each export makes. "mp4" is Export video; the others come from the menu on its right. Mirrors native export_formats.
+  const EXPORT_FORMATS = {
+    mp4: { ext: ".mp4", label: "edited", confirm: "Export video", noun: "video", video: true },
+    vertical: { ext: ".mp4", label: "vertical", confirm: "Export vertical video", noun: "video", video: true },
+    gif: { ext: ".gif", label: "edited", confirm: "Export GIF", noun: "GIF" },
+    mp3: { ext: ".mp3", label: "audio", confirm: "Export MP3", noun: "sound" },
+    wav: { ext: ".wav", label: "audio", confirm: "Export WAV", noun: "sound" },
+    png: { ext: ".png", label: "frame", confirm: "Save frame", noun: "frame" }
+  };
+  const GIF_MAX = 60;
+  // GIF compression levels and how much of the uncompressed size each leaves (mirrors native gif_compression;
+  // measured on game footage). The size guess is rough: busy footage can be twice as large, calm footage far smaller.
+  const GIF_COMPRESSION = [["None", 1], ["Light", .75], ["Medium", .6], ["Strong", .45], ["Maximum", .36]];
+  const GIF_PRESETS = { small: [360, 12], medium: [480, 15], large: [720, 20] };
+  function gifEstimate(length) {
+    const [height, fps] = GIF_PRESETS[state.gifSize] || GIF_PRESETS.medium;
+    const sourceHeight = Number(state.native?.probe?.height) || height, shown = Math.min(height, sourceHeight);
+    const width = Math.round(shown * (state.aspect || 16 / 9) / 2) * 2;
+    return width * shown * fps * length * 0.38 * GIF_COMPRESSION[state.gifCompression][1];
+  }
   const trackFor = index => state.tracks.find(track => track.index === index);
   let nativeChain = Promise.resolve();
   let pollTimer = 0;
@@ -218,6 +239,7 @@
   function seek(time, follow = true) {
     if (!state.mediaReady) return;
     time = Math.min(state.duration, Math.max(0, time));
+    if (state.exportStatus === "done" && state.lastExport?.format === "png" && Math.abs(time - state.frameTime) > 0.5 / Math.max(1, state.fps)) { state.exportStatus = "idle"; renderControls(); }
     if (state.drag?.mode === "scrub" && video.seeking) { state.pendingSeek = time; state.scrubTime = time; }
     else { state.pendingSeek = null; state.scrubTime = null; video.currentTime = time; }
     if (follow) keepVisible(time);
@@ -688,9 +710,12 @@
     $("edit-dot").className = `state-dot${state.exportStatus === "running" ? " busy" : dirty ? " dirty" : state.exportedSignature ? " ready" : ""}`;
     renderExport();
   }
+  const lastWasVideo = () => (EXPORT_FORMATS[state.lastExport?.format] || EXPORT_FORMATS.mp4).video;
   function changed() {
     if (state.exportStatus === "done" || state.exportStatus === "failed" || state.exportStatus === "canceled") {
-      if (signature() !== state.exportedSignature) state.exportStatus = "idle";
+      // A video export marks the edit as exported; anything else is compared with the edit it was made from.
+      const reference = state.exportStatus === "done" && !lastWasVideo() ? state.exportSignature : state.exportedSignature;
+      if (signature() !== reference) state.exportStatus = "idle";
     }
     renderControls(); renderTime(); requestDraw();
   }
@@ -737,7 +762,18 @@
     // A Max size is for sharing, so its video is H.264. The original is kept only when it is H.264 and already fits.
     const original = Boolean(top?.original) && top.codec === "H.264" && seconds * (top.video_kbps + top.audio_kbps * streams) * 125 + containerBytes(seconds, streams) <= mb * 1e6 * 0.9;
     const codec = "H.264";
-    return { possible: video >= 500, original, codec: original ? top.codec : codec, height: original ? top.height : limitHeight(Math.trunc(video * seconds / (seconds + 1)), codec === "HEVC") };
+    return { possible: video >= 500, original, codec: original ? top.codec : codec, height: original ? top.height : limitHeight(Math.trunc(video * seconds / (seconds + 1)), codec === "HEVC"), video };
+  }
+  // Mirrors native vertical_limit_height: the tallest vertical size, from the base down, with 0.045 bits per pixel.
+  function verticalLimitHeight(kbps, base) {
+    const fps = Math.max(1, Number(state.native?.probe?.fps) || 30);
+    let last = base;
+    for (const step of [1920, 1280, 960, 854]) {
+      if (step > base) continue;
+      last = step;
+      if (kbps * 1000 / (Math.round(step * 9 / 16 / 2) * 2 * step * fps) >= 0.045) return step;
+    }
+    return last;
   }
   for (const mb of SIZE_LIMITS) {
     const button = document.createElement("button");
@@ -812,6 +848,8 @@
     renderSizeLimits(length);
     const exportDisabledReason = !state.mediaReady ? "Loading clip" : tool.status === "checking" ? "Looking for FFmpeg…" : !probeReady ? "Analyzing clip…" : length < 0.1 ? "Nothing to export" : fit && !fit.possible ? `Too long for ${state.sizeLimit} MB` : "";
     $("quality").disabled = !state.mediaReady;
+    $("export-more").disabled = !state.mediaReady || tool.status !== "ready" || !probeReady;
+    $("export-more").dataset.tip = $("export-more").disabled ? exportDisabledReason || "Loading clip" : "More export options";
     $("export").disabled = Boolean(exportDisabledReason);
     $("export").title = exportDisabledReason || "Export the kept sections  Ctrl+E";
     $("export-format").textContent = tool.status !== "ready" || (fit && !fit.possible) ? exportDisabledReason || "MP4" : exportEstimate(length, fit);
@@ -820,10 +858,11 @@
       const percent = Math.round(progress * 100);
       // A size limit that needs another encode says so, so a second progress run makes sense.
       const pass = Number(job.attempt) || 1;
-      $("progress-title").textContent = job.size_limit && pass > 1 ? `Making it fit: ${["second", "third", "fourth"][pass - 2] || "another"} pass…${progress > 0 ? ` ${percent}%` : ""}` : progress > 0 ? `Exporting… ${percent}%` : "Starting export…";
+      const kind = EXPORT_FORMATS[job.format] || EXPORT_FORMATS.mp4;
+      $("progress-title").textContent = job.format === "png" ? "Saving frame…" : job.size_limit && pass > 1 ? `Making it fit: ${["second", "third", "fourth"][pass - 2] || "another"} pass…${progress > 0 ? ` ${percent}%` : ""}` : progress > 0 ? `Exporting… ${percent}%` : job.format === "gif" ? "Choosing the GIF's colours…" : "Starting export…";
       const speed = Number(job.speed) > 0 ? `${Number(job.speed).toFixed(1)}× speed` : "";
       const eta = Number(job.eta) > 0 ? `about ${job.eta < 60 ? `${Math.max(1, Math.ceil(job.eta))} s` : formatTime(Math.ceil(job.eta), false)} left` : "";
-      $("progress-detail").textContent = [`${formatLength(Number(job.total) || length)} video`, job.size_limit ? `up to ${job.size_limit} MB` : "", job.encoder, speed, eta].filter(Boolean).join(" · ");
+      $("progress-detail").textContent = [job.format === "png" ? "Full-size picture" : `${formatLength(Number(job.total) || length)} ${kind.noun}`, job.size_limit ? `up to ${job.size_limit} MB` : "", job.encoder, speed, eta].filter(Boolean).join(" · ");
       $("progress-fill").style.width = `${percent}%`;
       $("progress-bar").setAttribute("aria-valuenow", String(percent));
       $("export-progress").classList.toggle("indeterminate", progress <= 0);
@@ -833,8 +872,10 @@
       $("export-result").classList.toggle("failed", failed);
       $("result-mark").innerHTML = failed ? '<svg viewBox="0 0 20 20"><path d="M10 5.5v5.5M10 14.2v.3"/></svg>' : '<svg viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 6.5"/></svg>';
       const last = state.lastExport || {};
-      $("result-title").textContent = failed ? "Export failed" : `Exported ${last.name || "video"}`;
-      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), formatLength(last.duration), last.size_limit ? `Under ${last.size_limit} MB` : "", last.audio_streams === 0 ? "No sound" : "", last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.original_deleted ? "Original deleted" : "", last.note].filter(Boolean).join(" · ");
+      const format = last.format || "mp4", kind = EXPORT_FORMATS[format] || EXPORT_FORMATS.mp4;
+      $("result-title").textContent = failed ? (state.exportFormat === "png" ? "The frame wasn't saved" : "Export failed") : `${format === "png" ? "Saved" : "Exported"} ${last.name || kind.noun}`;
+      $("result-text").textContent = failed ? (last.error || "FFmpeg stopped unexpectedly.") : [formatBytes(last.bytes), format === "png" ? "" : formatLength(last.duration), last.size_limit ? `Under ${last.size_limit} MB` : "", kind.video && last.audio_streams === 0 ? "No sound" : "", last.revealed ? "Shown in File Explorer" : "Saved in Edited Exports", last.original_deleted ? "Original deleted" : "", last.note].filter(Boolean).join(" · ");
+      $("result-open").textContent = kind.video ? "Play video" : kind.noun === "sound" ? "Play" : "Open";
       $("result-reveal").hidden = failed; $("result-open").hidden = failed; $("result-copy").hidden = failed;
       $("result-dismiss").textContent = failed ? "Dismiss" : "Done";
     }
@@ -869,25 +910,87 @@
     return plan.heard.length ? `Sound: ${plan.heard.map(track => `${track.name} ${Math.round(exportLevel(track) * 100)}%`).join(", ")}` : "Sound: none";
   }
 
+  // The other exports, for the menu beside Export video. One that can't run now is listed with the reason.
+  function moreExports() {
+    const tool = state.native?.ffmpeg || {}, length = keptLength();
+    const fit = state.sizeLimit ? sizePlan(state.sizeLimit, length) : null;
+    const recorded = Number(state.native?.probe?.audio_tracks) || 0;
+    const nothing = length < 0.1 ? "Nothing to export" : "";
+    const sound = !recorded ? "This clip has no sound" : !exportAudio().heard.length ? "Tick a track in Audio tracks first" : "";
+    return [
+      { value: "vertical", label: "Export vertical (9:16)", hint: "Shorts, TikTok, Reels", reason: nothing || (fit && !fit.possible ? `Too long for ${state.sizeLimit} MB` : "") },
+      { value: "gif", label: "Export as GIF", hint: "No sound", reason: nothing || (length > GIF_MAX + 0.05 ? `Up to ${GIF_MAX} seconds` : "") },
+      { value: "mp3", label: "Export audio (MP3)", hint: "Sound only", reason: nothing || sound || (tool.mp3 ? "" : "This FFmpeg has no MP3 encoder") },
+      { value: "wav", label: "Export audio (WAV)", hint: "Uncompressed", reason: nothing || sound },
+      { value: "png", label: "Save this frame (PNG)", hint: formatPosition(currentTime()), reason: "" }
+    ].map(item => ({ ...item, disabled: Boolean(item.reason), hint: item.reason || item.hint }));
+  }
+  // The line under the dialog's title: what this export will hold.
+  function exportDetail(format) {
+    const length = keptLength(), plan = exportAudio();
+    if (format === "mp4") return audioSummary();
+    if (format === "vertical") {
+      const quality = state.native?.quality_plans?.[state.quality - 1];
+      let height = Number(quality?.vertical_height) || 1920;
+      if (state.sizeLimit) {
+        const plan = sizePlan(state.sizeLimit, length);
+        const enough = Number(state.native?.quality_plans?.[9]?.vertical_kbps) || 0;
+        if (plan?.video > 0) height = verticalLimitHeight(Math.trunc(Math.min(plan.video, Math.max(enough, 500)) * length / (length + 1)), height);
+      }
+      const width = Math.round(height * 9 / 16 / 2) * 2;
+      const size = state.sizeLimit ? `Up to ${state.sizeLimit} MB` : quality ? `≈ ${formatBytes(length * (quality.vertical_kbps + quality.audio_kbps * plan.streams) * 125 * 1.01)}` : "";
+      return [size, `H.264 ${width}×${height}`, audioSummary()].filter(Boolean).join(" · ");
+    }
+    if (format === "gif") return `No sound · ${formatLength(length)} · roughly ${formatBytes(gifEstimate(length))}, more for busy footage`;
+    if (format === "mp3" || format === "wav") {
+      const names = plan.heard.map(track => `${track.name}${exportLevel(track) < 1 ? ` ${Math.round(exportLevel(track) * 100)}%` : ""}`).join(", ");
+      const bytes = length * (format === "wav" ? 192000 : 24000);
+      return `${names} in one stereo file · ${formatLength(length)} · ≈ ${formatBytes(bytes)}`;
+    }
+    return "";
+  }
+
   // Export first asks for a file name; an empty field keeps the default name.
-  const cleanName = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").replace(/\.mp4$/i, "").trim();
-  function startExport() {
-    if (!state.mediaReady || $("export").disabled || state.exportStatus === "running" || $("export-dialog").open) return;
+  const cleanName = value => value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "").replace(/\.(mp4|gif|mp3|wav|png)$/i, "").trim();
+  function startExport(format = "mp4") {
+    if (!EXPORT_FORMATS[format] || !state.mediaReady || state.exportStatus === "running" || $("export-dialog").open) return;
+    if (format === "mp4" ? $("export").disabled : $("export-more").disabled) return;
+    const option = format === "mp4" ? null : moreExports().find(item => item.value === format);
+    if (option?.disabled) { flash(option.hint); return; }
     video.pause();
+    const kind = EXPORT_FORMATS[format];
+    state.exportFormat = format;
+    state.frameTime = currentTime();
     const original = String(state.native?.clip?.name || "Replay").replace(/\.[^.]+$/, "");
+    $("export-title").textContent = format === "png" ? "Name your frame" : "Name your export";
+    $("export-lead").textContent = format === "png" ? `The frame at ${formatPosition(state.frameTime)}, at full size. Leave the name empty to use the one shown.` : "Leave it empty to use the name shown.";
+    $("export-framing").hidden = format !== "vertical";
+    $("export-gif").hidden = format !== "gif";
+    for (const input of document.querySelectorAll('input[name="framing"]')) input.checked = input.value === state.framing;
+    for (const input of document.querySelectorAll('input[name="gif-size"]')) input.checked = input.value === state.gifSize;
+    renderGifCompression();
     $("export-name").value = "";
-    $("export-audio").textContent = audioSummary();
+    $("export-audio").textContent = exportDetail(format);
     $("export-audio").hidden = !$("export-audio").textContent;
+    $("export-extension").textContent = kind.ext;
+    $("export-confirm").textContent = kind.confirm;
     $("export-delete").checked = false;
-    $("export-name").placeholder = `${original} (edited)`;
+    $("export-delete-row").hidden = !kind.video;
+    $("export-name").placeholder = `${original} (${kind.label})`;
     $("export-dialog").showModal();
+    if (format === "vertical") renderFraming();
     $("export-name").focus();
   }
   async function runExport(name, deleteOriginal = false) {
     if (!state.mediaReady || state.exportStatus === "running") return;
-    const segments = keptSegments();
+    const format = state.exportFormat, kind = EXPORT_FORMATS[format] || EXPORT_FORMATS.mp4;
+    const segments = keptSegments(), audio = exportAudio();
+    const request = { format, segments, quality: state.quality, size_limit: kind.video ? state.sizeLimit : 0, tracks: audio.tracks, volumes: audio.volumes, name, delete_original: kind.video && deleteOriginal };
+    if (format === "vertical") Object.assign(request, { framing: state.framing, crop: state.crop });
+    if (format === "gif") Object.assign(request, { gif_size: state.gifSize, gif_compression: state.gifCompression });
+    if (format === "png") request.time = state.frameTime;
     try {
-      await nativeCall("start_export", JSON.stringify({ segments, quality: state.quality, size_limit: state.sizeLimit, tracks: exportAudio().tracks, volumes: exportAudio().volumes, name, delete_original: deleteOriginal }));
+      await nativeCall("start_export", JSON.stringify(request));
       state.exportStatus = "running";
       state.exportSignature = signature();
       clearTimeout(copiedTimer); $("result-copy").textContent = "Copy";
@@ -898,6 +1001,99 @@
       renderControls();
     }
   }
+
+  // ---------- Vertical framing ----------
+  // Fill crops a 9:16 window at state.crop (0 left edge, 1 right edge). Fit shows the whole picture over a blurred copy.
+  const cropFraction = () => Math.min(1, (9 / 16) / (state.aspect || 16 / 9));
+  function renderFraming() {
+    const holder = $("framing-source"), frame = $("framing-frame"), result = $("framing-result");
+    const width = holder.clientWidth || 320, height = Math.round(width / (state.aspect || 16 / 9));
+    holder.style.height = `${height}px`;
+    const ratio = window.devicePixelRatio || 1;
+    frame.width = Math.round(width * ratio); frame.height = Math.round(height * ratio);
+    const ready = video.readyState >= 2 && video.videoWidth > 0;
+    const picture = frame.getContext("2d"), output = result.getContext("2d");
+    const ground = getComputedStyle(document.body).getPropertyValue("--well").trim() || "#000";
+    picture.fillStyle = output.fillStyle = ground;
+    picture.fillRect(0, 0, frame.width, frame.height);
+    output.fillRect(0, 0, result.width, result.height);
+    const fill = state.framing === "fill", fraction = cropFraction();
+    const box = $("crop-box");
+    box.hidden = !fill;
+    box.style.width = `${fraction * 100}%`;
+    box.style.left = `${state.crop * (1 - fraction) * 100}%`;
+    box.setAttribute("aria-valuenow", String(Math.round(state.crop * 100)));
+    box.setAttribute("aria-valuetext", state.crop < 0.05 ? "Left edge" : state.crop > 0.95 ? "Right edge" : Math.abs(state.crop - 0.5) < 0.03 ? "Centre" : `${Math.round(state.crop * 100)}% from the left`);
+    $("framing-hint").textContent = fill ? "Crops a 9:16 window out of the picture. Drag it over the part to keep." : "Shows the whole picture across the middle, over a blurred copy of it.";
+    if (!ready) return;
+    picture.drawImage(video, 0, 0, frame.width, frame.height);
+    const vw = video.videoWidth, vh = video.videoHeight, W = result.width, H = result.height;
+    if (fill) {
+      const cw = Math.min(vw, vh * 9 / 16);
+      output.drawImage(video, (vw - cw) * state.crop, 0, cw, vh, 0, 0, W, H);
+    } else {
+      const cover = Math.max(W / vw, H / vh) * 1.08;
+      output.filter = "blur(10px) brightness(0.88) saturate(0.9)";
+      output.drawImage(video, (W - vw * cover) / 2, (H - vh * cover) / 2, vw * cover, vh * cover);
+      output.filter = "none";
+      const fh = W * vh / vw;
+      output.drawImage(video, 0, (H - fh) / 2, W, fh);
+    }
+  }
+  function setCrop(value, save = false) {
+    state.crop = Math.min(1, Math.max(0, value));
+    renderFraming();
+    if (save) savePref("vertical_crop", Number(state.crop.toFixed(3)));
+  }
+  let cropDrag = null;
+  function cropFromPointer(event) {
+    const rect = $("framing-source").getBoundingClientRect(), fraction = cropFraction();
+    if (fraction >= 1 || !rect.width) return;
+    const centre = (event.clientX - rect.left) / rect.width - cropDrag.offset;
+    setCrop((centre - fraction / 2) / (1 - fraction));
+  }
+  $("framing-source").addEventListener("pointerdown", event => {
+    if (state.framing !== "fill" || event.button !== 0) return;
+    event.preventDefault();
+    const rect = $("framing-source").getBoundingClientRect(), box = $("crop-box").getBoundingClientRect();
+    // Grabbing the box keeps the point under the pointer; a press elsewhere centres the box there.
+    const inside = event.clientX >= box.left && event.clientX <= box.right;
+    cropDrag = { offset: inside ? (event.clientX - (box.left + box.width / 2)) / rect.width : 0 };
+    $("framing-source").setPointerCapture(event.pointerId);
+    $("crop-box").focus({ preventScroll: true });
+    cropFromPointer(event);
+  });
+  $("framing-source").addEventListener("pointermove", event => { if (cropDrag) cropFromPointer(event); });
+  for (const type of ["pointerup", "pointercancel"]) $("framing-source").addEventListener(type, () => { if (!cropDrag) return; cropDrag = null; setCrop(state.crop, true); });
+  $("crop-box").addEventListener("keydown", event => {
+    const step = event.shiftKey ? 0.01 : 0.05;
+    const next = event.key === "ArrowLeft" || event.key === "ArrowDown" ? state.crop - step : event.key === "ArrowRight" || event.key === "ArrowUp" ? state.crop + step : event.key === "Home" ? 0 : event.key === "End" ? 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    setCrop(next, true);
+  });
+  for (const input of document.querySelectorAll('input[name="framing"]')) input.addEventListener("change", () => {
+    if (!input.checked) return;
+    state.framing = input.value; savePref("vertical_framing", input.value); renderFraming();
+  });
+  for (const input of document.querySelectorAll('input[name="gif-size"]')) input.addEventListener("change", () => {
+    if (!input.checked) return;
+    state.gifSize = input.value; savePref("gif_size", input.value);
+    $("export-audio").textContent = exportDetail("gif");
+  });
+  function renderGifCompression() {
+    const [name] = GIF_COMPRESSION[state.gifCompression];
+    $("gif-compression").value = String(state.gifCompression);
+    $("gif-compression").style.setProperty("--fill", `${state.gifCompression * 25}%`);
+    $("gif-compression").setAttribute("aria-valuetext", name);
+    $("gif-compression-value").textContent = name;
+  }
+  $("gif-compression").addEventListener("input", () => {
+    state.gifCompression = Math.min(4, Math.max(0, Math.round(Number($("gif-compression").value) || 0)));
+    renderGifCompression();
+    if ($("export-dialog").open && state.exportFormat === "gif") $("export-audio").textContent = exportDetail("gif");
+  });
+  $("gif-compression").addEventListener("change", () => savePref("gif_compression", state.gifCompression));
 
   // ---------- Preferences ----------
   function savePref(key, value) { nativeCall("save_pref", key, JSON.stringify(value)).catch(() => {}); }
@@ -916,6 +1112,10 @@
     if (typeof prefs.preview_cuts === "boolean") { state.skipRemoved = prefs.preview_cuts; $("skip-removed").checked = prefs.preview_cuts; }
     if (PREVIEW_LEVELS.some(level => level.id === prefs.preview_quality)) state.previewLevel = prefs.preview_quality;
     if (SIZE_LIMITS.includes(prefs.size_limit)) state.sizeLimit = prefs.size_limit;
+    if (prefs.vertical_framing === "fill" || prefs.vertical_framing === "fit") state.framing = prefs.vertical_framing;
+    if (Number.isFinite(prefs.vertical_crop) && prefs.vertical_crop >= 0 && prefs.vertical_crop <= 1) state.crop = prefs.vertical_crop;
+    if (["small", "medium", "large"].includes(prefs.gif_size)) state.gifSize = prefs.gif_size;
+    if (Number.isInteger(prefs.gif_compression) && prefs.gif_compression >= 0 && prefs.gif_compression <= 4) state.gifCompression = prefs.gif_compression;
     renderScale(); renderPreviewLevel(); applyVolumes();
   }
   // Per-track rows use the names stored in the recording. When the first track is a mix of the
@@ -1076,18 +1276,26 @@
     if (focusAnchor) menuAnchor?.focus();
     menuAnchor = menuSelect = null;
   }
-  function openMenu(anchor, options, current, onSelect) {
+  // A pick-one menu (listbox) marks the current choice; an action menu (actions = true) runs the item chosen, and an
+  // item that can't run now stays listed with the reason as its hint.
+  function openMenu(anchor, options, current, onSelect, actions = false) {
     if (menuAnchor === anchor) { closeMenu(true); return; }
     closeMenu();
     const menu = $("menu");
+    menu.setAttribute("role", actions ? "menu" : "listbox");
+    menu.classList.toggle("actions", actions);
     menu.replaceChildren(...options.map(option => {
       const item = document.createElement("button");
-      item.type = "button"; item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", String(option.value === current));
+      item.type = "button"; item.setAttribute("role", actions ? "menuitem" : "option");
+      if (!actions) item.setAttribute("aria-selected", String(option.value === current));
+      if (option.disabled) { item.setAttribute("aria-disabled", "true"); item.classList.add("unavailable"); }
       item.dataset.value = String(option.value);
       const label = document.createElement("span"); label.textContent = option.label; item.append(label);
       if (option.hint) { const hint = document.createElement("small"); hint.textContent = option.hint; item.append(hint); }
-      item.addEventListener("click", () => { closeMenu(true); onSelect(option.value); });
+      item.addEventListener("click", () => {
+        if (option.disabled) { flash(option.hint || "Not available right now."); return; }
+        closeMenu(true); onSelect(option.value);
+      });
       return item;
     }));
     menu.hidden = false;
@@ -1149,8 +1357,9 @@
     const job = native.export || {};
     if (state.exportStatus === "running" && job.status && job.status !== "running") {
       if (job.status === "done") {
-        state.exportStatus = "done"; state.lastExport = job; state.exportedSignature = state.exportSignature;
-        announce(`Exported ${job.name}. Saved in Edited Exports.${job.original_deleted ? " Original deleted." : ""}`);
+        state.exportStatus = "done"; state.lastExport = job;
+        if ((EXPORT_FORMATS[job.format] || EXPORT_FORMATS.mp4).video) state.exportedSignature = state.exportSignature;
+        announce(`${job.format === "png" ? "Saved" : "Exported"} ${job.name}. Saved in Edited Exports.${job.original_deleted ? " Original deleted." : ""}`);
         // The original is gone: let go of it, and leave the export's result and the closing notice in charge.
         if (job.original_deleted) { state.originalDeleted = true; video.pause(); video.removeAttribute("src"); video.load(); state.mediaReady = false; }
       } else if (job.status === "failed") { state.exportStatus = "failed"; state.lastExport = job; announce("Export failed"); }
@@ -1320,7 +1529,11 @@
       state.timecode = value; savePref("timecode", value); renderControls(); renderTime();
     });
   });
-  $("export").addEventListener("click", startExport);
+  $("export").addEventListener("click", () => startExport("mp4"));
+  $("export-more").addEventListener("click", () => {
+    if ($("export-more").disabled || state.exportStatus === "running") return;
+    openMenu($("export-more"), moreExports(), null, format => startExport(format), true);
+  });
   $("cancel-export").addEventListener("click", () => nativeCall("cancel_export").catch(() => {}));
   $("result-reveal").addEventListener("click", () => nativeCall("reveal_output", true).catch(error => flash(errorText(error))));
   $("result-open").addEventListener("click", () => nativeCall("play_output").catch(error => flash(errorText(error))));

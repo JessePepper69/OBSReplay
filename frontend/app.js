@@ -2,9 +2,9 @@
 
 (() => {
   const $ = id => document.getElementById(id);
-  const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "replay_enabled", "animations_enabled", "theme"];
+  const fields = ["obs_path", "clips_dir", "clip_seconds", "capture", "monitor_id", "output_height", "fps", "encoder", "codec", "quality", "mic_enabled", "mic_device", "desktop_device", "noise", "separate_tracks", "sort_by_app", "save_sound", "start_at_login", "save_hotkey", "show_hotkey", "screenshot_hotkey", "screenshot_enabled", "replay_enabled", "animations_enabled", "theme"];
   const numbers = new Set(["clip_seconds", "output_height", "fps", "quality"]);
-  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 18, mic_enabled: true, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: true, sort_by_app: true, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", replay_enabled: true, animations_enabled: true, theme: "original" };
+  const defaults = { obs_path: "", clips_dir: "", clip_seconds: 120, capture: "auto", monitor_id: "", output_height: 1080, fps: 60, encoder: "auto", codec: "h264", quality: 18, mic_enabled: true, mic_device: "default", desktop_device: "default", noise: "off", separate_tracks: true, sort_by_app: true, save_sound: true, start_at_login: true, save_hotkey: "Alt+Z", show_hotkey: "Alt+X", screenshot_hotkey: "Alt+S", screenshot_enabled: true, replay_enabled: true, animations_enabled: true, theme: "original" };
   const state = { snapshot: null, tab: "capture", dirty: false, loaded: false, pending: null, recording: null, dismissedError: "", localError: "", optionsKey: "", clipsKey: "", native: false, initialRoute: false };
   let nativeChain = Promise.resolve();
   let pollTimer;
@@ -25,7 +25,7 @@
   // opened again: "the newest replay when the window last opened" is compared with the one at the time of dismissal.
   const diskKey = "obsreplay.diskDismissed";
   let diskSeenClip = null, diskResample = true;
-  const newestReplay = () => (state.snapshot?.clips || []).find(clip => !clip.edited)?.path || "";
+  const newestReplay = () => (state.snapshot?.clips || []).find(clip => !clip.edited && !clip.screenshot)?.path || "";
   function renderDiskNotice() {
     const disk = state.snapshot?.disk;
     const low = Boolean(disk && disk.total > 0 && disk.percent <= 5);
@@ -99,7 +99,7 @@
     moveField("mic_device", "audio");
     moveField("noise", "audio");
     groups.audio.append($("separate_tracks").closest(".check-row"));
-    for (const name of ["save_hotkey", "show_hotkey"]) {
+    for (const name of ["save_hotkey", "show_hotkey", "screenshot_hotkey"]) {
       const input = $(name);
       const row = input.closest(".hotkey-row");
       const label = row.querySelector("label");
@@ -108,7 +108,7 @@
       copy.className = "setting-copy";
       const controls = document.createElement("div");
       controls.className = "hotkey-control";
-      controls.append(input, ...row.querySelectorAll("button"));
+      controls.append(...row.querySelectorAll(".hotkey-switch"), input, ...row.querySelectorAll("button"));
       row.className = "setting-row hotkey-row entrance-item";
       row.replaceChildren(copy, controls);
       groups.app.append(row);
@@ -277,6 +277,14 @@
   function configured() { return state.snapshot?.integration === true; }
   function needsRepair() { return configured() && state.snapshot?.capture_ready === false && Boolean(state.snapshot?.capture_issue); }
   function settings() { return { ...defaults, ...(state.snapshot?.settings || {}) }; }
+  // The three global shortcuts must all differ.
+  function shortcutClash(value) {
+    const save = String(value.save_hotkey).toLowerCase(), show = String(value.show_hotkey).toLowerCase(), shot = String(value.screenshot_hotkey || defaults.screenshot_hotkey).toLowerCase();
+    if (save === show) return "Save replay and Show / hide window need different shortcuts.";
+    // A screenshot shortcut that is turned off frees its keys.
+    if (value.screenshot_enabled !== false && (shot === save || shot === show)) return "Save screenshot needs a shortcut of its own, different from Save replay and Show / hide window.";
+    return "";
+  }
   function busy() { return Boolean(state.pending || state.snapshot?.busy); }
   function formatDuration(seconds) {
     const value = Number(seconds);
@@ -351,6 +359,11 @@
     setOptions("encoder", options.encoders || [], [{ value: "auto", label: "Automatic" }]);
     updateCodecs();
   }
+  // While screenshots are off, their shortcut can't be changed and isn't registered.
+  function syncScreenshotSwitch() {
+    const on = $("screenshot_enabled").checked, blocked = $("screenshot_enabled").disabled;
+    for (const button of document.querySelectorAll('[data-record="screenshot_hotkey"],[data-reset-key="screenshot_hotkey"]')) button.disabled = !on || blocked;
+  }
   function fillForm(value) {
     const current = { ...defaults, ...value };
     for (const name of fields) {
@@ -371,6 +384,7 @@
     }
     if (!Theme.known($("theme").value)) $("theme").value = defaults.theme;
     state.dirty = false;
+    syncScreenshotSwitch();
     syncThemePicker();
     // Real settings show their theme in this window; the placeholder defaults used before the first state do not.
     if (state.snapshot) Theme.preview($("theme").value);
@@ -511,6 +525,7 @@
     else $("footer-status").textContent = snapshot?.message || (configured() ? "Settings saved" : "Set up replay capture to get started");
     for (const element of document.querySelectorAll("[data-action], [data-help], #footer-hide, #hide-window, #quit-app, #reset-integration, #refresh-devices, #pick-obs, #pick-folder")) element.disabled = !state.native || pending;
     for (const element of $("settings-form").elements) if (element.id !== "apply-settings") element.disabled = !state.native || pending;
+    syncScreenshotSwitch();
     if (state.native && !pending) updateDependencies();
     const canControl = Boolean(snapshot?.connected && snapshot?.owned);
     const needsAttention = canControl && snapshot?.capture_ready === false;
@@ -576,9 +591,10 @@
   // Deleting asks first; holding Shift while choosing Delete skips the question.
   async function deleteClip(clip, ask = true) {
     if (busy()) return;
-    const name = clip.name || (clip.edited ? "this video" : "this replay");
-    if (ask && !await confirmAction(clip.edited ? "Delete edited video?" : "Delete replay?", `Permanently delete “${name}” from your computer? This cannot be undone.`, "Delete", true)) return;
+    const name = clip.name || (clip.screenshot ? "this screenshot" : clip.edited ? "this video" : "this replay");
+    if (ask && !await confirmAction(clip.screenshot ? "Delete screenshot?" : clip.edited ? "Delete edited video?" : "Delete replay?", `Permanently delete “${name}” from your computer? This cannot be undone.`, "Delete", true)) return;
     if (playerClip?.path === clip.path) { ReplayViewer.release(); playerClip = null; closePlayer(); }
+    if (shotClip?.path === clip.path) closeShot();
     dispatch("delete_clip", { path: clip.path });
   }
   // Clip details as separate pieces (app, saved time, size) so they align and wrap cleanly.
@@ -635,7 +651,17 @@
     element.tabIndex = -1;
     element.setAttribute("role", "menu");
     element.setAttribute("aria-label", `Actions for ${clip.name || "this clip"}`);
-    const rows = [
+    const rows = clip.screenshot ? [
+      ["View", icons.open, () => viewShot(clip)],
+      ["Rename", icons.rename, () => renameClip(clip)],
+      card.classList.contains("compact") ? undefined : [selection.has(clip.path) ? "Deselect" : "Select", icons.select, () => toggleSelected(clip.path)],
+      null,
+      ["Copy", icons.copy, () => copyClips([clip.path])],
+      ["Open in image viewer", icons.open, () => dispatch("open_clip", { path: clip.path })],
+      ["Show in folder", icons.folder, () => dispatch("reveal_clip", { path: clip.path })],
+      null,
+      ["Delete", icons.trash, event => deleteClip(clip, !event.shiftKey), true]
+    ] : [
       ["Play", icons.play, () => watchReplay(clip)],
       ["Edit clip", icons.edit, () => openEditor(clip)],
       ["Rename", icons.rename, () => renameClip(clip)],
@@ -709,7 +735,7 @@
     if (busy()) return;
     const file = clip.name || clip.path?.split(/[\\/]/).pop() || "", dot = file.lastIndexOf(".");
     renaming = { clip, stem: dot > 0 ? file.slice(0, dot) : file, extension: dot > 0 ? file.slice(dot) : "" };
-    $("rename-title").textContent = clip.edited ? "Rename edited video" : "Rename replay";
+    $("rename-title").textContent = clip.screenshot ? "Rename screenshot" : clip.edited ? "Rename edited video" : "Rename replay";
     $("rename-extension").textContent = renaming.extension;
     $("rename-name").value = renaming.stem;
     $("rename-confirm").disabled = true;
@@ -788,9 +814,33 @@
       return stored && typeof stored.data === "string" && stored.data.startsWith("data:image/jpeg;base64,") ? stored : null;
     } catch { return null; }
   }
+  // A small JPEG of a picture, the same size and quality as a video's card picture.
+  function pictureThumbnail(url) {
+    return new Promise(resolve => {
+      const picture = new Image();
+      // The media server allows any origin, so the canvas stays readable.
+      picture.crossOrigin = "anonymous";
+      const timer = setTimeout(() => { picture.onload = picture.onerror = null; picture.src = ""; resolve(null); }, 8000);
+      picture.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 180;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#080c12"; context.fillRect(0, 0, 320, 180);
+          const scale = Math.min(320 / picture.naturalWidth, 180 / picture.naturalHeight);
+          const width = picture.naturalWidth * scale, height = picture.naturalHeight * scale;
+          context.drawImage(picture, (320 - width) / 2, (180 - height) / 2, width, height);
+          resolve(canvas.toDataURL("image/jpeg", .6));
+        } catch { resolve(null); }
+      };
+      picture.onerror = () => { clearTimeout(timer); resolve(null); };
+      picture.src = url;
+    });
+  }
   async function takeThumbnail(clip) {
     const url = await nativeCall("media_url", clip.path);
     if (document.hidden || $("replay-player").open) throw new DOMException("Preview deferred", "AbortError");
+    if (clip.screenshot) return pictureThumbnail(url);
     return new Promise((resolve, reject) => {
       const video = document.createElement("video");
       video.muted = true;
@@ -879,6 +929,7 @@
   }
   function watchReplay(clip) {
     const alreadyOpen = $("replay-player").open;
+    $("viewer-flash").hidden = true;
     cancelThumbnail?.();
     if (!alreadyOpen) playerReturnFocus = document.activeElement;
     playerClip = clip;
@@ -891,6 +942,69 @@
     });
     if (!alreadyOpen) animateDialog($("replay-player"), true);
   }
+  // Screenshot viewer: one picture at a time, with the previous and next screenshot of the list shown on Clips.
+  let shotClip = null, shotReturnFocus = null, shotLoad = 0;
+  function shotList() {
+    const shown = clipView.shown.filter(clip => clip.screenshot);
+    return shown.some(clip => clip.path === shotClip?.path) ? shown : (state.snapshot?.clips || []).filter(clip => clip.screenshot);
+  }
+  async function viewShot(clip) {
+    const dialog = $("shot-viewer");
+    if (!dialog.open) shotReturnFocus = document.activeElement;
+    shotClip = clip;
+    $("shot-title").textContent = clip.name || "Screenshot";
+    fillMeta($("shot-detail"), clip);
+    const list = shotList(), at = list.findIndex(item => item.path === clip.path);
+    const focused = document.activeElement;
+    $("shot-prev").disabled = at <= 0;
+    $("shot-next").disabled = at < 0 || at >= list.length - 1;
+    // A step button that just went away hands focus on, so the arrow keys and Tab keep working.
+    if (focused?.disabled && (focused === $("shot-prev") || focused === $("shot-next"))) ($("shot-prev").disabled ? $("shot-next").disabled ? $("shot-close") : $("shot-next") : $("shot-prev")).focus();
+    $("shot-position").textContent = at >= 0 && list.length > 1 ? `${at + 1} of ${list.length}` : "";
+    const image = $("shot-image"), load = ++shotLoad;
+    image.removeAttribute("src");
+    image.alt = clip.name || "Screenshot";
+    $("shot-status").textContent = "Loading screenshot…";
+    if (!dialog.open) { dialog.showModal(); animateDialog(dialog, true); }
+    try {
+      const url = await nativeCall("media_url", clip.path);
+      if (load !== shotLoad) return;
+      image.onload = () => { if (load === shotLoad) $("shot-status").textContent = ""; };
+      image.onerror = () => { if (load === shotLoad) $("shot-status").textContent = "This screenshot couldn’t be shown. It may have been moved or deleted."; };
+      image.src = url;
+    } catch (error) { if (load === shotLoad) $("shot-status").textContent = errorText(error); }
+  }
+  function stepShot(direction) {
+    const list = shotList(), at = list.findIndex(item => item.path === shotClip?.path), next = list[at + direction];
+    if (at >= 0 && next) viewShot(next);
+  }
+  function closeShot() { dismissDialog($("shot-viewer")); }
+  $("shot-viewer").addEventListener("close", () => {
+    shotClip = null; ++shotLoad;
+    $("shot-image").removeAttribute("src");
+    if (shotReturnFocus?.isConnected) shotReturnFocus.focus(); else $("main").focus();
+  });
+  $("shot-viewer").addEventListener("cancel", event => { event.preventDefault(); closeShot(); });
+  $("shot-viewer").addEventListener("click", event => { if (event.target === $("shot-viewer")) closeShot(); });
+  document.addEventListener("keydown", event => {
+    if (!$("shot-viewer").open || $("confirm-dialog").open || event.defaultPrevented) return;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); stepShot(event.key === "ArrowLeft" ? -1 : 1); }
+  });
+  $("shot-close").addEventListener("click", closeShot);
+  $("shot-prev").addEventListener("click", () => stepShot(-1));
+  $("shot-next").addEventListener("click", () => stepShot(1));
+  $("shot-copy").addEventListener("click", () => { if (shotClip) copyClips([shotClip.path]); });
+  $("shot-reveal").addEventListener("click", () => { if (shotClip && !busy()) dispatch("reveal_clip", { path: shotClip.path }); });
+  $("shot-external").addEventListener("click", () => { if (!shotClip || busy()) return; const clip = shotClip; closeShot(); dispatch("open_clip", { path: clip.path }); });
+  $("shot-delete").addEventListener("click", async event => {
+    if (!shotClip || busy()) return;
+    const clip = shotClip;
+    if (!event.shiftKey && !await confirmAction("Delete screenshot?", `Permanently delete “${clip.name || "this screenshot"}” from your computer? This cannot be undone.`, "Delete screenshot", true)) return;
+    // The next picture takes its place, so a run of screenshots can be cleared one after another.
+    const list = shotList(), at = list.findIndex(item => item.path === clip.path), next = list[at + 1] || list[at - 1];
+    dispatch("delete_clip", { path: clip.path });
+    if (next && $("shot-viewer").open) viewShot(next); else closeShot();
+  });
   // Selection on the Clips page. Selecting a clip puts the page in select mode: the other cards go pale and a bar
   // offers Copy and Delete. Opening a clip keeps the selection; only Clear selection or Escape ends it.
   const selection = new Set();
@@ -923,14 +1037,18 @@
     if (!paths.length) return;
     try {
       const count = Number(await nativeCall("copy_clips", JSON.stringify(paths))) || paths.length;
-      showToast(count === 1 ? "Clip copied. Paste it into a chat or a folder." : `${count} clips copied. Paste them into a chat or a folder.`);
+      const pictures = paths.every(path => state.snapshot?.clips?.find(clip => clip.path === path)?.screenshot);
+      const noun = pictures ? ["Screenshot", "screenshots"] : ["Clip", "clips"];
+      showToast(count === 1 ? `${noun[0]} copied. Paste it into a chat or a folder.` : `${count} ${noun[1]} copied. Paste them into a chat or a folder.`);
     } catch (error) { showError(error); }
   }
   async function deleteSelected() {
     const paths = [...selection];
     if (!paths.length || busy()) return;
     const one = paths.length === 1;
-    if (!await confirmAction(one ? "Delete 1 clip?" : `Delete ${paths.length} clips?`, `Permanently delete ${one ? "this clip" : `these ${paths.length} clips`} from your computer? This cannot be undone.`, one ? "Delete clip" : `Delete ${paths.length} clips`, true)) return;
+    const pictures = paths.every(path => state.snapshot?.clips?.find(clip => clip.path === path)?.screenshot);
+    const [single, plural] = pictures ? ["screenshot", "screenshots"] : ["clip", "clips"];
+    if (!await confirmAction(one ? `Delete 1 ${single}?` : `Delete ${paths.length} ${plural}?`, `Permanently delete ${one ? `this ${single}` : `these ${paths.length} ${plural}`} from your computer? This cannot be undone.`, one ? `Delete ${single}` : `Delete ${paths.length} ${plural}`, true)) return;
     if (playerClip && paths.includes(playerClip.path)) { ReplayViewer.release(); playerClip = null; closePlayer(); }
     selection.clear();
     syncSelection();
@@ -956,13 +1074,13 @@
   }
   function clipRow(clip, compact = false, timeOnly = false) {
     const row = document.createElement("div");
-    row.className = compact ? "clip-card compact" : selection.has(clip.path) ? "clip-card selected" : "clip-card";
+    row.className = (compact ? "clip-card compact" : selection.has(clip.path) ? "clip-card selected" : "clip-card") + (clip.screenshot ? " screenshot" : "");
     if (!compact) row.dataset.path = clip.path;
     const preview = document.createElement("button");
     preview.type = "button"; preview.className = "clip-preview";
-    preview.setAttribute("aria-label", `Watch ${clip.name || "replay"}`);
+    preview.setAttribute("aria-label", `${clip.screenshot ? "View" : "Watch"} ${clip.name || (clip.screenshot ? "screenshot" : "replay")}`);
     // Shift+click or Ctrl+click selects or deselects; a plain click plays the clip and leaves the selection alone.
-    preview.addEventListener("click", event => { if (!compact && (event.shiftKey || event.ctrlKey)) toggleSelected(clip.path); else watchReplay(clip); });
+    preview.addEventListener("click", event => { if (!compact && (event.shiftKey || event.ctrlKey)) toggleSelected(clip.path); else if (clip.screenshot) viewShot(clip); else watchReplay(clip); });
     // A press with Shift or Ctrl must not select text across the page or leave a keyboard focus ring on the card.
     if (!compact) row.addEventListener("mousedown", event => { if (event.shiftKey || event.ctrlKey) event.preventDefault(); });
     const thumbnail = document.createElement("span"); thumbnail.className = "clip-thumbnail";
@@ -1010,7 +1128,8 @@
   function renderClips() {
     const clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : [];
     // The empty state names the save shortcut while capture runs, so it follows the capture state too.
-    const key = JSON.stringify(clips.some(clip => !clip.edited) ? clips : [clips, capturing(), settings().save_hotkey, settings().clip_seconds]);
+    const value = settings();
+    const key = JSON.stringify([clips, capturing(), value.save_hotkey, value.clip_seconds, value.screenshot_hotkey, value.screenshot_enabled]);
     if (key === state.clipsKey) return;
     state.clipsKey = key;
     thumbnailObserver.disconnect();
@@ -1022,13 +1141,16 @@
       closePlayer();
       showError("This replay was deleted or moved. Your recent clips have been updated.");
     }
+    if (shotClip && !clips.some(clip => clip.path === shotClip.path)) closeShot();
     renderClipLists(clips);
   }
   // Recorded replays and edited exports are separate lists, on Clips and in Latest on Capture.
   const clipTabs = { clips: "replays", latest: "replays" };
+  // Clips has a Screenshots tab; Latest on Capture lists videos only.
+  const tabsOf = list => list === "clips" ? ["replays", "edits", "shots"] : ["replays", "edits"];
   try {
     const saved = JSON.parse(localStorage.getItem("obsreplay.clipTabs") || "{}");
-    for (const list of Object.keys(clipTabs)) if (["replays", "edits"].includes(saved[list])) clipTabs[list] = saved[list];
+    for (const list of Object.keys(clipTabs)) if (tabsOf(list).includes(saved[list])) clipTabs[list] = saved[list];
   } catch {}
   // Clips page: one game at a time if wanted, 24 clips a page.
   const pageSize = 24;
@@ -1130,12 +1252,19 @@
   const capturing = () => Boolean(state.snapshot?.replay_active && state.snapshot?.connected && state.snapshot?.owned);
   const emptyCopy = {
     replays: { title: "No replays saved yet", text: "Start capture, then press your save shortcut. Open your clips folder to find older files.", short: "No replays saved yet. Start capture, then press your save shortcut." },
-    edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." }
+    edits: { title: "No edited exports yet", text: "Select Edit on a replay, cut it down, then Export video. Exports are saved in an Edited Exports folder beside the original.", short: "No edited exports yet. Select Edit on a replay, then Export video." },
+    shots: { title: "No screenshots yet", text: "Screenshots are full-size pictures of what OBS captures, saved next to your replays.", short: "No screenshots yet." }
   };
+  const tabNouns = { replays: ["replay", "replays"], edits: ["edited export", "edited exports"], shots: ["screenshot", "screenshots"] };
+  function emptyText(tab) {
+    const value = settings();
+    if (tab === "shots") return value.screenshot_enabled === false ? "The screenshot shortcut is off. Turn it on in Settings, App." : `Press ${value.screenshot_hotkey} while OBS captures to save a full-size picture next to your replays.`;
+    return tab === "replays" && capturing() ? `Capture is running. Press ${value.save_hotkey} while you play to save the last ${formatDuration(value.clip_seconds)}.` : emptyCopy[tab].text;
+  }
   function renderClipLists(clips = Array.isArray(state.snapshot?.clips) ? state.snapshot.clips : []) {
     thumbnailObserver.disconnect();
     closeClipMenu();
-    const groups = { replays: clips.filter(clip => !clip.edited), edits: clips.filter(clip => clip.edited) };
+    const groups = { replays: clips.filter(clip => !clip.edited && !clip.screenshot), edits: clips.filter(clip => clip.edited && !clip.screenshot), shots: clips.filter(clip => clip.screenshot) };
     for (const button of document.querySelectorAll("[data-clip-tab]")) {
       const selected = clipTabs[button.dataset.clipList] === button.dataset.clipTab;
       button.setAttribute("aria-selected", String(selected));
@@ -1159,7 +1288,7 @@
         const last = Math.min(items.length, start + pageSize);
         for (const pager of [$("clips-pager-top"), $("clips-pager-bottom")]) renderPager(pager, clipView.page, pages, start + 1, last, items.length);
         $("clips-toolbar").hidden = !all;
-        $("clips-search-status").textContent = clipView.query || clipView.when ? `${items.length} ${items.length === 1 ? "clip matches" : "clips match"}` : "";
+        $("clips-search-status").textContent = clipView.query || clipView.when ? `${items.length} ${tab === "shots" ? (items.length === 1 ? "screenshot matches" : "screenshots match") : items.length === 1 ? "clip matches" : "clips match"}` : "";
         limit = pageSize;
       }
       container.setAttribute("aria-labelledby", `${list}-tab-${tab}`);
@@ -1184,7 +1313,7 @@
             if (age) { const small = document.createElement("span"); small.className = "day-age"; small.textContent = age; heading.append(small); }
             const count = document.createElement("span");
             count.className = "day-count";
-            count.textContent = perDay.get(key) === 1 ? "1 clip" : `${perDay.get(key)} clips`;
+            count.textContent = perDay.get(key) === 1 ? (tab === "shots" ? "1 screenshot" : "1 clip") : `${perDay.get(key)} ${tab === "shots" ? "screenshots" : "clips"}`;
             heading.append(count);
             container.append(heading);
           }
@@ -1194,8 +1323,8 @@
       else {
         const empty = document.createElement("div");
         empty.className = "clips-empty";
-        const title = document.createElement("h2"); title.textContent = !searching ? emptyCopy[tab].title : clipView.query ? `No ${tab === "edits" ? "edited exports" : "replays"} match “${$("clips-search").value.trim()}”` : `No ${tab === "edits" ? "edited exports" : "replays"} from ${whenLabels[clipView.when]}`;
-        const description = document.createElement("p"); description.textContent = searching ? (clipView.query ? "Search looks at the file name, the game and the saved date." : "Choose Any time to see every clip.") : tab === "replays" && capturing() ? `Capture is running. Press ${settings().save_hotkey} while you play to save the last ${formatDuration(settings().clip_seconds)}.` : emptyCopy[tab].text;
+        const title = document.createElement("h2"); title.textContent = !searching ? emptyCopy[tab].title : clipView.query ? `No ${tabNouns[tab][1]} match “${$("clips-search").value.trim()}”` : `No ${tabNouns[tab][1]} from ${whenLabels[clipView.when]}`;
+        const description = document.createElement("p"); description.textContent = searching ? (clipView.query ? "Search looks at the file name, the game and the saved date." : "Choose Any time to see every clip.") : emptyText(tab);
         empty.append(title, description);
         if (searching) {
           const clear = document.createElement("button");
@@ -1211,7 +1340,7 @@
     scheduleFade();
   }
   function showClipTab(list, tab, focus = false) {
-    if (!["replays", "edits"].includes(tab)) return;
+    if (!tabsOf(list).includes(tab)) return;
     const changed = clipTabs[list] !== tab;
     clipTabs[list] = tab;
     if (changed && list === "clips") { clipView.app = null; clipView.page = 0; }
@@ -1258,7 +1387,11 @@
       state.native = true;
       const previousObs = state.snapshot?.settings?.obs_path;
       const lackedObs = state.snapshot ? !state.snapshot.obs_supported : false;
+      const previousShot = state.snapshot ? state.snapshot.last_screenshot?.path || "" : null;
       state.snapshot = snapshot;
+      const shot = snapshot.last_screenshot;
+      if (previousShot !== null && shot?.path && shot.path !== previousShot && !document.hidden && Date.now() - Date.parse(shot.saved_at) < 15000)
+        showToast(`Screenshot saved: ${shot.name}`, "Show in folder", () => nativeCall("reveal_screenshot").catch(showError));
       if (diskResample) { diskResample = false; diskSeenClip = newestReplay(); }
       if (state.loaded && previousObs !== snapshot.settings.obs_path) $("obs_path").value = snapshot.settings.obs_path || "";
       syncMotion();
@@ -1456,7 +1589,8 @@
     if (busy()) return;
     if (!value.obs_path) value.obs_path = state.snapshot?.settings?.obs_path || "";
     if (!value.clips_dir) { goStep("capture"); showTab("setup"); showError("Choose a clips folder for your replays."); $("setup-folder").focus(); return; }
-    if (value.save_hotkey.toLowerCase() === value.show_hotkey.toLowerCase()) { showError("Save replay and Show / hide window need different shortcuts."); return; }
+    const clash = shortcutClash(value);
+    if (clash) { showError(clash); return; }
     setup.flow = "running";
     setup.closing = false;
     for (const item of $("setup-tasks").children) setTask(item, "pending");
@@ -2216,12 +2350,14 @@
     event.preventDefault(); $("clips-search").focus(); $("clips-search").select();
   });
   $("all-clips").addEventListener("click", () => { showClipTab("clips", clipTabs.latest); showTab("clips"); });
+  $("screenshot_enabled").addEventListener("change", () => { cancelRecording(); syncScreenshotSwitch(); });
   for (const button of document.querySelectorAll("[data-clip-tab]")) {
     button.addEventListener("click", () => showClipTab(button.dataset.clipList, button.dataset.clipTab));
     button.addEventListener("keydown", event => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
-      const next = event.key === "Home" ? "replays" : event.key === "End" ? "edits" : button.dataset.clipTab === "replays" ? "edits" : "replays";
+      const tabs = tabsOf(button.dataset.clipList), at = tabs.indexOf(button.dataset.clipTab);
+      const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : tabs[(at + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
       showClipTab(button.dataset.clipList, next, true);
     });
   }
@@ -2230,7 +2366,7 @@
     showTab("settings");
     showCategory("app");
     const error = errorText(state.snapshot?.hotkey_error);
-    const name = /show/i.test(error) && !/save/i.test(error) ? "show_hotkey" : "save_hotkey";
+    const name = /screenshot/i.test(error) ? "screenshot_hotkey" : /show/i.test(error) && !/save/i.test(error) ? "show_hotkey" : "save_hotkey";
     document.querySelector(`[data-record="${name}"]`).focus();
   });
   $("toggle-capture").addEventListener("click", async () => {
@@ -2255,7 +2391,8 @@
     const value = formValue();
     if (!value.obs_path && !state.snapshot?.obs_supported) { setup.step = "obs"; showTab("setup"); return; }
     if (!value.clips_dir) { showError("Choose a clips folder before configuring."); $("clips_dir").focus(); return; }
-    if (value.save_hotkey.toLowerCase() === value.show_hotkey.toLowerCase()) { showError("Save replay and Show / hide window need different shortcuts."); $("save_hotkey").focus(); return; }
+    const clash = shortcutClash(value);
+    if (clash) { showError(clash); $("save_hotkey").focus(); return; }
     if (!configured()) { runSetup(value); return; }
     dispatch(needsRepair() ? "setup" : "apply", value);
   });
@@ -2314,6 +2451,33 @@
   $("confirm-dialog").querySelector("form").addEventListener("submit", event => { event.preventDefault(); closeDialog(event.submitter?.value || "cancel"); });
   $("confirm-dialog").addEventListener("cancel", event => { event.preventDefault(); closeDialog("cancel"); });
   $("player-close").addEventListener("click", closePlayer);
+  // Screenshot this frame: the frame on screen, taken at full size from the clip file by FFmpeg (not from the
+  // scaled picture in the viewer), saved next to the clip and listed on the Screenshots tab.
+  let flashTimer = 0;
+  function viewerFlash(text, failed = false) {
+    const note = $("viewer-flash");
+    clearTimeout(flashTimer);
+    note.textContent = text; note.classList.toggle("failed", failed); note.hidden = false;
+    flashTimer = setTimeout(() => { note.hidden = true; }, failed ? 6000 : 3000);
+  }
+  $("viewer-frame-shot").addEventListener("click", async () => {
+    const button = $("viewer-frame-shot"), clip = playerClip;
+    if (!clip || button.classList.contains("saving") || typeof api()?.save_frame !== "function") return;
+    ReplayViewer.pause();
+    button.classList.add("saving");
+    try {
+      const result = unpack(await api().save_frame(clip.path, ReplayViewer.time()));
+      const text = result?.status === "saved" ? `Saved ${result.name} to Screenshots` : errorText(result?.error) || "The frame couldn’t be saved.";
+      if (result?.status === "saved") schedulePoll(0);
+      // The viewer may show another clip by now; then the result is a toast in the main window.
+      if (playerClip?.path === clip.path && $("replay-player").open) viewerFlash(text, result?.status !== "saved");
+      else if (result?.status === "saved") showToast(text); else showError(text);
+    } catch (error) {
+      if (playerClip?.path === clip.path && $("replay-player").open) viewerFlash(errorText(error) || "The frame couldn’t be saved.", true);
+      else showError(error);
+    }
+    finally { button.classList.remove("saving"); }
+  });
   $("replay-player").addEventListener("close", () => {
     if ($("replay-player").open) return;
     stopPlayer();
@@ -2381,13 +2545,13 @@
     const clip = find();
     if (!clip) { showError("That video isn’t in your clips any more."); return; }
     if ($("confirm-dialog").open) closeDialog("cancel");
-    const tab = clip.edited ? "edits" : "replays";
+    const tab = clip.screenshot ? "shots" : clip.edited ? "edits" : "replays";
     showTab("clips");
     clipTabs.clips = tab;
     clipView.app = null;
     clipView.query = ""; $("clips-search").value = ""; $("clips-search-clear").hidden = true;
     clipView.when = ""; $("clips-when").value = ""; syncDropdowns();
-    clipView.page = Math.max(0, Math.floor((state.snapshot.clips.filter(item => Boolean(item.edited) === Boolean(clip.edited)).findIndex(item => item.path === path)) / pageSize));
+    clipView.page = Math.max(0, Math.floor((state.snapshot.clips.filter(item => Boolean(item.edited) === Boolean(clip.edited) && Boolean(item.screenshot) === Boolean(clip.screenshot)).findIndex(item => item.path === path)) / pageSize));
     try { localStorage.setItem("obsreplay.clipTabs", JSON.stringify(clipTabs)); } catch {}
     renderClipLists();
     watchReplay(clip);

@@ -17,6 +17,8 @@
 #include <condition_variable>
 #include <cwctype>
 #include <deque>
+#include <regex>
+#include <format>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -52,6 +54,23 @@ bool media_file(const fs::path& path) {
     std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
     return extension == L".mp4" || extension == L".mkv" || extension == L".mov" || extension == L".flv" || extension == L".ts";
 }
+// Screenshots: pictures in the clips folder. They are listed with the clips and marked "screenshot".
+bool image_file(const fs::path& path) {
+    auto extension = path.extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+    return extension == L".png" || extension == L".jpg" || extension == L".jpeg";
+}
+bool listed_file(const fs::path& path) { return media_file(path) || image_file(path); }
+// A picture OBSReplay saved: "Screenshot <date>.png" from the shortcut, "<clip> frame M-SS.ss.png" from the viewer.
+// The folder scan lists only these, so cover art or another tool's pictures in the clips folder never appear
+// (and can't be deleted from the app). A screenshot renamed in the app stays listed through clips.json.
+bool app_picture(const fs::path& path) {
+    if (!image_file(path)) return false;
+    const auto stem = path.stem().wstring();
+    if (stem.starts_with(L"Screenshot ")) return true;
+    static const std::wregex frame(LR"( frame \d+-\d{2}\.\d{2}( \(\d+\))?$)");
+    return std::regex_search(stem, frame);
+}
 // The clip list has no size limit: every replay and export the app saved stays listed while its file exists.
 // The once-a-second check for deleted files looks at this many clips per pass, in rotation, so a large library
 // does not mean thousands of file checks every second.
@@ -64,7 +83,8 @@ bool capture_changed(const Json& before, const Json& after) {
 }
 
 struct Controller::Impl {
-    struct Action { std::string name; Json payload; std::string app; };
+    // queued: accepted while another action ran (a screenshot behind a save); it leaves that action's error in place.
+    struct Action { std::string name; Json payload; std::string app; bool queued = false; };
     struct Save { std::string app; bool sort{}, sound{}; bool confirmed{}; std::string path; };
     Paths paths;
     Integration integration;
@@ -319,7 +339,7 @@ struct Controller::Impl {
                 if (it.depth() > 2) { it.disable_recursion_pending(); continue; }
                 if (++seen > 20000) break;
                 std::error_code ignored;
-                if (!it->is_regular_file(ignored) || !media_file(it->path())) continue;
+                if (!it->is_regular_file(ignored) || !listed_file(it->path())) continue;
                 const auto text = path_string(tidy_path(it->path()));
                 if (!known.insert(path_key(it->path())).second) continue;
                 // The folder under the clips folder is the game; an "Edited Exports" folder marks an export.
@@ -330,6 +350,9 @@ struct Controller::Impl {
                     if (_wcsicmp(part->c_str(), L"Edited Exports") == 0) edited = true;
                     else if (app.empty()) app = path_string(*part);
                 }
+                // A picture in Edited Exports is a frame saved from the editor, not a screenshot.
+                const bool picture = image_file(it->path());
+                if (picture && (edited || !app_picture(it->path()))) { known.erase(path_key(it->path())); continue; }
                 WIN32_FILE_ATTRIBUTE_DATA details{};
                 SYSTEMTIME utc{}, local{};
                 char saved[32]{};
@@ -338,12 +361,21 @@ struct Controller::Impl {
                 const auto bytes = (static_cast<uint64_t>(details.nFileSizeHigh) << 32) | details.nFileSizeLow;
                 clips.push_back(Json{{"path", text}, {"name", path_string(it->path().filename())}, {"app", app}, {"bytes", bytes}, {"saved_at", saved}});
                 if (edited) clips.back()["edited"] = true;
+                if (picture) clips.back()["screenshot"] = true;
                 ++found;
             }
             if (!found) return;
-            std::stable_sort(clips.begin(), clips.end(), [](const Json& a, const Json& b) { return a.value("saved_at", "") > b.value("saved_at", ""); });
-            Json merged = clips;
-            update([&](Json& s) { s["clips"] = merged; });
+            const std::vector<Json> additions(clips.end() - static_cast<std::ptrdiff_t>(found), clips.end());
+            Json merged;
+            update([&](Json& s) {
+                std::set<std::wstring> present;
+                std::vector<Json> list;
+                for (const auto& clip : s["clips"]) { present.insert(path_key(from_string(clip.value("path", "")))); list.push_back(clip); }
+                for (const auto& clip : additions) if (present.insert(path_key(from_string(clip.value("path", "")))).second) list.push_back(clip);
+                std::stable_sort(list.begin(), list.end(), [](const Json& a, const Json& b) { return a.value("saved_at", "") > b.value("saved_at", ""); });
+                s["clips"] = list;
+                merged = s["clips"];
+            });
             atomic_write(paths.data / L"clips.json", merged.dump(2));
         } catch (...) {}
     }
@@ -370,9 +402,10 @@ struct Controller::Impl {
                     if (!clip.is_object() || !clip.contains("path") || !clip["path"].is_string()) continue;
                     const auto file = tidy_path(from_string(clip["path"].get<std::string>()));
                     // A history written before paths were tidied can hold one file under two spellings; the first entry stays.
-                    if (!file.is_absolute() || !media_file(file) || !seen.insert(path_key(file)).second) continue;
+                    if (!file.is_absolute() || !listed_file(file) || !seen.insert(path_key(file)).second) continue;
                     clips.push_back({{"path", path_string(file)}, {"name", path_string(file.filename())}, {"app", clip.value("app", "")}, {"bytes", clip.value("bytes", uint64_t{})}, {"saved_at", clip.value("saved_at", "")}});
-                    if (clip.value("edited", false)) clips.back()["edited"] = true;
+                    if (image_file(file)) clips.back()["screenshot"] = true;
+                    else if (clip.value("edited", false)) clips.back()["edited"] = true;
                 }
                 update([&](Json& s) { s["clips"] = clips; });
             }
@@ -700,6 +733,58 @@ struct Controller::Impl {
         throw std::runtime_error("A saved video was not confirmed. Check the clips folder before saving again; this request will not be retried automatically." + (request_error.empty() ? std::string{} : " " + request_error));
     }
 
+    // A screenshot of what OBS is capturing, as a full-size PNG in the clips folder (in the app's folder when clips are
+    // sorted by app). OBS draws the scene once more and writes the file; it is confirmed when the file exists.
+    void screenshot(const std::string& app) {
+        if (!settings().value("screenshot_enabled", true)) throw std::runtime_error("Screenshots are turned off. Turn them on in Settings, App.");
+        ensure_connection(false);
+        require_owned();
+        const auto value = settings();
+        auto folder = from_string(value.at("clips_dir").get<std::string>());
+        if (value.value("sort_by_app", false)) folder /= from_string(safe_name(app));
+        std::error_code error;
+        fs::create_directories(folder, error);
+        if (error) throw std::runtime_error("The screenshot folder could not be created. Check the clips folder in Settings.");
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        const auto stamp = std::format(L"Screenshot {:04}-{:02}-{:02} {:02}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+        fs::path file;
+        for (unsigned i = 0; i != 1000 && file.empty(); ++i) {
+            auto candidate = folder / (stamp + (i ? L" (" + std::to_wstring(i) + L")" : std::wstring{}) + L".png");
+            if (!fs::exists(candidate, error)) file = candidate;
+        }
+        if (file.empty()) throw std::runtime_error("Too many screenshots share this name. Try again in a second.");
+        const auto scene = socket.request("GetCurrentProgramScene");
+        const auto name = scene.value("currentProgramSceneName", scene.value("sceneName", std::string{}));
+        if (name.empty()) throw std::runtime_error("OBS didn't say which scene it shows, so no screenshot was taken.");
+        // Without a width and height OBS saves the scene at its full size: the size of the captured display.
+        socket.request("SaveSourceScreenshot", {{"sourceName", name}, {"imageFormat", "png"}, {"imageFilePath", path_string(file)}}, 10000);
+        const auto bytes = fs::file_size(file, error);
+        if (error || bytes == 0) throw std::runtime_error("OBS didn't save the screenshot. Check that the clips folder has free space.");
+        // A black picture means nothing was captured: in "Fullscreen games only" no game was open full screen.
+        if (image_is_black(file)) {
+            fs::remove(file, error);
+            log_warn("Screenshot discarded: file={} reason=black", quoted_value(path_string(file)));
+            throw std::runtime_error(value.value("capture", "") == "game"
+                ? "The screenshot came out black, so it wasn't kept. In \"Fullscreen games only\" OBS captures only while a game runs full screen."
+                : "The screenshot came out black, so it wasn't kept. OBS captured nothing at that moment.");
+        }
+        if (value.value("save_sound", false)) screenshot_feedback();
+        const auto text = path_string(tidy_path(file));
+        const auto saved_at = now_iso();
+        Json clips;
+        update([&](Json& s) {
+            s["last_screenshot"] = Json{{"path", text}, {"name", path_string(file.filename())}, {"saved_at", saved_at}};
+            auto& list = s["clips"];
+            for (auto it = list.begin(); it != list.end();) { if (path_key(from_string(it->value("path", ""))) == path_key(file)) it = list.erase(it); else ++it; }
+            list.insert(list.begin(), Json{{"path", text}, {"name", path_string(file.filename())}, {"app", value.value("sort_by_app", false) ? safe_name(app) : app}, {"bytes", bytes}, {"saved_at", saved_at}, {"screenshot", true}});
+            clips = list;
+        });
+        try { atomic_write(paths.data / L"clips.json", clips.dump(2)); } catch (...) { log_warn("Screenshot saved but the clip list could not be written"); }
+        log_info("Screenshot saved: file={} bytes={} app={}", quoted_value(text), bytes, quoted_value(app));
+        message("Saved " + path_string(file.filename()));
+    }
+
     void apply(const Json& payload, bool setup) {
         const auto previous = settings();
         Json value = payload.empty() ? previous : payload.contains("settings") ? payload.at("settings") : payload;
@@ -837,6 +922,8 @@ struct Controller::Impl {
         else if (action.name == "stop") stop();
         else if (action.name == "shutdown") shutdown();
         else if (action.name == "save") save(action.app);
+        else if (action.name == "screenshot") screenshot(action.app);
+
         else if (action.name == "reset") reset();
         else if (action.name == "reconnect") {
             socket.close(); ensure_connection(false); message(flag("owned") ? "Connected to your OBSReplay session." : "Connected to a different OBS session. Select OBSReplay in OBS to control capture.");
@@ -871,18 +958,19 @@ struct Controller::Impl {
             bool known{};
             { std::lock_guard lock(mutex); for (const auto& clip : state.at("clips")) if (clip.value("path", "") == path) { known = true; break; } }
             const auto file = from_string(path);
-            if (!known || !media_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
+            if (!known || !listed_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
+            const bool picture = image_file(file);
             if (action.name == "delete_clip") {
                 std::error_code error;
                 if (!fs::is_regular_file(file, error)) {
                     reconcile_clips();
-                    throw std::runtime_error("This replay is no longer available or cannot be deleted.");
+                    throw std::runtime_error(picture ? "This screenshot is no longer available or cannot be deleted." : "This replay is no longer available or cannot be deleted.");
                 }
                 if (!fs::remove(file, error) || error)
-                    throw std::runtime_error("Windows could not delete this replay. Close it in other apps and check your folder permissions.");
+                    throw std::runtime_error(std::string(picture ? "Windows could not delete this screenshot." : "Windows could not delete this replay.") + " Close it in other apps and check your folder permissions.");
                 reconcile_clips();
                 log_info("Clip deleted: file={}", quoted_value(path));
-                message("Replay deleted.");
+                message(picture ? "Screenshot deleted." : "Replay deleted.");
             } else open_path(file, action.name == "reveal_clip");
         } else if (action.name == "delete_clips") {
             // Several clips at once, from the selection on the Clips page. Each must be in the list.
@@ -895,7 +983,7 @@ struct Controller::Impl {
                 const auto path = item.is_string() ? item.get<std::string>() : std::string{};
                 const auto file = from_string(path);
                 std::error_code error;
-                if (!listed.contains(path) || !media_file(file)) { ++kept; continue; }
+                if (!listed.contains(path) || !listed_file(file)) { ++kept; continue; }
                 // A file that is already gone counts as deleted: the list drops it below.
                 if (!fs::exists(file, error) || (fs::remove(file, error) && !error)) { ++deleted; log_info("Clip deleted: file={}", quoted_value(path)); }
                 else ++kept;
@@ -909,7 +997,7 @@ struct Controller::Impl {
             bool known{};
             { std::lock_guard lock(mutex); for (const auto& clip : state.at("clips")) if (clip.value("path", "") == path) { known = true; break; } }
             const auto file = from_string(path);
-            if (!known || !media_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
+            if (!known || !listed_file(file)) throw std::runtime_error("Choose a file from your confirmed recent clips.");
             const auto stem = clean_file_stem(action.payload.value("name", ""), file.extension().wstring());
             if (stem.empty()) throw std::runtime_error("Enter a name Windows allows for a file.");
             const auto target = file.parent_path() / (stem + file.extension().wstring());
@@ -985,12 +1073,14 @@ struct Controller::Impl {
                 if (!queue.empty()) { action = std::move(queue.front()); queue.pop_front(); state["operation"] = action->name; }
             }
             if (action) {
-                update([](Json& s) { s["error"] = ""; });
+                if (!action->queued) update([](Json& s) { s["error"] = ""; });
                 const auto began = Clock::now();
                 std::string failure;
                 log_info("Action started: action={}", action->name);
+                // A queued screenshot that fails keeps the error of the action before it, so a failed save is never hidden.
+                const auto earlier = action->queued ? state_value("error") : std::string{};
                 try { perform(*action); }
-                catch (const std::exception& e) { failure = e.what(); fail(e.what()); }
+                catch (const std::exception& e) { failure = e.what(); fail(earlier.empty() ? failure : earlier + " The screenshot also failed: " + failure); }
                 catch (...) { failure = "unknown exception"; fail("The action could not be completed. Reconnect and try again."); }
                 const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - began).count();
                 if (failure.empty()) log_info("Action finished: action={} ms={}", action->name, took);
@@ -1072,6 +1162,24 @@ std::expected<bool, std::string> Controller::add_clip(const std::string& path, c
     return true;
 }
 
+std::expected<bool, std::string> Controller::add_screenshot(const std::string& path, const std::string& app) {
+    const auto file = tidy_path(from_string(path));
+    std::error_code error;
+    if (!file.is_absolute() || !image_file(file) || !fs::is_regular_file(file, error)) return std::unexpected("The frame was saved, but it couldn't be listed with your screenshots.");
+    const auto bytes = fs::file_size(file, error);
+    const auto text = path_string(file);
+    Json clips;
+    impl_->update([&](Json& s) {
+        auto& list = s["clips"];
+        for (auto it = list.begin(); it != list.end();) { if (path_key(from_string(it->value("path", ""))) == path_key(file)) it = list.erase(it); else ++it; }
+        list.insert(list.begin(), Json{{"path", text}, {"name", path_string(file.filename())}, {"app", app}, {"bytes", error ? 0 : bytes}, {"saved_at", now_iso()}, {"screenshot", true}});
+        clips = list;
+    });
+    try { atomic_write(impl_->paths.data / L"clips.json", clips.dump(2)); }
+    catch (...) { return std::unexpected("The frame was saved, but your clip list couldn't be updated."); }
+    return true;
+}
+
 std::expected<bool, std::string> Controller::remove_clip(const std::string& path) {
     if (!knows_clip(path)) return std::unexpected("The original is no longer in your recent clips.");
     const auto file = from_string(path);
@@ -1084,7 +1192,7 @@ std::expected<bool, std::string> Controller::remove_clip(const std::string& path
 }
 
 std::expected<bool, std::string> Controller::dispatch(std::string action, std::string payload) {
-    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "delete_clips", "rename_clip", "help", "refresh_options"};
+    static const std::set<std::string> allowed{"setup", "apply", "install_obs", "locate_obs", "start", "stop", "shutdown", "save", "reconnect", "reset", "open_folder", "open_obs", "open_clip", "reveal_clip", "delete_clip", "delete_clips", "rename_clip", "help", "refresh_options", "screenshot"};
     if (!allowed.contains(action)) { log_warn("Action refused: action={} reason=unknown", quoted_value(action)); return std::unexpected("Unknown controller action."); }
     if (payload.size() > 128 * 1024) return std::unexpected("The submitted settings are too large.");
     Json data;
@@ -1092,18 +1200,22 @@ std::expected<bool, std::string> Controller::dispatch(std::string action, std::s
     catch (...) { return std::unexpected("The action contains invalid JSON."); }
     if (!data.is_object()) return std::unexpected("The action payload must be an object.");
     std::string app;
-    if (action == "save") { try { app = foreground_app(); } catch (...) { app = "Desktop"; } }
+    if (action == "save" || action == "screenshot") { try { app = foreground_app(); } catch (...) { app = "Desktop"; } }
     auto& s = *impl_;
     {
         std::lock_guard lock(s.mutex);
         if (s.stopping.load()) return std::unexpected("OBSReplay is closing.");
-        if (s.state.value("busy", false)) { log_warn("Action refused: action={} reason=busy operation={}", action, s.state.value("operation", std::string{})); return std::unexpected("Wait for the current action to finish."); }
+        // A screenshot pressed while a replay or another screenshot saves waits its turn: the moment is a second away at most.
+        // Behind anything longer (Apply restarts OBS) it would come out at the wrong moment, so it is refused like the rest.
+        const auto running = s.state.value("operation", std::string{});
+        const bool queued_shot = action == "screenshot" && (running == "save" || running == "screenshot");
+        if (s.state.value("busy", false) && !queued_shot) { log_warn("Action refused: action={} reason=busy operation={}", action, running); return std::unexpected("Wait for the current action to finish."); }
         if (s.queue.size() >= 4) return std::unexpected("The controller is busy. Try again shortly.");
         // Settings are logged as a list of changes when they are stored, so their payload is left out here.
         log_info("Action requested: action={}{}{}", action, app.empty() ? "" : " app=" + quoted_value(app), action == "setup" || action == "apply" || data.empty() ? "" : " payload=" + data.dump());
-        s.queue.push_back({action, std::move(data), std::move(app)});
-        s.state["busy"] = true; s.state["operation"] = action;
-        s.state["error"] = ""; s.state["message"] = action == "save" ? "Waiting for OBS to save your replay…" : "Working…";
+        s.queue.push_back({action, std::move(data), std::move(app), queued_shot});
+        s.state["busy"] = true; if (!queued_shot) s.state["operation"] = action;
+        if (!queued_shot) { s.state["error"] = ""; s.state["message"] = action == "save" ? "Waiting for OBS to save your replay…" : action == "screenshot" ? "Saving a screenshot…" : "Working…"; }
         if (action == "install_obs") s.state["install_stage"] = "preparing";
         if (action == "setup") s.state["setup_stage"] = "";
         s.state["revision"] = s.state.at("revision").get<uint64_t>() + 1;

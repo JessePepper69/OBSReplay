@@ -99,7 +99,7 @@
         </div>
         <div class="export-actions">
           <small id="export-format">MP4</small>
-          <button type="button" class="primary" id="export"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m-4-4 4 4 4-4M4 13v4h12v-4"/></svg>Export video</button>
+          <div class="split-button" id="export-split"><button type="button" class="primary" id="export"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m-4-4 4 4 4-4M4 13v4h12v-4"/></svg>Export video</button><button type="button" class="primary split-more" id="export-more" aria-haspopup="menu" aria-expanded="false" aria-label="More export options" data-tip="More export options"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button></div>
         </div>
       </div>
       <div class="ffmpeg-notice" id="ffmpeg-notice" hidden>
@@ -149,7 +149,26 @@
     </div>
   </dialog>
 
-  <dialog id="export-dialog" aria-labelledby="export-title"><form method="dialog" id="export-form"><h2 id="export-title">Name your export</h2><p>Leave it empty to use the name shown.</p><p class="export-audio" id="export-audio" hidden></p><div class="name-input"><input id="export-name" type="text" maxlength="120" spellcheck="false" autocomplete="off" aria-labelledby="export-title"><span aria-hidden="true">.mp4</span></div><div class="dialog-actions"><label class="check"><input type="checkbox" id="export-delete"><span>Delete original clip after exporting</span></label><button type="button" id="export-cancel">Cancel</button><button type="submit" class="primary" id="export-confirm">Export video</button></div></form></dialog>
+  <dialog id="export-dialog" aria-labelledby="export-title"><form method="dialog" id="export-form">
+    <h2 id="export-title">Name your export</h2>
+    <p id="export-lead">Leave it empty to use the name shown.</p>
+    <div class="export-options" id="export-framing" hidden>
+      <div class="segmented" role="radiogroup" aria-label="Vertical framing"><label><input type="radio" name="framing" value="fill" checked><span>Fill</span></label><label><input type="radio" name="framing" value="fit"><span>Fit</span></label></div>
+      <p class="option-hint" id="framing-hint">Crops a 9:16 window out of the picture. Drag it over the part to keep.</p>
+      <div class="framing-preview">
+        <div class="framing-source" id="framing-source"><canvas id="framing-frame" aria-hidden="true"></canvas><div class="crop-box" id="crop-box" role="slider" tabindex="0" aria-label="Crop position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div></div>
+        <div class="framing-result"><canvas id="framing-result" width="216" height="384" aria-hidden="true"></canvas><small>Result</small></div>
+      </div>
+    </div>
+    <div class="export-options" id="export-gif" hidden>
+      <div class="segmented" role="radiogroup" aria-label="GIF size"><label><input type="radio" name="gif-size" value="small"><span>Small<small>360p · 12 fps</small></span></label><label><input type="radio" name="gif-size" value="medium" checked><span>Medium<small>480p · 15 fps</small></span></label><label><input type="radio" name="gif-size" value="large"><span>Large<small>720p · 20 fps</small></span></label></div>
+      <div class="gif-compression"><label for="gif-compression">Compression</label><input type="range" id="gif-compression" min="0" max="4" step="1" value="0" aria-describedby="gif-compression-hint"><output id="gif-compression-value" for="gif-compression">None</output></div>
+      <p class="option-hint" id="gif-compression-hint">Fewer colours make a smaller file. Strong and Maximum show colour banding.</p>
+    </div>
+    <p class="export-audio" id="export-audio" hidden></p>
+    <div class="name-input"><input id="export-name" type="text" maxlength="120" spellcheck="false" autocomplete="off" aria-labelledby="export-title"><span id="export-extension" aria-hidden="true">.mp4</span></div>
+    <div class="dialog-actions"><label class="check" id="export-delete-row"><input type="checkbox" id="export-delete"><span>Delete original clip after exporting</span></label><button type="button" id="export-cancel">Cancel</button><button type="submit" class="primary" id="export-confirm">Export video</button></div>
+  </form></dialog>
   <div class="menu" id="menu" role="listbox" hidden></div>
   <section class="tracks-panel" id="tracks-panel" role="dialog" aria-labelledby="tracks-title" hidden>
     <div class="tracks-heading"><h2 id="tracks-title">Audio tracks</h2><p>Ticked tracks go into the export, at the volume set here.</p></div>

@@ -114,6 +114,38 @@ Not exercised in the second check: fullscreen on a second monitor, copy to the c
 
 Not exercised: the profile update at launch, Start and Stop against a live OBS, the new buffer memory figure inside OBS, sizes of 1 GB and above in the page, and the display fix button. These need a live OBS session or real hardware changes.
 
+### Check of 2026-11-18: export menu and screenshot shortcut
+
+`build/export-menu-check/check.mjs` runs `build/Release/OBSReplay.exe` headless, isolated and muted (port 9471) against a hard link of the 1080p60 HEVC Fortnite sample with three audio tracks, cut to 6 s (10 s to 16 s).
+
+- The menu beside **Export video** opens as `role="menu"` with five `menuitem`s, reports `aria-expanded`, and closes on Escape.
+- Vertical Fill and Fit: 1080×1920 H.264, 60 fps, 6.00 s. Vertical under 10 MB: 8.2 MB. Both vertical videos join the clip list.
+- GIF Medium: 854×480, square pixels, 6.0 s, 13.4 MB (about 2.2 MB a second for this footage).
+- MP3: 192 kbps stereo, 6.00 s. WAV: 16-bit 48 kHz stereo, 6.00 s. Desktop and Microphone mixed.
+- Save this frame: 1920×1080 PNG of the frame at 12.50 s.
+- With no track ticked, MP3 and WAV are listed as unavailable with the reason, and choosing one opens nothing.
+- GIF, MP3, WAV and PNG files stay out of the clip list.
+
+`build/screenshot-check/check.mjs` (port 9472) holds Ctrl+Shift+F9 from another process, then starts the app with that as the screenshot shortcut.
+
+- Save and show stay registered, `hotkey_error` names the screenshot shortcut, and the same keys are not retried on every tick.
+- **Change shortcut** focuses the screenshot row. The page refuses a screenshot shortcut equal to the save shortcut.
+- `screenshot` without an OBS integration reports "Configure OBSReplay in Settings before starting capture."; the bridge call `reveal_screenshot` with no screenshot reports that it was moved or deleted.
+- Apply is not exercised here: an isolated run has no integration, so an Apply that passes the shortcut checks runs setup, and setup closes every OBS session, the user's included.
+
+`build/screenshot-check/migrate.mjs` (port 9473) loads a settings file from before the screenshot shortcut whose save shortcut is Alt+S: the settings load unchanged and the screenshot shortcut becomes Alt+Shift+S.
+
+`build/export-menu-check/check.mjs` also saves the frame with the playhead at the very end of the clip (full size), clears a saved-frame result when the playhead moves, and confirms the vertical dialog names the size a Max size gives.
+
+The editor suite (`build/editor-check/check.mjs`, main phase) still passes. Not exercised: a screenshot against a live OBS session, and the black-picture check, which need a running OBSReplay session of OBS.
+
+### Check of 2026-11-18: Screenshots tab, screenshot switch, GIF compression, viewer frame
+
+- `build/screenshot-check/library.mjs` (port 9474): three PNGs in two game folders and one in `Edited Exports` beside a replay. The three are listed as screenshots and the frame in `Edited Exports` is not. The **Screenshots** tab counts 3, Replays counts 1, Latest lists no picture. Cards show pictures; day headings count screenshots; game chips, Last 7 days and search narrow the list. The card menu offers View and Open in image viewer and no Edit. The viewer opens at full size with "1 of 3", the right arrow moves on, Delete removes the file and shows the next one. Rename keeps a screenshot a screenshot. The clip editor refuses a picture. With `screenshot_enabled` off while another app holds the shortcut: no error, save and show registered, `screenshot=off` in the log, Change disabled until the switch is turned on, and `screenshot` is refused as turned off.
+- `build/export-menu-check/check.mjs`: a GIF at Maximum compression is 5.1 MB against 14.0 MB at None for the same 6 s.
+- `build/screenshot-check/viewerframe.mjs` (port 9476): in the replay viewer at 12.5 s of the 60 fps sample, the camera button saves `Replay frame 0-12.50.png`, 1920×1080, listed as a Fortnite screenshot. Its pixels match source frame 750 exactly and differ from frame 749. A second press makes `… (2).png`.
+- All suites now count a crash as a failure.
+
 ## How to run checks
 
 Checks run the real `OBSReplay.exe` with its embedded WebView2 in a headless, isolated mode. A script drives the page over the WebView2 remote debugging port.

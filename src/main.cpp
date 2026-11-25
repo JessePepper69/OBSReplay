@@ -36,7 +36,7 @@ namespace {
 using replay::Json;
 using Microsoft::WRL::ComPtr;
 constexpr UINT tray_message = WM_APP + 17;
-constexpr UINT save_id = 201, show_id = 202;
+constexpr UINT save_id = 201, show_id = 202, shot_id = 203;
 constexpr UINT timer_id = 301;
 constexpr UINT reveal_timer_id = 302;
 constexpr UINT suspend_timer_id = 303;
@@ -60,6 +60,16 @@ struct Binding {
     UINT key = 0;
     bool operator==(const Binding&) const = default;
 };
+// The three global shortcuts as the settings spell them.
+struct Keys {
+    std::string save, show, shot;
+    bool operator==(const Keys&) const = default;
+};
+Keys keys_from(const Json& settings) {
+    // An empty screenshot shortcut means screenshots are turned off: nothing is registered for them.
+    return {settings.value("save_hotkey",std::string("Alt+Z")),settings.value("show_hotkey",std::string("Alt+X")),
+            settings.value("screenshot_enabled",true) ? settings.value("screenshot_hotkey",std::string("Alt+S")) : std::string{}};
+}
 
 // Clip thumbnails kept on disk, so the Clips page shows pictures at once instead of decoding every video again.
 // One small file per clip in <data>\thumbnails, named from the clip's size, creation time and write time. A renamed
@@ -259,13 +269,19 @@ struct Desktop {
     bool tray_ready = false;
     bool tray_v4 = false;
     bool menu_open = false;
-    bool registered = false;
-    Binding save_binding, show_binding;
-    std::optional<std::pair<std::string,std::string>> pending_keys;
+    bool registered = false;       // save and show
+    bool shot_registered = false;  // screenshot
+    Binding save_binding, show_binding, shot_binding;
+    // The keys of the last registration. When only the screenshot shortcut was taken by another app, the same keys are
+    // not tried again on every tick; the error stays until the keys change.
+    std::optional<Keys> bound_keys;
+    std::string shot_error;
+    std::optional<Keys> pending_keys;
     bool pending_seen_busy = false;
     std::string hotkey_error;
     std::string last_error;
     std::string last_clip;
+    std::string last_shot;
     std::size_t last_clip_count = 0;
     bool observed_state = false;
     bool recording_hotkey = false;
@@ -279,7 +295,7 @@ struct Desktop {
         KillTimer(hwnd,suspend_timer_id);
         KillTimer(hwnd,tray_sample_timer_id);
         KillTimer(hwnd,update_timer_id);
-        UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);
+        unregister_keys();
         if (tray_ready) Shell_NotifyIconW(NIM_DELETE,&tray);
         RemovePropW(hwnd,instance_property);
         RemoveWindowSubclass(hwnd,desktop_proc,1);
@@ -364,27 +380,70 @@ struct Desktop {
         tray.dwInfoFlags = NIIF_INFO;
         Shell_NotifyIconW(NIM_MODIFY, &tray);
     }
-    std::expected<bool,std::string> bind(const std::string& save, const std::string& show_key) {
+    void unregister_keys() { UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);UnregisterHotKey(hwnd,shot_id); }
+    // Registers the three shortcuts. Save and show work together or not at all, and a failure puts the previous pair
+    // back. The screenshot shortcut is registered last: when another app holds it, strict (a change the user is
+    // applying) refuses the whole change, and otherwise (launch, or settings already saved) save and show keep working.
+    std::expected<bool,std::string> bind(const Keys& keys, bool strict) {
         try {
-            const auto next_save = parse_hotkey(save), next_show = parse_hotkey(show_key);
+            const auto next_save = parse_hotkey(keys.save), next_show = parse_hotkey(keys.show);
             if (next_save == next_show) return std::unexpected("Save and show shortcuts must be different.");
-            if (registered && next_save == save_binding && next_show == show_binding) return true;
-            const bool had = registered;
-            if (had) { UnregisterHotKey(hwnd,save_id); UnregisterHotKey(hwnd,show_id); }
+            // The screenshot shortcut is checked on its own: a bad or clashing one is refused when the user applies it,
+            // and otherwise reported while save and show keep working.
+            std::string shot_problem;
+            Binding next_shot;
+            const bool shot_off = keys.shot.empty();
+            if (!shot_off) try { next_shot = parse_hotkey(keys.shot); } catch (const std::exception& e) { shot_problem = e.what(); }
+            if (!shot_off && shot_problem.empty() && (next_shot == next_save || next_shot == next_show)) shot_problem = "The screenshot shortcut must be different from the save and show shortcuts.";
+            if (!shot_problem.empty() && strict) return std::unexpected(shot_problem);
+            // Applying other settings while another app holds the same screenshot shortcut is not refused for it: the
+            // banner already names the shortcut, and the user changes it when they choose.
+            const bool same_shot = bound_keys && bound_keys->shot == keys.shot && !shot_registered;
+            if (registered && bound_keys == keys && next_save == save_binding && next_show == show_binding) {
+                if ((shot_registered && next_shot == shot_binding) || (shot_off && !shot_registered)) return true;
+                if ((!strict || same_shot) && !shot_error.empty()) { hotkey_error = shot_error; return true; }
+            }
+            const bool had = registered, had_shot = shot_registered;
+            const auto previous_save = save_binding, previous_show = show_binding, previous_shot = shot_binding;
+            const auto restore = [&] {
+                unregister_keys();
+                registered = had && RegisterHotKey(hwnd,save_id,previous_save.modifiers | MOD_NOREPEAT,previous_save.key) != FALSE &&
+                             RegisterHotKey(hwnd,show_id,previous_show.modifiers | MOD_NOREPEAT,previous_show.key) != FALSE;
+                if (had && !registered) { UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id); }
+                shot_registered = had_shot && RegisterHotKey(hwnd,shot_id,previous_shot.modifiers | MOD_NOREPEAT,previous_shot.key) != FALSE;
+            };
+            unregister_keys();
             const bool first = RegisterHotKey(hwnd,save_id,next_save.modifiers | MOD_NOREPEAT,next_save.key) != FALSE;
             const bool second = first && RegisterHotKey(hwnd,show_id,next_show.modifiers | MOD_NOREPEAT,next_show.key) != FALSE;
-            if (first && second) { save_binding=next_save;show_binding=next_show;registered=true;hotkey_error.clear();replay::log_info("Shortcuts registered: save={} show={}",save,show_key);return true; }
-            UnregisterHotKey(hwnd,save_id); UnregisterHotKey(hwnd,show_id);
-            registered=false;
-            if (had) {
-                const bool restored_save = RegisterHotKey(hwnd,save_id,save_binding.modifiers | MOD_NOREPEAT,save_binding.key) != FALSE;
-                const bool restored_show = RegisterHotKey(hwnd,show_id,show_binding.modifiers | MOD_NOREPEAT,show_binding.key) != FALSE;
-                registered=restored_save && restored_show;
-                if (!registered) { UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id); }
+            if (!first || !second) {
+                restore();
+                const auto shortcut = first ? "Show shortcut ("+keys.show+")" : "Save shortcut ("+keys.save+")";
+                replay::log_warn("Shortcut not registered: {} is in use; previous_restored={}",shortcut,registered);
+                return std::unexpected(shortcut+" is already used by Windows or another app. Choose another combination.");
             }
-            const auto shortcut=first ? "Show shortcut ("+show_key+")" : "Save shortcut ("+save+")";
-            replay::log_warn("Shortcut not registered: {} is in use; previous_restored={}",shortcut,registered);
-            return std::unexpected(shortcut+" is already used by Windows or another app. Choose another combination.");
+            if (shot_off) {
+                save_binding=next_save;show_binding=next_show;
+                registered=true;shot_registered=false;bound_keys=keys;hotkey_error.clear();shot_error.clear();
+                replay::log_info("Shortcuts registered: save={} show={} screenshot=off",keys.save,keys.show);
+                return true;
+            }
+            if (shot_problem.empty() && RegisterHotKey(hwnd,shot_id,next_shot.modifiers | MOD_NOREPEAT,next_shot.key) != FALSE) {
+                save_binding=next_save;show_binding=next_show;shot_binding=next_shot;
+                registered=shot_registered=true;bound_keys=keys;hotkey_error.clear();shot_error.clear();
+                replay::log_info("Shortcuts registered: save={} show={} screenshot={}",keys.save,keys.show,keys.shot);
+                return true;
+            }
+            const auto problem = !shot_problem.empty() ? shot_problem : "Screenshot shortcut ("+keys.shot+") is already used by Windows or another app. Choose another combination.";
+            if (strict && !same_shot) {
+                restore();
+                replay::log_warn("Shortcut not registered: screenshot={} is in use; previous_restored={}",keys.shot,registered);
+                return std::unexpected(problem);
+            }
+            // Save and show are registered; the screenshot shortcut is reported and not tried again until it changes.
+            save_binding=next_save;show_binding=next_show;
+            registered=true;shot_registered=false;bound_keys=keys;shot_error=problem;hotkey_error=problem;
+            replay::log_warn("Shortcut not registered: screenshot={} is in use; save={} show={} registered",keys.shot,keys.save,keys.show);
+            return true;
         } catch (const std::exception& e) { return std::unexpected(e.what()); }
     }
     void reconcile() {
@@ -393,33 +452,37 @@ struct Desktop {
             if (state.value("quit",false)) { app->post([app=app] { app->quit(); });return; }
             const auto error=state.value("error",std::string{});
             std::string clip;
-            const std::size_t clip_count=state.contains("clips") && state["clips"].is_array() ? state["clips"].size() : 0;
-            if (clip_count) clip=state["clips"][0].value("path",std::string{});
+            std::size_t clip_count=0;
+            if (state.contains("clips") && state["clips"].is_array()) for (const auto& item : state["clips"]) if (!item.value("screenshot",false)) ++clip_count;
+            // The newest replay or export: a screenshot joins the list too, and has its own notice below.
+            if (clip_count) for (const auto& item : state["clips"]) if (!item.value("screenshot",false)) { clip=item.value("path",std::string{}); break; }
             // While the controller starts it loads the clip list and finds clips already in the folder; none of that
             // is a new save. A newest clip that changes because one was deleted is not a save either: the list must grow.
             const bool starting=state.value("operation",std::string{})=="initializing";
+            const std::string shot=state.contains("last_screenshot") && state["last_screenshot"].is_object() ? state["last_screenshot"].value("path",std::string{}) : std::string{};
             if (observed_state && !starting && (!window->visible() || window->minimized())) {
                 if (!error.empty() && error!=last_error) notify(error);
                 else if (!clip.empty() && clip!=last_clip && clip_count>last_clip_count) notify("Replay saved: "+replay::path_string(replay::from_string(clip).filename()));
+                else if (!shot.empty() && shot!=last_shot) notify("Screenshot saved: "+replay::path_string(replay::from_string(shot).filename()));
             }
             // A new replay or error reaches an open window at once: the page is told to read the state now
             // and does not wait for its own one-second timer, which Windows may slow down for a window without focus.
-            if (observed_state && first_frame_ready && reveal_requested && (clip!=last_clip || error!=last_error)) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:state'))");
-            last_error=error;last_clip=clip;last_clip_count=clip_count;if (!starting) observed_state=true;
+            if (observed_state && first_frame_ready && reveal_requested && (clip!=last_clip || error!=last_error || shot!=last_shot)) view->execute("window.dispatchEvent(new CustomEvent('obsreplay:state'))");
+            last_error=error;last_clip=clip;last_shot=shot;last_clip_count=clip_count;if (!starting) observed_state=true;
             if (recording_hotkey) {
                 if (std::chrono::steady_clock::now()-recording_started<std::chrono::seconds(45)) return;
                 recording_hotkey=false;
             }
             const auto& settings = state.at("settings");
             if (!settings.contains("save_hotkey") || !settings.contains("show_hotkey")) return;
-            const std::pair<std::string,std::string> keys{settings.at("save_hotkey").get<std::string>(),settings.at("show_hotkey").get<std::string>()};
+            const auto keys = keys_from(settings);
             if (pending_keys) {
                 pending_seen_busy = pending_seen_busy || state.value("busy",false);
                 if (keys == *pending_keys) pending_keys.reset();
                 else if (pending_seen_busy && !state.value("busy",false)) pending_keys.reset();
                 else return;
             }
-            const auto result = bind(keys.first,keys.second);
+            const auto result = bind(keys,false);
             if (!result) hotkey_error=result.error();
         } catch (const std::exception& e) { hotkey_error=e.what(); }
     }
@@ -427,8 +490,9 @@ struct Desktop {
         recording_hotkey=enabled;
         if (enabled) {
             recording_started=std::chrono::steady_clock::now();
-            UnregisterHotKey(hwnd,save_id);UnregisterHotKey(hwnd,show_id);
-            registered=false;
+            unregister_keys();
+            registered=shot_registered=false;
+            bound_keys.reset();
         } else reconcile();
     }
     std::string snapshot() {
@@ -445,15 +509,15 @@ struct Desktop {
                 const auto settings=request.is_object() && request.contains("settings") && request["settings"].is_object() ? request["settings"] : request;
                 replay::validate_settings(settings);
                 const auto previous=Json::parse(controller->snapshot()).at("settings");
-                const auto result=bind(settings.at("save_hotkey"),settings.at("show_hotkey"));
+                const auto result=bind(keys_from(settings),true);
                 if (!result) return result;
                 const auto accepted=controller->dispatch(action,payload);
                 if (!accepted) {
-                    const auto restored=bind(previous.at("save_hotkey"),previous.at("show_hotkey"));
+                    const auto restored=bind(keys_from(previous),false);
                     if (!restored) hotkey_error=restored.error();
                     return accepted;
                 }
-                pending_keys=std::pair{settings.at("save_hotkey").get<std::string>(),settings.at("show_hotkey").get<std::string>()};
+                pending_keys=keys_from(settings);
                 pending_seen_busy=true;
                 return accepted;
             }
@@ -534,6 +598,7 @@ LRESULT CALLBACK desktop_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l,UINT_PTR,
         if (message==WM_HOTKEY) {
             if (w==save_id) { replay::log_info("Shortcut pressed: save");desktop.command("save"); }
             else if (w==show_id) { if (desktop.window->visible() && !desktop.window->minimized()) desktop.hide();else desktop.show(); }
+            else if (w==shot_id) { replay::log_info("Shortcut pressed: screenshot");desktop.command("screenshot"); }
             return 0;
         }
         if (message==WM_TIMER && w==timer_id) { desktop.reconcile();return 0; }
@@ -618,6 +683,18 @@ coco::stray start(saucer::application* app) {
     view.expose("thumbnail_read",[&](std::string path) { return controller.knows_clip(path) ? thumbnail_read(path) : std::string{}; });
     view.expose("thumbnail_write",[&](std::string path,std::string data,double length) { return controller.knows_clip(path) && thumbnail_write(path,data,length); });
     view.expose("overlay_running",[] { return replay::process_running(L"NVIDIA Overlay.exe"); });
+    // Show in folder for the screenshot toast. Outside the action queue, so it works while a save runs. Only the
+    // screenshot this run saved: the page can't name another file.
+    view.expose("reveal_screenshot",[&]() -> std::expected<bool,std::string> {
+        try {
+            const auto state=Json::parse(controller.snapshot());
+            const auto last=state.contains("last_screenshot") && state["last_screenshot"].is_object() ? replay::from_string(state["last_screenshot"].value("path",std::string{})) : replay::fs::path{};
+            std::error_code error;
+            if (last.empty() || !replay::fs::is_regular_file(last,error)) return std::unexpected("That screenshot was moved or deleted.");
+            replay::open_path(last,true);
+            return true;
+        } catch (const std::exception& e) { return std::unexpected(e.what()); }
+    });
     view.expose("copy_clips",[&](std::string paths) -> std::expected<int,std::string> {
         try { return static_cast<int>(replay::copy_files_to_clipboard(listed_clips(controller,paths))); }
         catch (const std::exception& e) { return std::unexpected(e.what()); }
@@ -651,6 +728,9 @@ coco::stray start(saucer::application* app) {
     view.expose("ffmpeg_state",[&](bool refresh) { return editors.ffmpeg_state(refresh); });
     view.expose("install_ffmpeg",[&] { return editors.install_ffmpeg(); });
     view.expose("pick_ffmpeg",[&] { return editors.pick_ffmpeg(desktop.hwnd); });
+    view.expose("save_frame",[&](std::string path,double time,saucer::executor<std::string> executor) {
+        editors.save_frame(path,time,[executor=std::move(executor)](std::string result) { executor.resolve(std::move(result)); });
+    });
     view.expose("clip_waveform",[&](std::string path,saucer::executor<std::string> executor) {
         editors.waveform(path,[executor=std::move(executor)](std::string result) { executor.resolve(std::move(result)); });
     });

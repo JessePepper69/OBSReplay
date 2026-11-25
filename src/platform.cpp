@@ -18,6 +18,8 @@
 #include <wincrypt.h>
 #include <mmsystem.h>
 #include <tlhelp32.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <array>
 #include <map>
@@ -228,7 +230,7 @@ Json default_settings(const Paths&) {
         {"clip_seconds",120},{"capture","auto"},{"monitor_id",""},{"output_height",1080},{"fps",60},
         {"encoder","auto"},{"codec","h264"},{"quality",18},{"mic_enabled",true},{"mic_device","default"},
         {"desktop_device","default"},{"noise","off"},{"separate_tracks",true},{"sort_by_app",true},
-        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"replay_enabled",true},{"animations_enabled",true},{"theme","original"},{"settings_version",settings_version}};
+        {"save_sound",true},{"start_at_login",true},{"save_hotkey","Alt+Z"},{"show_hotkey","Alt+X"},{"screenshot_hotkey","Alt+S"},{"screenshot_enabled",true},{"replay_enabled",true},{"animations_enabled",true},{"theme","original"},{"settings_version",settings_version}};
 }
 
 ThemeGround theme_ground(const std::string& id) {
@@ -283,6 +285,16 @@ void validate_settings(const Json& settings) {
     for (const auto key : {"save_hotkey","show_hotkey"})
         if (!hotkey_shape(settings[key].get<std::string>())) throw std::runtime_error("Shortcuts need Ctrl, Alt or Shift plus a letter, number or function key.");
     if (settings["save_hotkey"]==settings["show_hotkey"]) throw std::runtime_error("Save and show shortcuts must be different.");
+    // Added in 1.0.4: a settings file from before has none, and loading fills in the default.
+    if (settings.contains("screenshot_enabled") && !settings["screenshot_enabled"].is_boolean()) throw std::runtime_error("Invalid setting: screenshot_enabled");
+    const bool screenshots = settings.value("screenshot_enabled", true);
+    if (settings.contains("screenshot_hotkey")) {
+        if (!settings["screenshot_hotkey"].is_string() || !hotkey_shape(settings["screenshot_hotkey"].get<std::string>()))
+            throw std::runtime_error("Shortcuts need Ctrl, Alt or Shift plus a letter, number or function key.");
+        // A shortcut that is turned off can be anything; it only has to differ once it is turned on again.
+        if (screenshots && (settings["screenshot_hotkey"]==settings["save_hotkey"] || settings["screenshot_hotkey"]==settings["show_hotkey"]))
+            throw std::runtime_error("The screenshot shortcut must be different from the save and show shortcuts.");
+    }
     auto destination=from_string(settings["clips_dir"].get<std::string>());
     if (destination.empty() || !destination.is_absolute()) throw std::runtime_error("Choose an absolute clips folder path.");
     const auto obs=from_string(settings["obs_path"].get<std::string>());
@@ -299,6 +311,11 @@ Json load_settings(const Paths& p) {
         if (!stored.is_object()) throw std::runtime_error("Invalid settings format");
         const bool before_versions = !stored.contains("settings_version");
         settings.update(stored);
+        // The screenshot shortcut came in 1.0.4. An older file whose save or show shortcut is already the default gets
+        // the first free one of these, so the file still loads.
+        if (!stored.contains("screenshot_hotkey"))
+            for (const auto candidate : {"Alt+S","Alt+Shift+S","Ctrl+Alt+S","Alt+F12"})
+                if (settings.value("save_hotkey",std::string{})!=candidate && settings.value("show_hotkey",std::string{})!=candidate) { settings["screenshot_hotkey"]=candidate; break; }
         // Up to 1.0.1, Start and Stop capture overwrote "Start replay capture automatically", so the saved value was
         // the last button pressed and not a choice. It is turned on once; from here only the user changes it.
         if (before_versions) { settings["replay_enabled"] = true; settings["settings_version"] = settings_version; }
@@ -657,6 +674,28 @@ std::string now_iso() {
     return result;
 }
 void save_feedback() { PlaySoundW(MAKEINTRESOURCEW(102),GetModuleHandleW(nullptr),SND_RESOURCE|SND_ASYNC|SND_NODEFAULT); }
+void screenshot_feedback() { PlaySoundW(MAKEINTRESOURCEW(104),GetModuleHandleW(nullptr),SND_RESOURCE|SND_ASYNC|SND_NODEFAULT); }
+
+// Reads a picture at a small size and reports whether every sample is close to black. COM must be initialised.
+bool image_is_black(const fs::path& file) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)))) return false;
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromFilename(file.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder))) return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0,&frame))) return false;
+    ComPtr<IWICBitmapScaler> scaler;
+    constexpr UINT width=64,height=36;
+    if (FAILED(factory->CreateBitmapScaler(&scaler)) || FAILED(scaler->Initialize(frame.Get(),width,height,WICBitmapInterpolationModeFant))) return false;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(scaler.Get(),GUID_WICPixelFormat32bppBGR,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom))) return false;
+    std::vector<BYTE> pixels(width*height*4);
+    if (FAILED(converter->CopyPixels(nullptr,width*4,static_cast<UINT>(pixels.size()),pixels.data()))) return false;
+    for (size_t i=0;i<pixels.size();i+=4) if (pixels[i]>10 || pixels[i+1]>10 || pixels[i+2]>10) return false;
+    return true;
+}
 
 bool process_running(const wchar_t* executable) {
     Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));
