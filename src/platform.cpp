@@ -285,7 +285,7 @@ void validate_settings(const Json& settings) {
     for (const auto key : {"save_hotkey","show_hotkey"})
         if (!hotkey_shape(settings[key].get<std::string>())) throw std::runtime_error("Shortcuts need Ctrl, Alt or Shift plus a letter, number or function key.");
     if (settings["save_hotkey"]==settings["show_hotkey"]) throw std::runtime_error("Save and show shortcuts must be different.");
-    // Added in 1.0.4: a settings file from before has none, and loading fills in the default.
+    // Added in 1.0.5: a settings file from before has none, and loading fills in the default.
     if (settings.contains("screenshot_enabled") && !settings["screenshot_enabled"].is_boolean()) throw std::runtime_error("Invalid setting: screenshot_enabled");
     const bool screenshots = settings.value("screenshot_enabled", true);
     if (settings.contains("screenshot_hotkey")) {
@@ -311,7 +311,7 @@ Json load_settings(const Paths& p) {
         if (!stored.is_object()) throw std::runtime_error("Invalid settings format");
         const bool before_versions = !stored.contains("settings_version");
         settings.update(stored);
-        // The screenshot shortcut came in 1.0.4. An older file whose save or show shortcut is already the default gets
+        // The screenshot shortcut came in 1.0.5. An older file whose save or show shortcut is already the default gets
         // the first free one of these, so the file still loads.
         if (!stored.contains("screenshot_hotkey"))
             for (const auto candidate : {"Alt+S","Alt+Shift+S","Ctrl+Alt+S","Alt+F12"})

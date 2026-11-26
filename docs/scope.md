@@ -123,7 +123,7 @@ Hardware coverage and test evidence live in [validation](validation.md).
 | **Copy** the exported file | Done | Puts the file on the clipboard from the result row. |
 | Frame-exact cuts | Done | |
 | Named exports in `Edited Exports` | Done | Never overwrites a file. |
-| Delete original after exporting | Done | Opt-in checkbox in the export dialog, unticked each time. |
+| Delete original after exporting | Done | Opt-in checkbox in the export dialog, unticked each time. Once the original is deleted, the editor closes and the main window plays the export on **Clips**, **Edited exports**. |
 | FFmpeg detection and **Locate ffmpeg.exe** | Done | |
 | Warn on quit with unexported cuts or a running export | Done | |
 | Export menu beside **Export video** | Done | Vertical (9:16), GIF, MP3, WAV and the frame under the playhead, from one split button. An item that can't run is listed with the reason. |

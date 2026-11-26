@@ -146,6 +146,11 @@ The editor suite (`build/editor-check/check.mjs`, main phase) still passes. Not 
 - `build/screenshot-check/viewerframe.mjs` (port 9476): in the replay viewer at 12.5 s of the 60 fps sample, the camera button saves `Replay frame 0-12.50.png`, 1920×1080, listed as a Fortnite screenshot. Its pixels match source frame 750 exactly and differ from frame 749. A second press makes `… (2).png`.
 - All suites now count a crash as a failure.
 
+### Check of 2026-11-25: editor closes after deleting the original
+
+- `build/delete-original-check/check.mjs` (port 9477), on copies of the 30 s test pattern. Export without **Delete original clip after exporting**: the editor and the original stay, and the main viewer stays closed. Export with it ticked: `Gone (edited).mp4` lands in Edited Exports, the original is deleted, the editor window closes, and the main window plays the export on **Clips**, **Edited exports** with an earlier search cleared. The clip list drops the original. With another program holding the original (no delete share), the editor stays open and the result line reads "Windows could not delete the original…".
+- The editor suite still passes 118/118.
+
 ## How to run checks
 
 Checks run the real `OBSReplay.exe` with its embedded WebView2 in a headless, isolated mode. A script drives the page over the WebView2 remote debugging port.

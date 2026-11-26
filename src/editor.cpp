@@ -1730,6 +1730,16 @@ struct EditorHost::Impl::Session {
                                     {"duration", total}, {"revealed", revealed}, {"note", history_note}, {"quality", quality}, {"original_deleted", original_deleted},
                                     {"size_limit", limit}, {"attempts", std::max(1, attempts)}, {"audio_streams", format == "mp3" || format == "wav" ? 1 : audio.streams()}};
                 });
+                // With the original gone the editor has nothing left to edit: the main window opens the export on Clips
+                // and plays it, and this editor closes.
+                if (original_deleted) {
+                    log_info("Editor closing: original deleted after export, playing file={}", quoted_value(path_string(final)));
+                    host.app->post([impl = &host, id = id, output = path_string(final), token = std::weak_ptr<bool>(host.alive)] {
+                        if (!token.lock()) return;
+                        if (impl->play) impl->play(output);
+                        for (auto& session : impl->sessions) if (session->id == id) { session->allow_close = true; session->window->close(); }
+                    });
+                }
             }
         } catch (const std::exception& e) {
             if (!temporary.empty()) { std::error_code ignored; fs::remove(temporary, ignored); }

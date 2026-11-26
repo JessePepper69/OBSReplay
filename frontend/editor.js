@@ -1360,7 +1360,7 @@
         state.exportStatus = "done"; state.lastExport = job;
         if ((EXPORT_FORMATS[job.format] || EXPORT_FORMATS.mp4).video) state.exportedSignature = state.exportSignature;
         announce(`${job.format === "png" ? "Saved" : "Exported"} ${job.name}. Saved in Edited Exports.${job.original_deleted ? " Original deleted." : ""}`);
-        // The original is gone: let go of it, and leave the export's result and the closing notice in charge.
+        // The original is gone: let go of it. The native side closes this editor and plays the export in the main window.
         if (job.original_deleted) { state.originalDeleted = true; video.pause(); video.removeAttribute("src"); video.load(); state.mediaReady = false; }
       } else if (job.status === "failed") { state.exportStatus = "failed"; state.lastExport = job; announce("Export failed"); }
       else { state.exportStatus = "idle"; flash("Export canceled. No file was saved."); }

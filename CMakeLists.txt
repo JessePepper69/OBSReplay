@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(OBSReplay VERSION 1.0.4 LANGUAGES CXX RC)
+project(OBSReplay VERSION 1.0.5 LANGUAGES CXX RC)
 
 if(NOT WIN32)
   message(FATAL_ERROR "OBSReplay currently supports Windows x64.")

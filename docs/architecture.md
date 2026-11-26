@@ -597,7 +597,7 @@ The viewer's camera button calls the bridge function `save_frame(path, time)` wi
 | `start_at_login` | bool | `true` | Boolean. |
 | `save_hotkey` | string | `Alt+Z` | `Ctrl`/`Alt`/`Shift` modifiers, then one of `A`-`Z`, `0`-`9`, `F1`-`F24`. Must differ from `show_hotkey`. |
 | `show_hotkey` | string | `Alt+X` | Same shape as `save_hotkey`. |
-| `screenshot_hotkey` | string | `Alt+S` | Same shape as `save_hotkey`. Must differ from both while `screenshot_enabled` is on. A settings file from before 1.0.4 has none and gets the first of `Alt+S`, `Alt+Shift+S`, `Ctrl+Alt+S`, `Alt+F12` that its other shortcuts don't use. |
+| `screenshot_hotkey` | string | `Alt+S` | Same shape as `save_hotkey`. Must differ from both while `screenshot_enabled` is on. A settings file from before 1.0.5 has none and gets the first of `Alt+S`, `Alt+Shift+S`, `Ctrl+Alt+S`, `Alt+F12` that its other shortcuts don't use. |
 | `screenshot_enabled` | bool | `true` | Off: no screenshot shortcut is registered and screenshots are refused. |
 | `replay_enabled` | bool | `true` | Boolean. **Start replay capture automatically**: capture starts at launch. `start`, `stop` and `reset` do not change it. |
 | `settings_version` | integer | `2` | Not validated. A stored file without it was written by 1.0.1 or earlier: `load_settings` sets `replay_enabled` to `true` once, adds the version and saves. Up to 1.0.1, start and stop overwrote `replay_enabled`, so the stored value was not a choice. |
@@ -764,6 +764,7 @@ The data folder is `%LOCALAPPDATA%\OBSReplay`, or `OBSREPLAY_DATA_DIR`.
 4. A result file of 0 bytes counts as a failure.
 5. Rename `<name>.<ext>.part` to `<name>.<ext>` without overwriting.
 6. Add a video (`mp4`, `vertical`) to history with `Controller::add_clip`. A GIF, sound file or frame stays out of the clip list. Explorer is not opened. The editor offers **Show in folder**, **Play video** (or **Play**, **Open**, which open the file in its Windows app) and **Copy**.
+7. With **Delete original clip after exporting** ticked, delete the source with `Controller::remove_clip`. When that succeeds, the UI thread runs the **Play video** handler (the main window opens **Clips**, **Edited exports** and plays the export) and closes the editor without asking. When the delete fails, the editor stays open and the result line gives the reason.
 
 Cancel or window close terminates FFmpeg and deletes the partial file. FFmpeg children run hidden inside a kill-on-close job object.
 
